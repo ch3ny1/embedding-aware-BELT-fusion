@@ -17,16 +17,25 @@ at runtime to read that cache when a match exists, falling back to the real
 pcd decoder otherwise -- **no file under external/OpenCOOD is modified**, the
 patch lives entirely here.
 
-Two things this script checks before trusting the shim:
-  - Equivalence: the cached array and ``pcd_to_np`` must agree byte-for-byte
-    on a sample of real frames (see ``_check_shim_equivalence``), checked
-    once at startup before any training happens.
-  - Hit rate: a counter tracks cache hits/misses across the whole run,
-    logged when training ends (or the process is interrupted), so a
-    silently-idle shim (e.g. from a bad path mapping) shows up as a hit rate
-    near zero rather than as an unexplained lack of speedup. The it/s
-    reported by OpenCOOD's own tqdm progress bar is the faster live signal
-    while training is running.
+Three things this script checks before trusting the shim, every run:
+  - Content equivalence: the cached array and the real ``pcd_to_np`` must
+    agree byte-for-byte on a sample of real frames, read directly from the
+    real OPV2V tree (see ``_check_shim_equivalence``).
+  - Path-resolution equivalence: calling the *patched* function through a
+    train/val split symlink (the only kind of path it ever actually sees at
+    runtime) must register as a cache hit, not just return the right bytes
+    by falling back to the real decoder (see ``_check_shim_resolves_symlink``).
+    A systematically wrong path mapping would pass the content check above
+    while silently missing every real call -- this is what would have
+    caught that.
+  - Hit rate: ``ShimStats`` tracks cache hits/misses in a
+    ``multiprocessing.Value`` (real shared memory, not a plain dict), so
+    counts recorded inside ``DataLoader``'s forked worker processes
+    aggregate back to the parent that logs them. Logged when training ends,
+    so a silently-idle shim (e.g. from a cache-root mixup after this file is
+    edited) shows up as a hit rate near zero rather than as an unexplained
+    lack of speedup. Run with ``--verify-shim-iters`` to check this before
+    committing to a multi-hour run (see ``run_shim_verification``).
 
 OPV2V ships no usable ``validate`` split on this machine (broken symlink), so
 validation is a 15% scenario-level holdout of ``train``, split the same way
@@ -39,11 +48,15 @@ built once and reused.
 Usage
 -----
     python -u scripts/train_late_fusion.py --hypes_yaml configs/alignformer_detector.yaml
+
+    # Sanity-check the shim (a few dozen batches, no training) before a real run:
+    python -u scripts/train_late_fusion.py --verify-shim-iters 30
 """
 
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
 import sys
 from pathlib import Path
 from typing import Callable
@@ -72,7 +85,41 @@ SPLIT_SEED = 0
 # recorded in configs/alignformer_detector.yaml before training finishes.
 OUTPUT_DIR = Path("outputs/alignformer/point_pillar_late_fusion")
 
-_SHIM_STATS = {"hits": 0, "misses": 0}
+
+class ShimStats:
+    """Cache hit/miss counters that survive ``DataLoader`` worker forks.
+
+    A plain dict here would live independently in each of ``num_workers``
+    forked processes (copy-on-write) and never aggregate back to the parent
+    that logs it at the end -- which is exactly what happened before this
+    fix: the counter printed ``0/0`` on every run, whether the shim was
+    working perfectly or silently misconfigured. ``multiprocessing.Value``
+    is backed by real shared memory, so increments made inside a worker are
+    visible here as long as ``ShimStats`` is constructed *before*
+    ``DataLoader`` forks its workers (see ``install_pcd_cache_shim``, called
+    before ``opencood_train.main()`` builds any dataset).
+    """
+
+    def __init__(self) -> None:
+        self.hits = mp.Value("L", 0)
+        self.misses = mp.Value("L", 0)
+
+    def record_hit(self) -> None:
+        with self.hits.get_lock():
+            self.hits.value += 1
+
+    def record_miss(self) -> None:
+        with self.misses.get_lock():
+            self.misses.value += 1
+
+    def snapshot(self) -> tuple[int, int]:
+        return int(self.hits.value), int(self.misses.value)
+
+    def reset(self) -> None:
+        with self.hits.get_lock():
+            self.hits.value = 0
+        with self.misses.get_lock():
+            self.misses.value = 0
 
 
 def build_scenario_split(train_root: Path, train_dir: Path, val_dir: Path) -> None:
@@ -107,12 +154,23 @@ def build_scenario_split(train_root: Path, train_dir: Path, val_dir: Path) -> No
     )
 
 
-def _check_shim_equivalence(real_pcd_to_np: Callable[[str], np.ndarray], sample_size: int = 5) -> None:
-    """Assert the cache and the real decoder agree exactly on real frames."""
+def _check_shim_equivalence(
+    real_pcd_to_np: Callable[[str], np.ndarray],
+    cache_root: Path,
+    train_root: Path,
+    sample_size: int = 5,
+) -> None:
+    """Assert the cache and the real decoder agree exactly on real frames.
+
+    This reads straight from ``train_root`` (the real OPV2V tree), not
+    through a split symlink -- it checks cache *content* only. Path
+    *resolution* through the symlinks the shim actually sees at runtime is
+    a separate check: ``_check_shim_resolves_symlink``.
+    """
     checked = 0
-    for cached_file in PCD_CACHE_ROOT.rglob("*.npy"):
-        relative = cached_file.relative_to(PCD_CACHE_ROOT).with_suffix(".pcd")
-        source = OPV2V_TRAIN_ROOT / relative
+    for cached_file in cache_root.rglob("*.npy"):
+        relative = cached_file.relative_to(cache_root).with_suffix(".pcd")
+        source = train_root / relative
         if not source.exists():
             continue
         cached_array = np.load(cached_file)
@@ -126,11 +184,73 @@ def _check_shim_equivalence(real_pcd_to_np: Callable[[str], np.ndarray], sample_
         if checked >= sample_size:
             break
     if checked == 0:
-        raise RuntimeError("could not find any overlapping cache/source pair to sanity-check")
+        raise RuntimeError(f"could not find any overlapping cache/source pair under {cache_root} to sanity-check")
     print(f"pcd cache equivalence check passed on {checked} frames", flush=True)
 
 
-def install_pcd_cache_shim() -> None:
+def _iter_pcd_files_through_symlinks(root: Path):
+    """Yield ``.pcd`` files under ``root``, descending into symlinked dirs.
+
+    ``Path.rglob`` follows a symlink when it *is* the glob root, but does not
+    descend into one encountered mid-traversal -- and ``build_scenario_split``'s
+    split directories are exactly that: a real directory whose immediate
+    children are symlinks to the real scenario directories. Globbing
+    ``split_dir.rglob("*.pcd")`` directly silently finds nothing.
+    """
+    for entry in sorted(root.iterdir()):
+        if entry.is_dir():
+            yield from entry.rglob("*.pcd")
+
+
+def _check_shim_resolves_symlink(
+    shimmed_pcd_to_np: Callable[[str], np.ndarray],
+    stats: ShimStats,
+    split_dir: Path,
+    sample_size: int = 5,
+) -> None:
+    """Assert the *patched* function registers a hit through a split symlink.
+
+    ``_check_shim_equivalence`` calls the real decoder directly against
+    ``train_root`` paths, which validates cache content but not path
+    resolution. At runtime the shim only ever sees paths through
+    ``TRAIN_SPLIT_DIR``/``VAL_SPLIT_DIR`` (the symlinks ``build_scenario_split``
+    builds), which then have to resolve back through ``train_root`` before
+    ``cached_pcd_path`` can look anything up. A systematically wrong mapping
+    here would silently fall back to the real decoder on every call --
+    still producing correct results, just slowly, and the content check
+    above would not notice. This calls the shim itself (not the real
+    decoder) on real symlinked paths and requires a hit, not just a
+    matching array.
+    """
+    if not split_dir.exists():
+        raise RuntimeError(f"split directory does not exist yet: {split_dir}")
+
+    checked = 0
+    for pcd_file in _iter_pcd_files_through_symlinks(split_dir):
+        hits_before, _ = stats.snapshot()
+        shimmed_pcd_to_np(str(pcd_file))
+        hits_after, _ = stats.snapshot()
+        if hits_after != hits_before + 1:
+            raise AssertionError(
+                f"pcd cache shim fell back to the real decoder for a symlinked "
+                f"path with a known cache entry: {pcd_file}. A wrong path "
+                f"mapping would silently do this on every call and still "
+                f"produce correct-but-slow results."
+            )
+        checked += 1
+        if checked >= sample_size:
+            break
+    if checked == 0:
+        raise RuntimeError(f"no .pcd files found under {split_dir} to check symlink resolution")
+    print(f"pcd cache shim symlink-resolution check passed on {checked} frames under {split_dir}", flush=True)
+
+
+def install_pcd_cache_shim(
+    cache_root: Path = PCD_CACHE_ROOT,
+    train_root: Path = OPV2V_TRAIN_ROOT,
+    split_dir: Path = TRAIN_SPLIT_DIR,
+    skip_preflight: bool = False,
+) -> ShimStats:
     """Monkey-patch ``opencood.utils.pcd_utils.pcd_to_np`` to prefer the cache.
 
     Only one call site in OpenCOOD resolves ``pcd_to_np`` (``basedataset.py``,
@@ -138,13 +258,19 @@ def install_pcd_cache_shim() -> None:
     ``pcd_utils.pcd_to_np(...)``), so patching the module attribute is
     sufficient -- there is no ``from ... import pcd_to_np`` binding elsewhere
     in the codebase to miss.
+
+    ``skip_preflight`` exists only to demonstrate, in isolation, that the
+    hit/miss counter itself correctly attributes misses when pointed at a
+    wrong ``cache_root`` -- with preflight checks enabled (the default, and
+    the only mode ``main()`` uses for real training), a wrong ``cache_root``
+    fails loudly here before any training starts, which is strictly better
+    than "reports misses" for production use.
     """
     from opencood.utils import pcd_utils as opencood_pcd_utils
 
     real_pcd_to_np = opencood_pcd_utils.pcd_to_np
-    _check_shim_equivalence(real_pcd_to_np)
-
-    train_root = OPV2V_TRAIN_ROOT.resolve()
+    stats = ShimStats()
+    resolved_train_root = train_root.resolve()
 
     def shimmed_pcd_to_np(pcd_file: str) -> np.ndarray:
         # Resolve first: root_dir/validate_dir point through the scenario
@@ -152,20 +278,26 @@ def install_pcd_cache_shim() -> None:
         # the split-dir prefix rather than the real OPV2V tree.
         source = Path(pcd_file).resolve()
         try:
-            cached = cached_pcd_path(PCD_CACHE_ROOT, source, train_root)
+            cached = cached_pcd_path(cache_root, source, resolved_train_root)
         except ValueError:
-            _SHIM_STATS["misses"] += 1
+            stats.record_miss()
             return real_pcd_to_np(pcd_file)
 
         if cached.exists():
-            _SHIM_STATS["hits"] += 1
+            stats.record_hit()
             return np.load(cached)
 
-        _SHIM_STATS["misses"] += 1
+        stats.record_miss()
         return real_pcd_to_np(pcd_file)
+
+    if not skip_preflight:
+        _check_shim_equivalence(real_pcd_to_np, cache_root, resolved_train_root)
+        _check_shim_resolves_symlink(shimmed_pcd_to_np, stats, split_dir)
+        stats.reset()  # the checks above are self-tests, not real training hits
 
     opencood_pcd_utils.pcd_to_np = shimmed_pcd_to_np
     print("pcd cache shim installed", flush=True)
+    return stats
 
 
 def install_fixed_output_dir() -> None:
@@ -189,10 +321,45 @@ def install_fixed_output_dir() -> None:
     train_utils.setup_train = fixed_setup_train
 
 
-def log_shim_stats() -> None:
-    total = _SHIM_STATS["hits"] + _SHIM_STATS["misses"]
-    rate = _SHIM_STATS["hits"] / total if total else 0.0
-    print(f"pcd cache shim: {_SHIM_STATS['hits']}/{total} hits ({rate:.1%})", flush=True)
+def log_shim_stats(stats: ShimStats) -> None:
+    hits, misses = stats.snapshot()
+    total = hits + misses
+    rate = hits / total if total else 0.0
+    print(f"pcd cache shim: {hits}/{total} hits ({rate:.1%})", flush=True)
+
+
+def run_shim_verification(hypes_yaml: Path, num_iters: int, stats: ShimStats) -> None:
+    """Run a few dozen real training batches through the shim, then stop.
+
+    Builds the exact same dataset/DataLoader ``opencood_train.main()`` would
+    (same ``num_workers``), so the shim is exercised inside real forked
+    worker processes, not just in this process -- but iterates only
+    ``num_iters`` batches and does no training (no model, no optimizer, no
+    checkpoint writes). Use this to catch a broken shim in seconds instead
+    of discovering it hours into a real run.
+    """
+    from opencood.data_utils.datasets import build_dataset
+    from opencood.hypes_yaml.yaml_utils import load_yaml
+    from torch.utils.data import DataLoader
+
+    hypes = load_yaml(str(hypes_yaml))
+    dataset = build_dataset(hypes, visualize=False, train=True)
+    loader = DataLoader(
+        dataset,
+        batch_size=hypes["train_params"]["batch_size"],
+        num_workers=8,
+        collate_fn=dataset.collate_batch_train,
+        shuffle=True,
+    )
+
+    seen = 0
+    for _ in loader:
+        seen += 1
+        if seen >= num_iters:
+            break
+
+    print(f"shim verification: ran {seen} batches (num_workers=8)", flush=True)
+    log_shim_stats(stats)
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,6 +370,30 @@ def parse_args() -> argparse.Namespace:
         default=Path("configs/alignformer_detector.yaml"),
         help="OpenCOOD-format hypes yaml (a machine-local copy of point_pillar_late_fusion.yaml).",
     )
+    parser.add_argument(
+        "--verify-shim-iters",
+        type=int,
+        default=0,
+        help="If > 0, build the real training DataLoader (num_workers=8), run this many "
+        "batches through it, print pcd-cache shim hit/miss counts, and exit without "
+        "training. Use to sanity-check the shim before committing to a multi-hour run.",
+    )
+    parser.add_argument(
+        "--pcd-cache-root",
+        type=Path,
+        default=PCD_CACHE_ROOT,
+        help="Override the pcd cache root. Only intended for demonstrating shim behavior "
+        "(e.g. pointed at a nonexistent path with --skip-shim-preflight to show the "
+        "counter correctly reports 100%% misses) -- real training should use the default.",
+    )
+    parser.add_argument(
+        "--skip-shim-preflight",
+        action="store_true",
+        help="Skip the equivalence/symlink-resolution preflight checks. Only meaningful "
+        "together with --pcd-cache-root pointed at a deliberately wrong path: with a real "
+        "cache root, preflight failing loudly is the desired behavior, not something to "
+        "bypass.",
+    )
     return parser.parse_args()
 
 
@@ -210,7 +401,15 @@ def main() -> None:
     args = parse_args()
 
     build_scenario_split(OPV2V_TRAIN_ROOT, TRAIN_SPLIT_DIR, VAL_SPLIT_DIR)
-    install_pcd_cache_shim()
+    stats = install_pcd_cache_shim(
+        cache_root=args.pcd_cache_root,
+        skip_preflight=args.skip_shim_preflight,
+    )
+
+    if args.verify_shim_iters > 0:
+        run_shim_verification(args.hypes_yaml, args.verify_shim_iters, stats)
+        return
+
     install_fixed_output_dir()
 
     # Import after the shims are installed but before any dataset is built,
@@ -222,7 +421,7 @@ def main() -> None:
     try:
         opencood_train.main()
     finally:
-        log_shim_stats()
+        log_shim_stats(stats)
 
 
 if __name__ == "__main__":
