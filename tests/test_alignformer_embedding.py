@@ -40,21 +40,41 @@ def test_sampling_is_canonical_so_placement_does_not_change_the_patch():
     # The same synthetic object placed at two different positions AND
     # orientations must yield the same canonical ROI patch. This is the
     # pose-invariance property the whole matching design rests on.
-    length = 8.0
-    box_a = torch.tensor([[0.0, 0.0, 0.0, 1.6, 4.0, length, 0.0]])
-    box_b = torch.tensor([[40.0, 12.0, 0.0, 1.6, 4.0, length, math.pi / 2]])
+    #
+    # The marker sits at the box's forward-right corner of the 4x4 canonical
+    # sampling grid (along = +length/2, across = +width/2), with length and
+    # width chosen so that corner falls exactly on a BEV pixel *centre*
+    # (world coordinate = x_min + (k + 0.5) * pixel_size for an integer k).
+    # Both box centres (0, 0) and (40, 12) already sit on pixel boundaries
+    # (multiples of the 0.8 m pixel size), so the marker offset from each
+    # centre only needs to itself be an odd multiple of half a pixel:
+    # 0.5 * length = 2.8 = (3 + 0.5) * 0.8 and 0.5 * width = 1.2 =
+    # (1 + 0.5) * 0.8. This makes `grid_sample` land exactly on the marked
+    # pixel with no bilinear blending, so a genuinely wrong sampling
+    # convention (wrong axis, wrong rotation direction, ...) reliably misses
+    # it rather than accidentally smearing onto it.
+    length = 5.6
+    width = 2.4
+    box_a = torch.tensor([[0.0, 0.0, 0.0, 1.6, width, length, 0.0]])
+    box_b = torch.tensor([[40.0, 12.0, 0.0, 1.6, width, length, math.pi / 2]])
 
-    # An asymmetric marker 3 m "ahead" of each box centre along its own heading,
-    # so a wrong rotation convention shows up as a flipped patch.
     features_a = torch.zeros(1, 96, 256)
-    _stamp(features_a, x=3.0, y=0.0, value=1.0)
+    _stamp(features_a, x=2.8, y=1.2, value=1.0)
     features_b = torch.zeros(1, 96, 256)
-    _stamp(features_b, x=40.0, y=15.0, value=1.0)
+    _stamp(features_b, x=38.8, y=14.8, value=1.0)
 
     roi_a = rotated_roi_align(features_a, box_a, LIDAR_RANGE, output_size=4)
     roi_b = rotated_roi_align(features_b, box_b, LIDAR_RANGE, output_size=4)
 
-    assert torch.argmax(roi_a.flatten()) == torch.argmax(roi_b.flatten())
+    # Guard against vacuity: if the marker misses the sampled grid entirely,
+    # both patches are all-zero and any comparison trivially "passes".
+    assert roi_a.abs().max() > 0
+    assert roi_b.abs().max() > 0
+
+    # atol accounts only for float32 grid-normalization round-trip error
+    # (observed ~4e-6 on one boundary-adjacent cell), not for any real
+    # geometric mismatch.
+    assert torch.allclose(roi_a, roi_b, atol=1e-4)
 
 
 def test_roi_align_is_differentiable_wrt_features():
