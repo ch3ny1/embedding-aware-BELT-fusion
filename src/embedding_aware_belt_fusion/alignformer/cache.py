@@ -11,6 +11,7 @@ head remains trainable downstream.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,9 +70,25 @@ def cache_path(
 
 
 def write_frame(path: Union[Path, str], record: FrameRecord) -> None:
-    """Persist one frame, creating parent directories as needed."""
+    """Persist one frame, creating parent directories as needed.
+
+    Raises if a real (non-``None``) ``gt_id`` collides with the ``""``
+    sentinel used for "matched nothing" -- that would otherwise decode back
+    as ``None`` and silently fabricate a shared identity across agents that
+    the matching loss would then train towards. Today this can only happen
+    if an upstream id is itself the empty string (OPV2V's own ids are
+    integers stringified by ``opencood_proposals.assign_proposals_to_ground_truth``,
+    so it can't), but checking it here means that invariant is enforced, not
+    just remembered.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    for value in record.gt_ids:
+        if value == _NO_GT_ID:
+            raise ValueError(
+                f"gt_id is the empty string, which collides with the "
+                f"'no match' sentinel and would silently decode back as None: {record.gt_ids!r}"
+            )
     gt_ids = np.array(
         [_NO_GT_ID if value is None else str(value) for value in record.gt_ids],
         dtype=np.str_,
@@ -158,6 +175,26 @@ def verify_pcd_cache_equivalence(
     return checked
 
 
+def _frame_seed(scenario: str, cav_id: str, timestamp: str) -> int:
+    """Stable, frame-derived seed for OpenCOOD's unseeded point shuffle.
+
+    ``LateFusionDataset.get_item_single_car`` calls ``shuffle_points``
+    (``external/OpenCOOD/opencood/utils/pcd_utils.py``), which is a bare
+    ``np.random.permutation`` with no seed of its own. Left unseeded, two
+    runs of the same frame draw a different point order and, via
+    ``max_points_per_voxel`` truncation, a slightly different detection --
+    this cache is a source-of-truth artifact, so that build-to-build drift is
+    not acceptable. Deriving the seed from ``(scenario, cav_id, timestamp)``
+    (rather than one fixed constant for the whole run) keeps each frame's
+    shuffle independent of every other frame's and of processing order, while
+    making a given frame reproducible byte-for-byte on any rebuild.
+    ``hashlib`` is used instead of the builtin ``hash()`` because the latter
+    is randomized per process (``PYTHONHASHSEED``) and would defeat the point.
+    """
+    digest = hashlib.sha256(f"{scenario}/{cav_id}/{timestamp}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], byteorder="big")
+
+
 def _load_agent_points(
     pcd_path: Path, pcd_cache_root: Path, split_root: Path, stats: PcdCacheStats
 ) -> np.ndarray:
@@ -184,7 +221,14 @@ def _build_detector(hypes: Dict, device) -> "torch.nn.Module":  # noqa: F821
 
 
 def _cav_content_for_frame(
-    dataset, params: Dict, lidar_np: np.ndarray, device
+    dataset,
+    params: Dict,
+    lidar_np: np.ndarray,
+    device,
+    *,
+    scenario: str,
+    cav_id: str,
+    timestamp: str,
 ) -> Dict[str, object]:
     """Assemble one agent-frame's ``cav_content`` for ``boxes.detect_agent``.
 
@@ -194,10 +238,16 @@ def _cav_content_for_frame(
     output into the torch layout ``detect_agent`` expects (normally supplied
     by ``collate_batch_test``, which this bypasses to keep one agent-frame at
     a time addressable by scenario/cav/timestamp).
+
+    Seeds numpy's global RNG with a frame-derived seed immediately before the
+    call, since that is what ``get_item_single_car`` -> ``shuffle_points``
+    consumes (see ``_frame_seed``) -- this is what makes the cache
+    byte-reproducible across rebuilds.
     """
     import numpy as np
     import torch
 
+    np.random.seed(_frame_seed(scenario, cav_id, timestamp))
     raw = dataset.get_item_single_car({"lidar_np": lidar_np, "params": params})
     processed_lidar = dataset.pre_processor.collate_batch([raw["processed_lidar"]])
     processed_lidar = {key: value.to(device) for key, value in processed_lidar.items()}
@@ -244,7 +294,9 @@ def _cache_one_frame(
     cav_dir = split_root / scenario / cav_id
     params = load_yaml(str(cav_dir / f"{timestamp}.yaml"), None)
     lidar_np = _load_agent_points(cav_dir / f"{timestamp}.pcd", pcd_cache_root, split_root, stats)
-    cav_content = _cav_content_for_frame(dataset, params, lidar_np, device)
+    cav_content = _cav_content_for_frame(
+        dataset, params, lidar_np, device, scenario=scenario, cav_id=cav_id, timestamp=timestamp
+    )
 
     with no_grad():
         detections = detect_agent(detector, cav_content, postprocessor)

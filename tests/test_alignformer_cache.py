@@ -82,3 +82,19 @@ def test_frame_record_rejects_inconsistent_lengths():
             gt_ids=["a", "b", "c"],
             roi=np.zeros((3, 4, 4, 4), np.float16),
         )
+
+
+def test_write_frame_rejects_a_real_gt_id_that_is_the_empty_string(tmp_path):
+    # An empty-string gt_id would decode back as None (the "no match"
+    # sentinel), fabricating a shared identity between two agents that never
+    # matched anything -- this must be caught at write time, not assumed
+    # impossible.
+    record = FrameRecord(
+        boxes=np.zeros((1, 7), np.float32),
+        scores=np.zeros((1,), np.float32),
+        gt_ids=[""],
+        roi=np.zeros((1, 4, 4, 4), np.float16),
+    )
+
+    with pytest.raises(ValueError, match="empty string"):
+        write_frame(tmp_path / "000071.npz", record)
