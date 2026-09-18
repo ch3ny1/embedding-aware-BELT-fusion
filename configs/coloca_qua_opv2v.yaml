@@ -1,0 +1,114 @@
+# CoLoca-QuA on OPV2V.
+#
+# Reproduction of Gao et al., IEEE T-VT 75(7) 2026. The paper trains on V2XSet
+# and V2X-Real; OPV2V is the V2V-only sibling of V2XSet (same CARLA/OpenCDA
+# generator), so this config targets the paper's V2V columns of Table II.
+#
+# The lidar range is cropped from OpenCOOD's default +/-140.8 / +/-40 to the
+# paper's evaluation range. With voxel 0.4 that gives a 512x192 pillar grid, a
+# stride-2 BEV map of 96x256, and 256 channels after the shrink header - exactly
+# the "C=256, H=96, W=256, N=96, D=256" inference setting of the paper's Fig. 4.
+
+data:
+  train_root: /media/chenyi/Elements1/Dataset/OPV2V/train
+  test_root: /media/chenyi/Elements1/Dataset/OPV2V/test
+  cache_dir: outputs/coloca/cache
+  # OPV2V lives on a USB spinning disk here and its pcd files are ~3 MB ASCII,
+  # which caps the loader at ~10 samples/s against a 223 samples/s GPU. These
+  # point to the binary mirror on the basement NVMe; build it with
+  #   python -m embedding_aware_belt_fusion.coloca.pcd_cache \
+  #     --splits <train> <test> --cache-root <pcd_cache_root>
+  # Set to null to read the original pcd files instead.
+  pcd_cache_root: /media/chenyi/basement2/cache/opv2v_coloca
+  train_pcd_cache: /media/chenyi/basement2/cache/opv2v_coloca/train
+  test_pcd_cache: /media/chenyi/basement2/cache/opv2v_coloca/test
+  # OPV2V ships no usable `validate` split on this machine (broken symlink), so
+  # a held-out slice of the train scenarios is used instead. Split is by
+  # scenario, never by frame, to avoid near-duplicate leakage.
+  val_scenario_fraction: 0.15
+  split_seed: 0
+  comm_range_m: 40.0
+
+noise:
+  # Section IV-B: one model is trained on noise sampled from BOTH sigmas, then
+  # Section IV-C evaluates it at each sigma separately.
+  train_xy_std: [2.0, 1.0]
+  eval_xy_std: [2.0, 1.0]
+  yaw_std_deg: 1.0
+  eval_seed: 20
+
+preprocess:
+  core_method: SpVoxelPreprocessor
+  args:
+    voxel_size: &voxel_size [0.4, 0.4, 4]
+    max_points_per_voxel: 32
+    max_voxel_train: 32000
+    max_voxel_test: 70000
+  cav_lidar_range: &cav_lidar [-102.4, -38.4, -3, 102.4, 38.4, 1]
+
+backbone:
+  # Must match the pretrained F-Cooper checkpoint's architecture.
+  checkpoint: /media/chenyi/Elements1/models/opv2v/f_cooper/latest.pth
+  args:
+    voxel_size: *voxel_size
+    lidar_range: *cav_lidar
+    pillar_vfe:
+      use_norm: true
+      with_distance: false
+      use_absolute_xyz: true
+      num_filters: [64]
+    point_pillar_scatter:
+      num_features: 64
+    base_bev_backbone:
+      layer_nums: [3, 5, 8]
+      layer_strides: [2, 2, 2]
+      num_filters: [64, 128, 256]
+      upsample_strides: [1, 2, 4]
+      num_upsample_filter: [128, 128, 128]
+    shrink_header:
+      kernal_size: [1]
+      stride: [1]
+      padding: [0]
+      dim: [256]
+      input_dim: 384
+
+model:
+  # Paper Table I.
+  patch_size: 16
+  embed_dim: 256
+  depth: 6
+  num_heads: 4
+  mlp_ratio: 4
+  dropout: 0.3          # attention only, per Table I's "Dropout (attn)"
+  # Two deviations from the published design, BOTH required for convergence on
+  # OPV2V; neither works alone. See docs/coloca_qua_baseline.md for the 6-cell
+  # ablation that establishes this.
+  #   conv_stem_depth: 0 + readout: loc_token  == the paper exactly (never
+  #   leaves the predict-zero solution here).
+  conv_stem_depth: 3
+  readout: mean
+
+loss:
+  # Paper Section IV-F, setting S3.
+  weights: [2.0, 2.0, 1.0]
+
+train:
+  # Stage 2 (frozen backbone) then stage 3 (end-to-end fine-tune), per the
+  # paper's Section IV-B training protocol.
+  frozen_epochs: 30
+  finetune_epochs: 15
+  batch_size: 16
+  num_workers: 10
+  # The paper states 1e-4 (Section IV-B), but 1e-4 and 1e-3 behave identically
+  # on the non-converging paper config, and 1e-3 is the value under which the
+  # converging config was verified. Deviation recorded in the docs.
+  lr: 1.0e-3
+  finetune_lr: 1.0e-5   # Backbone fine-tuning needs a smaller step.
+  weight_decay: 1.0e-4
+  grad_clip: 5.0
+  amp: true
+  output_dir: outputs/coloca/qua_sigma2
+  seed: 0
+
+eval:
+  thresholds: [1.0, 0.8, 0.5]
