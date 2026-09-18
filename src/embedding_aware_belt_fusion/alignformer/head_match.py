@@ -29,7 +29,10 @@ def log_sinkhorn(scores: Tensor, alpha: Tensor, iterations: int) -> Tensor:
     -------
     Tensor
         ``(B, M + 1, N + 1)`` log-assignment. The last row and column are the
-        dustbins.
+        dustbins. Rows sum to 1 and columns sum to 1 after ``.exp()`` — including
+        in the degenerate ``rows == 0`` or ``columns == 0`` case, where every
+        real object on the other side is assigned to its dustbin with certainty
+        (``log(1) == 0``, hence an all-zeros return).
     """
     if scores.dim() != 3:
         raise ValueError(f"scores must be (B, M, N), got {tuple(scores.shape)}")
@@ -38,27 +41,6 @@ def log_sinkhorn(scores: Tensor, alpha: Tensor, iterations: int) -> Tensor:
 
     batch, rows, columns = scores.shape
     bin_score = alpha.to(scores)
-
-    # An agent can legitimately detect nothing. With rows or columns at zero the
-    # marginals would contain log(0) = -inf, which turns into NaN gradients.
-    # There is nothing to normalize in that case, so return the couplings as-is.
-    if rows == 0 or columns == 0:
-        return torch.cat(
-            [
-                torch.cat([scores, bin_score.expand(batch, rows, 1)], dim=2),
-                torch.cat(
-                    [
-                        bin_score.expand(batch, 1, columns),
-                        bin_score.expand(batch, 1, 1),
-                    ],
-                    dim=2,
-                ),
-            ],
-            dim=1,
-        )
-
-    row_count = scores.new_tensor(float(rows))
-    column_count = scores.new_tensor(float(columns))
 
     couplings = torch.cat(
         [
@@ -70,6 +52,23 @@ def log_sinkhorn(scores: Tensor, alpha: Tensor, iterations: int) -> Tensor:
         ],
         dim=1,
     )
+
+    # An agent can legitimately detect nothing. With rows or columns at zero the
+    # marginals would contain log(0) = -inf, which turns into NaN gradients.
+    # The semantically correct assignment there is that every real row (or
+    # column) on the other side matches its dustbin with certainty — the single
+    # remaining column (or row) *is* the dustbin — so each carries log(1) = 0.
+    # ``couplings * 0`` satisfies the row/column-sums-to-1 contract exactly and
+    # keeps the backward pass finite: unlike ``torch.zeros_like``, multiplying
+    # by zero stays attached to the autograd graph, so scores/alpha still get a
+    # (zero-valued) gradient instead of an error from a disconnected constant.
+    # There is no matching information to learn from an empty detection set,
+    # so a zero gradient here is correct.
+    if rows == 0 or columns == 0:
+        return couplings * 0
+
+    row_count = scores.new_tensor(float(rows))
+    column_count = scores.new_tensor(float(columns))
 
     normalizer = -(row_count + column_count).log()
     log_mu = torch.cat(

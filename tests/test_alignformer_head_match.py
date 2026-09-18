@@ -48,6 +48,30 @@ def test_an_empty_object_set_does_not_produce_inf_or_nan():
     assert torch.isfinite(assignment).all()
 
 
+def test_empty_object_set_still_satisfies_the_normalization_contract():
+    # A non-zero alpha (a learned parameter is essentially always non-zero)
+    # must not leak into the degenerate branch: every real row/column on the
+    # other side is certain to match its dustbin, i.e. exp(log_assignment)
+    # sums to 1 along the real rows and along the real columns.
+    scores = torch.randn(1, 0, 4)
+    alpha = torch.tensor(1.3)
+
+    assignment = log_sinkhorn(scores, alpha, DEFAULT_SINKHORN_ITERATIONS).exp()
+
+    assert assignment.shape == (1, 1, 5)
+    # The single remaining row is the dustbin row: each real column matches it
+    # with certainty, so those columns sum to 1.
+    assert torch.allclose(assignment[:, :, :-1].sum(dim=1), torch.ones(1, 4), atol=1e-6)
+
+    columns_scores = torch.randn(1, 3, 0)
+    columns_assignment = log_sinkhorn(columns_scores, alpha, DEFAULT_SINKHORN_ITERATIONS).exp()
+
+    assert columns_assignment.shape == (1, 4, 1)
+    assert torch.allclose(
+        columns_assignment[:, :-1, :].sum(dim=2), torch.ones(1, 3), atol=1e-6
+    )
+
+
 def test_is_differentiable_with_finite_gradients():
     scores = torch.randn(1, 3, 3, requires_grad=True)
     alpha = torch.tensor(0.3, requires_grad=True)
@@ -56,3 +80,24 @@ def test_is_differentiable_with_finite_gradients():
 
     assert torch.isfinite(scores.grad).all()
     assert torch.isfinite(alpha.grad).all()
+
+
+def test_empty_object_set_backward_produces_finite_gradients():
+    # The guard's whole justification is "log(0) would put NaN into the
+    # gradients" -- verify a backward pass through it actually stays finite,
+    # for both directions of degeneracy (empty rows, empty columns).
+    scores_no_rows = torch.randn(1, 0, 4, requires_grad=True)
+    alpha_no_rows = torch.tensor(1.3, requires_grad=True)
+    log_sinkhorn(scores_no_rows, alpha_no_rows, DEFAULT_SINKHORN_ITERATIONS).sum().backward()
+
+    assert torch.isfinite(scores_no_rows.grad).all()
+    assert torch.isfinite(alpha_no_rows.grad).all()
+
+    scores_no_columns = torch.randn(1, 3, 0, requires_grad=True)
+    alpha_no_columns = torch.tensor(-0.7, requires_grad=True)
+    log_sinkhorn(
+        scores_no_columns, alpha_no_columns, DEFAULT_SINKHORN_ITERATIONS
+    ).sum().backward()
+
+    assert torch.isfinite(scores_no_columns.grad).all()
+    assert torch.isfinite(alpha_no_columns.grad).all()
