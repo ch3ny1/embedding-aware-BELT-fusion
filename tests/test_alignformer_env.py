@@ -27,3 +27,15 @@ def test_nms_rotated_is_callable():
     keep = box_utils.nms_rotated(corners, scores, 0.15)
 
     assert len(keep) == 1
+
+
+def test_late_fusion_dataset_is_importable():
+    from opencood.data_utils.datasets.late_fusion_dataset import LateFusionDataset
+
+    assert LateFusionDataset is not None
+
+
+def test_voxel_postprocessor_is_importable():
+    from opencood.data_utils.post_processor.voxel_postprocessor import VoxelPostprocessor
+
+    assert VoxelPostprocessor is not None
