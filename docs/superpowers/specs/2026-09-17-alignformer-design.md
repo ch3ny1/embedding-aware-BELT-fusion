@@ -197,13 +197,39 @@ Official OPV2V test split, globally confidence-sorted AP.
 | | Method | Role |
 |---|---|---|
 | 1 | Ego-only, no fusion | floor |
-| 2 | Vanilla late fusion, clean | ceiling (0.856) |
+| 2 | Vanilla late fusion, clean | late-fusion ceiling (0.856 global-sorted / 0.781 frame-order) |
 | 3 | Vanilla late fusion, noisy | what we beat |
 | 4 | RANSAC SE(2) on box centres (`integration/localization.py`) | classical control |
 | 5 | CoLoca-QuA correction + late fusion | strong, ~25 MiB/frame - the bandwidth contrast |
 | 6 | **AlignFormer-A** | direct regression |
 | 7 | **AlignFormer-B** | matching + Procrustes |
 | 8 | Oracle correspondence + Procrustes | isolates matching error from solver error |
+| 9 | V2X-ViT, CoAlign, CoBEVT, AttFuse, Where2comm | **the robustness SOTA to beat** |
+
+### The SOTA claim, stated precisely
+
+Row 9 is the real target. OpenCOOD's own benchmark uses exactly this project's BELT
+reference perturbation (`xyz_std 0.2`, `rpy_std 0.2`, `async_overhead 200-300 ms`),
+and publishes AP@0.7 perfect -> noisy: Late Fusion **62.0 -> 30.7**, F-Cooper
+68.0 -> 46.9, AttFuse 66.4 -> 48.7, V2VNet 67.7 -> 49.3, DiscoNet 69.5 -> 54.1,
+Where2Comm 65.4 -> 53.4, CoBEVT 66.0 -> 54.3, **V2X-ViT 71.2 -> 61.4** (retains 86%,
+the robustness SOTA).
+
+Trained checkpoints for V2X-ViT, CoAlign, CoBEVT, AttFuse and Where2comm are
+**already on this machine** under `/media/chenyi/Elements1/models/opv2v/`, so these
+are run locally on OPV2V under our own noise sweep rather than cited across
+datasets. That makes the comparison like-for-like and costs inference only.
+
+The claim is therefore **robustness per byte**, not clean AP:
+
+> Under the same localization-noise sweep, AlignFormer's AP@0.7 exceeds every
+> intermediate-fusion baseline above while transmitting ~5 KB/frame/agent against
+> their dense BEV feature maps.
+
+Late fusion does not beat intermediate fusion on *clean* AP and this work does not
+claim it does. The headline pairing is the retention ratio under noise against the
+bandwidth gap; clean AP is reported for completeness and to prove nothing was
+sacrificed to get it.
 
 **Metrics.** AP@0.3 / 0.5 / 0.7; pose translation MAE and RMSE; yaw MAE in
 degrees; cross-agent association Top-1; bytes per frame per agent.
