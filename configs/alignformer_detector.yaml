@@ -121,7 +121,13 @@ lr_scheduler:
 
 # --- AlignFormer-specific (not part of OpenCOOD's hypes schema) ---
 # Task 3 loads the per-agent detector from this path. Trained by
-# scripts/train_late_fusion.py; lands at epoch 15 (train_params.epoches),
-# since save_freq: 1 writes net_epoch<N>.pth every epoch.
+# scripts/train_late_fusion.py (finished all 15 epochs; see
+# .superpowers/sdd/2026-09-17-alignformer-p0-p2/task-2-report.md for the
+# full per-epoch validation loss curve). net_epoch14.pth (epoch index 13,
+# 0-indexed) has the lowest validation loss of all 15 checkpoints
+# (0.354794), just below the final epoch's 0.356513 -- the multistep LR
+# scheduler decays at epoch 10 and validation loss plateaus/oscillates
+# afterward rather than climbing, so this is a real (if small) minimum
+# rather than a sign of overfitting past it.
 detector:
-  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion/net_epoch15.pth"
+  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion/net_epoch14.pth"
