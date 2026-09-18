@@ -54,6 +54,23 @@ CoLoca-QuA never needed it (it discards the detection heads); AlignFormer needs 
 for every detection decode and every fusion step. Nothing else in this plan can run
 until this works.
 
+**Scope (amended during execution, ruling R9):** this task covers *every* compiled
+extension the late-fusion path needs, not `iou3d_nms` alone. A second unbuilt
+extension, **`opencood.utils.box_overlaps`** (Cython, not CUDA), makes both
+`opencood.data_utils.datasets.late_fusion_dataset` and
+`opencood.data_utils.post_processor.voxel_postprocessor` unimportable — Tasks 10 and
+12 need both. Build it via `external/OpenCOOD/opencood/utils/setup.py` and assert
+both modules import.
+
+**Explicitly out of scope (ruling R10):** `roiaware_pool3d_cuda` and `pointnet2_*`.
+They fail on torch 2.3.1 because `THC/THC.h` was removed upstream, they are
+PointRCNN-family ops PointPillars late fusion never calls, and AlignFormer's
+ROI-align is our own `grid_sample` code rather than `roiaware_pool3d`. Building them
+would require patching vendored source, which is forbidden. Note that OpenCOOD
+declares four CUDA extensions in one `pcdet_utils/setup.py`, so a naive
+`build_ext --inplace` there fails on the pointnet2 pair — build `iou3d_nms` alone,
+reusing OpenCOOD's own extension declaration.
+
 **Files:**
 - Modify: none (builds in `external/OpenCOOD/`)
 - Test: `tests/test_alignformer_env.py`
@@ -82,20 +99,33 @@ def test_iou3d_nms_cuda_extension_is_built():
     assert hasattr(iou3d_nms_utils, "nms_gpu")
 
 
-def test_nms_rotated_is_callable():
+def _box_corners(x, y, length=4.0, width=2.0):
+    """Axis-aligned 8-corner box centred at (x, y)."""
+    half_l, half_w = length / 2, width / 2
+    base = [
+        (x - half_l, y - half_w), (x + half_l, y - half_w),
+        (x + half_l, y + half_w), (x - half_l, y + half_w),
+    ]
+    return [[cx, cy, z] for z in (0.0, 1.5) for cx, cy in base]
+
+
+def test_nms_rotated_actually_suppresses_overlapping_boxes():
+    # Deliberately NOT a single box: with one input, nms_rotated returns
+    # keep=[0] through a CPU/Shapely path without ever invoking the CUDA
+    # extension, so a single-box test passes even when the build is broken.
+    # Two near-identical boxes plus one far away force real IoU work.
     from opencood.utils import box_utils
 
     corners = torch.tensor(
-        [
-            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-             [0.0, 0.0, 1.0], [2.0, 0.0, 1.0], [2.0, 1.0, 1.0], [0.0, 1.0, 1.0]],
-        ]
+        [_box_corners(0.0, 0.0), _box_corners(0.3, 0.1), _box_corners(60.0, 20.0)]
     ).cuda()
-    scores = torch.tensor([0.9]).cuda()
+    scores = torch.tensor([0.9, 0.8, 0.7]).cuda()
 
-    keep = box_utils.nms_rotated(corners, scores, 0.15)
+    keep = sorted(int(i) for i in box_utils.nms_rotated(corners, scores, 0.15))
 
-    assert len(keep) == 1
+    # The overlapping pair collapses to its higher-scoring member; the
+    # distant box survives untouched.
+    assert keep == [0, 2]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -132,7 +162,8 @@ cd /media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion
 python -m pytest tests/test_alignformer_env.py -v
 ```
 
-Expected: 2 passed.
+Expected: 4 passed — the two NMS assertions above, plus one each for
+`late_fusion_dataset` and `voxel_postprocessor` importing (the R9 scope amendment).
 
 - [ ] **Step 5: Commit**
 
