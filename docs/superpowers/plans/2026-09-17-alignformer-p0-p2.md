@@ -21,6 +21,34 @@ Two modules from the spec's §9 layout are therefore **not** built here:
 whose contents are folded into `model.py` as `AlignFormerA`. Byte accounting is a
 P5 deliverable; nothing in P0-P2 depends on it.
 
+## Corrections applied during execution
+
+This plan is kept as the historical record of what was *planned*. Execution found
+defects in several of its own code and test blocks. Rather than silently rewriting
+them, each is listed here and flagged inline at the relevant step. **Where this
+section and a task's code block disagree, this section is correct.** The authoritative
+running record is the ledger at
+`.superpowers/sdd/2026-09-17-alignformer-p0-p2/progress.md`, which carries the full
+reasoning for every ruling (R1-R27).
+
+| # | Where | Defect found during execution | Resolution |
+|---|---|---|---|
+| R9 | Task 1 | Scope named only `iou3d_nms`; `box_overlaps` is a second unbuilt extension that blocks `late_fusion_dataset` and `voxel_postprocessor` | Scope widened; both built |
+| R10 | Task 1 | `roiaware_pool3d` / `pointnet2_*` fail on torch 2.3.1 (`THC/THC.h` removed upstream) | Deliberately left unbuilt — PointRCNN-family ops, unused here |
+| R11 | Task 1 | The `nms_rotated` test used a **single box**, which passes whether or not the CUDA extension is built (CPU/Shapely path, `keep=[0]` trivially) | Replaced with overlapping + distant boxes; corrected inline |
+| R13-R16 | Task 2 | The released checkpoint is **gone** (Drive 404, verified against controls), so the "download it" step is impossible | Detector trained locally, accelerated ~20x by a `pcd_to_np` cache shim, run in background |
+| R17 | global | `pyproject.toml` declares `requires-python = ">=3.9"` but the only working env (`opencood`) is **3.8.19** | 3.8 is authoritative for AlignFormer; `typing` generics mandated. pyproject left alone (repo-wide decision) |
+| R19 | Task 6 | The empty-set guard returns raw `couplings`, i.e. the learned `alpha` unnormalized — violating the docstring's own contract for any `alpha != 0` | Return `couplings * 0`. **Note:** the obvious `torch.zeros_like` is WRONG — it disconnects autograd and `backward()` raises |
+| R20 | Task 6 | No test ever ran `.backward()` through that guard, though gradient safety is its entire justification | Backward test added on `(1,0,N)` and `(1,M,0)` |
+| R21 | Task 5 | The canonical-invariance test is **empirically vacuous** — both ROIs are all-zero, so `argmax == argmax` is `0 == 0`. Three deliberately broken variants all passed it | Marker re-derived to land exactly on a BEV pixel centre; non-vacuity + full-patch `allclose` assertions; negative controls required |
+| R23 | Task 8 | Three of seven tests vacuous: same psi/t as prediction and truth; box far from origin so a width/length swap survives; `M=N` making a dustbin-index swap invisible | All three given real teeth with hand-derived expected values. **Note:** "move the box to the origin" alone is insufficient — a pure-rotation displacement sum is invariant to a width/length swap because rotation-difference matrices are circulant. A translation mismatch is also required |
+| R25 | Task 2 | The shim's hit counter can never work — `DataLoader` forks 8 workers holding separate counter copies, so it prints `0/0` whether the shim works or not | `multiprocessing.Value`; demonstrated 245/245 vs 0/277. A path-resolution check was added and immediately caught `rglob` not descending symlinks |
+| R27 | Task 9 | The empty-set guard is shape-level, so it misses a mixed batch where one sample's mask is all-False but the tensor is padded — the common `collate` case | Not a live bug on torch 2.5.1, but correctness is incidental to undocumented behaviour; regression test scheduled before Task 13 |
+
+Two of these (R19's `zeros_like`, R23's box-at-origin) were defects in *corrections I
+prescribed*, caught by implementers who checked whether the instruction achieved its
+stated goal rather than just following it.
+
 ## Global Constraints
 
 - Env: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood`
@@ -182,6 +210,11 @@ letting a later task fail with a confusing ImportError."
 ---
 
 ### Task 2: Obtain a PointPillars late-fusion detector
+
+> **CORRECTED DURING EXECUTION (R13-R16).** The download step below is impossible —
+> that checkpoint no longer exists. The detector was trained locally instead, with a
+> `pcd_to_np` cache shim for ~20x speedup. See the corrections table above.
+
 
 **There is no late-fusion checkpoint on this machine.** Every checkpoint under
 `/media/chenyi/Elements1/models/opv2v/` is an *intermediate*-fusion model (f_cooper,
@@ -731,6 +764,12 @@ matched object sufficient to determine full SE(2)."
 
 ### Task 5: `alignformer/embedding.py` - rotated ROI-align and the embedding head
 
+> **CORRECTED DURING EXECUTION (R21).** The canonical-invariance test below is
+> **vacuous as written** — both ROIs come out all-zero, so its assertion is `0 == 0`
+> and three deliberately broken implementations pass it. Do not reuse it as written.
+> The implementation itself is correct. See the corrections table above.
+
+
 The transmit-side feature. Sampling in each box's **canonical frame** is what makes
 the embedding pose-invariant, which is the spec's separation of concerns: the
 embedding carries appearance, the box carries geometry.
@@ -974,6 +1013,13 @@ it describes the object rather than where the sender thinks it is."
 ---
 
 ### Task 6: `alignformer/head_match.py` - Sinkhorn soft assignment with dustbins
+
+> **CORRECTED DURING EXECUTION (R19, R20).** The empty-set guard below returns raw
+> `couplings`, which is **unnormalized** and breaks the function's own documented
+> contract for any `alpha != 0`. It must return `couplings * 0` — and specifically NOT
+> `torch.zeros_like(couplings)`, which disconnects autograd so `backward()` raises.
+> A backward test through the guard was also missing. See the corrections table above.
+
 
 **Files:**
 - Create: `src/embedding_aware_belt_fusion/alignformer/head_match.py`
@@ -1438,6 +1484,11 @@ object sets are unordered, and the tests assert permutation equivariance."
 
 ### Task 8: `alignformer/losses.py` - corner loss and match NLL
 
+> **CORRECTED DURING EXECUTION (R23).** Three of the seven tests below are vacuous:
+> they pass against deliberately broken implementations. The implementation is
+> correct; the tests were not. See the corrections table above.
+
+
 **Files:**
 - Create: `src/embedding_aware_belt_fusion/alignformer/losses.py`
 - Test: `tests/test_alignformer_losses.py`
@@ -1698,6 +1749,13 @@ weights yaw error by object distance, and optimizes what AP actually measures."
 ---
 
 ### Task 9: `alignformer/model.py` - assemble Heads A and B
+
+> **AMENDED DURING EXECUTION.** The brief's code calls `self._encode(batch)`
+> unconditionally, which crashes on its own empty-set test — `AlignFormerTrunk` raises
+> `RuntimeError` on a zero-length object set. An empty-set guard must run BEFORE the
+> trunk in both heads. A batched-recovery test and a mixed-batch NaN regression test
+> (R27) were also added. See the corrections table above.
+
 
 **Files:**
 - Create: `src/embedding_aware_belt_fusion/alignformer/model.py`
