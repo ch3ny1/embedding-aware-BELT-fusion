@@ -75,12 +75,14 @@ def log_sinkhorn(scores: Tensor, alpha: Tensor, iterations: int) -> Tensor:
     # The semantically correct assignment there is that every real row (or
     # column) on the other side matches its dustbin with certainty — the single
     # remaining column (or row) *is* the dustbin — so each carries log(1) = 0.
-    # ``couplings * 0`` satisfies the row/column-sums-to-1 contract exactly and
-    # keeps the backward pass finite: unlike ``torch.zeros_like``, multiplying
-    # by zero stays attached to the autograd graph, so scores/alpha still get a
-    # (zero-valued) gradient instead of an error from a disconnected constant.
-    # There is no matching information to learn from an empty detection set,
-    # so a zero gradient here is correct.
+    # Review MEDIUM-2: this does NOT satisfy the row/column-sums-to-1 contract
+    # (see the docstring above for why -- e.g. a 1-row dustbin result with 3
+    # real columns sums to 4 after `.exp()`, not 1). What ``couplings * 0``
+    # DOES do is keep the backward pass finite: unlike ``torch.zeros_like``,
+    # multiplying by zero stays attached to the autograd graph, so
+    # scores/alpha still get a (zero-valued) gradient instead of an error
+    # from a disconnected constant. There is no matching information to learn
+    # from an empty detection set, so a zero gradient here is correct.
     if rows == 0 or columns == 0:
         return couplings * 0
 

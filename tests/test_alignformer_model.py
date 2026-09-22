@@ -222,9 +222,45 @@ def _mixed_batch(embed_dim=8):
     }
 
 
+def _partially_padded_batch(embed_dim=8):
+    """A single, ORDINARY sample with one padded ego position.
+
+    Review HIGH-1: ``collate`` pads every sample's object sets to the batch
+    maximum, so this is not an exotic input -- it is what essentially every
+    real multi-object training batch looks like. Ego position 2 here is
+    masked out (padding), while positions 0-1 and every cav position are
+    real. For AlignFormerB, that padded row has zero valid (ego, cav) pairs,
+    hence ``mass == 0`` for that row alone -- the atan2(0, 0) singularity --
+    even though the *sample* as a whole is completely ordinary, non-empty,
+    and has plenty of total match mass. This is the reviewer's minimal
+    reproduction, and it is what makes HIGH-1 broader than
+    ``_mixed_batch`` above: it fires on a per-ROW basis, not a per-SAMPLE one.
+    """
+    torch.manual_seed(1)
+    ego_boxes = torch.randn(1, 3, 7)
+    cav_boxes = torch.randn(1, 4, 7)
+    ego_mask = torch.tensor([[True, True, False]])
+    cav_mask = torch.ones(1, 4, dtype=torch.bool)
+    return {
+        "ego_boxes": ego_boxes,
+        "ego_scores": torch.ones(1, 3),
+        "ego_embeddings": torch.randn(1, 3, embed_dim),
+        "ego_mask": ego_mask,
+        "cav_boxes": cav_boxes,
+        "cav_scores": torch.ones(1, 4),
+        "cav_embeddings": torch.randn(1, 4, embed_dim),
+        "cav_mask": cav_mask,
+    }
+
+
 @pytest.mark.parametrize("model_cls", [AlignFormerA, AlignFormerB])
-def test_mixed_batch_with_an_empty_row_produces_no_nan(model_cls):
-    """R27: a mixed batch must not NaN, in the forward OR the backward pass.
+@pytest.mark.parametrize(
+    "batch_fn",
+    [_mixed_batch, _partially_padded_batch],
+    ids=["fully_masked_row", "partially_padded_row"],
+)
+def test_mixed_batch_with_an_empty_row_produces_no_nan(model_cls, batch_fn):
+    """R27: neither an entirely-empty row NOR an ordinary padded row may NaN.
 
     ``nn.MultiheadAttention`` returns NaN for every query in a batch item
     whose entire key set is masked (softmax over an all -inf row is 0/0).
@@ -234,11 +270,13 @@ def test_mixed_batch_with_an_empty_row_produces_no_nan(model_cls):
     not clean the computation graph: ``0 * NaN == NaN``, so the corrupted
     row's NaN reappears in the *gradient* of every shared parameter once you
     call ``.backward()``, even though every forward value is finite. This is
-    the regression this test is for; see also
-    AlignFormerB's own atan2(0, 0) gradient singularity for a zero-weight row.
+    the regression this test is for; see also AlignFormerB's own
+    atan2(0, 0) gradient singularity for a zero-weight row -- exercised by
+    ``_partially_padded_batch`` on essentially every real training batch, not
+    only by ``_mixed_batch``'s wholly-empty-sample case (review HIGH-1).
     """
     model = model_cls(embed_dim=8)
-    batch = _mixed_batch()
+    batch = batch_fn()
 
     estimate = model(batch)
 
@@ -246,13 +284,26 @@ def test_mixed_batch_with_an_empty_row_produces_no_nan(model_cls):
     assert torch.isfinite(estimate.t).all()
     assert torch.isfinite(estimate.confidence).all()
 
-    # The empty row (sample 1) must be the identity correction, zero confidence.
-    assert estimate.psi[1].item() == pytest.approx(0.0)
-    assert torch.allclose(estimate.t[1], torch.zeros(2))
-    assert estimate.confidence[1].item() == pytest.approx(0.0)
-
     (estimate.psi.sum() + estimate.t.sum() + estimate.confidence.sum()).backward()
 
     gradients = [p.grad for p in model.parameters() if p.grad is not None]
     assert gradients, "no gradient reached any parameter"
     assert all(torch.isfinite(g).all() for g in gradients)
+
+
+@pytest.mark.parametrize("model_cls", [AlignFormerA, AlignFormerB])
+def test_fully_empty_row_is_the_identity_correction_with_zero_confidence(model_cls):
+    """The wholly-empty-sample-specific guarantee, kept separate from the
+    finite-gradient parametrization above: exact identity correction and
+    zero confidence are only meaningful for a sample with NO real objects at
+    all. The partially-padded case has a real, non-zero correction to
+    estimate and no such guarantee applies to it.
+    """
+    model = model_cls(embed_dim=8)
+    batch = _mixed_batch()
+
+    estimate = model(batch)
+
+    assert estimate.psi[1].item() == pytest.approx(0.0)
+    assert torch.allclose(estimate.t[1], torch.zeros(2))
+    assert estimate.confidence[1].item() == pytest.approx(0.0)

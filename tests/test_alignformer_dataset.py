@@ -16,7 +16,6 @@ from embedding_aware_belt_fusion.alignformer.dataset import (
     NoiseSchedule,
     OPV2VObjectSetDataset,
     _project_boxes_to_ego,
-    _truncate_by_score,
     collate,
     correspondence_indices,
 )
@@ -42,49 +41,77 @@ def test_correspondences_pair_shared_object_ids():
     assert cav_match.tolist() == [3, 0, -1]
 
 
-def test_truncating_before_matching_drops_a_truncated_partner_cleanly():
-    """R26: pin __getitem__'s truncate-THEN-match order (see its own comment).
+def test_truncating_before_matching_drops_a_truncated_partner_cleanly(tmp_path, monkeypatch):
+    """R26.7 / review HIGH-2: pin __getitem__'s truncate-THEN-match order FOR REAL.
 
-    Matching on the full, untruncated arrays first would compute indices into
-    those untruncated arrays; truncating afterwards can then both drop a
-    detection that was somebody's match AND silently relabel a *different*,
-    surviving detection into the position the stale index now points at --
-    not a crash, a wrong pairing. This test constructs exactly that case and
-    checks both that the correct (truncate-then-match) order reports no match
-    for the truncated-away partner, and that matching on the full arrays
-    would have pointed at a row that is no longer the same object after
-    truncation.
+    The first version of this test (caught by review) called
+    ``_truncate_by_score`` and ``correspondence_indices`` directly and
+    asserted what the CORRECT order *would* produce -- a restatement of the
+    argument, never routed through ``__getitem__`` itself. The reviewer
+    proved this vacuous by reordering ``__getitem__`` to match-before-truncate
+    and showing the whole dataset test file, including that test, still
+    passed unchanged.
+
+    This version calls ``dataset[0]`` directly. ``trunk.MAX_OBJECTS`` (64) is
+    monkeypatched down to 2 so a 3-detection cav frame actually triggers
+    truncation without needing to write 65 synthetic boxes. The cav
+    detection that matches an ego object ("42") is deliberately the
+    lowest-scoring of the three, so it is exactly the one truncation drops.
     """
-    ego_ids = ["X", "Y"]
-    ego_boxes = np.zeros((2, 7))
-    ego_scores = np.array([1.0, 0.9])
-    ego_roi = np.zeros((2, 2, 2, 2))
+    monkeypatch.setattr("embedding_aware_belt_fusion.alignformer.dataset.MAX_OBJECTS", 2)
 
-    # "X" (score 0.5) is the lowest-scoring CAV detection and is the one
-    # truncation to max_objects=2 drops; "Z" and "W" survive.
-    cav_ids = ["Z", "X", "W"]
-    cav_boxes = np.zeros((3, 7))
-    cav_scores = np.array([1.0, 0.5, 0.9])
-    cav_roi = np.zeros((3, 2, 2, 2))
+    scenario, timestamp, ego_id, cav_id = "scenario_trunc", "000001", "ego", "cav"
+    ego_boxes = np.array(
+        [[0.0, 0.0, 0.0, 1.5, 1.5, 4.0, 0.0], [1.0, 1.0, 0.0, 1.5, 1.5, 4.0, 0.0]]
+    )
+    # 3 cav detections > the monkeypatched MAX_OBJECTS=2. "42" (score 0.1) is
+    # the LOWEST-scoring, so truncation to top-2 by score drops exactly it,
+    # keeping "99" and "7".
+    cav_boxes = np.array([
+        [5.0, 5.0, 0.0, 1.5, 1.5, 4.0, 0.0],
+        [6.0, 6.0, 0.0, 1.5, 1.5, 4.0, 0.0],
+        [7.0, 7.0, 0.0, 1.5, 1.5, 4.0, 0.0],
+    ])
 
-    truncated_ego_ids = _truncate_by_score(ego_boxes, ego_scores, ego_roi, ego_ids, 2)[3]
-    truncated_cav_ids = _truncate_by_score(cav_boxes, cav_scores, cav_roi, cav_ids, 2)[3]
-    assert truncated_cav_ids == ["Z", "W"]  # "X" was the lowest score, dropped.
+    write_frame(
+        cache_path(tmp_path, "train", scenario, ego_id, timestamp),
+        FrameRecord(
+            boxes=ego_boxes.astype(np.float32),
+            scores=np.array([1.0, 1.0], dtype=np.float32),
+            gt_ids=["42", None],
+            roi=np.zeros((2, 2, 2, 2), dtype=np.float16),
+        ),
+    )
+    write_frame(
+        cache_path(tmp_path, "train", scenario, cav_id, timestamp),
+        FrameRecord(
+            boxes=cav_boxes.astype(np.float32),
+            scores=np.array([1.0, 0.1, 0.9], dtype=np.float32),
+            gt_ids=["99", "42", "7"],
+            roi=np.zeros((3, 2, 2, 2), dtype=np.float16),
+        ),
+    )
 
-    # Correct order (what __getitem__ does): truncate first, then match the
-    # surviving, final arrays.
-    ego_match, cav_match = correspondence_indices(truncated_ego_ids, truncated_cav_ids)
-    assert ego_match.tolist() == [-1, -1]  # X's only match was truncated away.
-    assert cav_match.tolist() == [-1, -1]
+    pair = AgentPair(
+        scenario=scenario,
+        timestamp=timestamp,
+        ego_id=ego_id,
+        cav_id=cav_id,
+        ego_pose=_EGO_POSE,
+        cav_pose=_CAV_POSE_TRUE,
+    )
+    dataset = OPV2VObjectSetDataset(
+        [pair], tmp_path, "train", noise_schedule=NoiseSchedule(max_xy_std=0.0), train=False
+    )
+    sample = dataset[0]
 
-    # What matching on the full, untruncated arrays would have produced:
-    # ego index 0 ("X") matched cav index 1 ("X").
-    wrong_ego_match, _ = correspondence_indices(ego_ids, cav_ids)
-    assert wrong_ego_match.tolist() == [1, -1]
-    # After truncation, cav index 1 in the FINAL array is "W", not "X" -- so
-    # blindly keeping that stale index would silently pair ego's "X" with
-    # cav's "W", a wrong match, not merely an out-of-range one.
-    assert truncated_cav_ids[wrong_ego_match[0].item()] == "W"
+    # "42"'s only cav-side match was truncated away, so ego index 0 ("42")
+    # must report no match against the FINAL, truncated arrays -- not a
+    # stale index that happens to still be in range but now names a
+    # different, surviving object ("7", which "42" never matched).
+    assert sample["ego_match"].tolist() == [-1, -1]
+    assert sample["cav_match"].tolist() == [-1, -1]
+    assert sample["cav_boxes"].shape[0] == 2  # truncation to MAX_OBJECTS=2 did happen
 
 
 def test_none_ids_never_match_each_other():
@@ -175,7 +202,7 @@ def _true_projection(cav_boxes: np.ndarray) -> np.ndarray:
     return (homogeneous @ transform.T)[:, :2]
 
 
-def _build_dataset(tmp_path, sign=1.0):
+def _build_dataset(tmp_path, sign=1.0, total_epochs=1):
     cav_boxes = np.array(
         [[3.0, -2.0, 0.0, 1.5, 1.5, 4.0, 0.4], [-5.0, 6.0, 0.0, 1.5, 1.5, 4.0, -0.9]]
     )
@@ -203,6 +230,7 @@ def _build_dataset(tmp_path, sign=1.0):
         "train",
         noise_schedule=NoiseSchedule(max_xy_std=3.0),
         train=True,
+        total_epochs=total_epochs,
     )
     return dataset, cav_boxes
 
@@ -248,7 +276,7 @@ def test_negative_control_wrong_sign_correction_fails(tmp_path):
 def test_projection_rotates_the_yaw_column_by_the_relative_heading():
     """R30: the yaw column (index 6) must be exactly ``yaw + (agent_yaw - ego_yaw)``.
 
-    Poses chosen so the relative heading (agent 30deg minus ego -15deg... i.e.
+    Poses chosen so the relative heading (agent -15deg minus ego 30deg, i.e.
     -15 - 30 = -45deg) is non-zero: a projection with zero relative rotation
     would pass even if the ``+ dyaw`` term were deleted entirely, so it is not
     a valid test of the yaw update. The expected value is hand-computed here
@@ -336,8 +364,10 @@ def test_set_epoch_actually_changes_the_sampled_noise(tmp_path):
     the final epoch it returns the full max_xy_std, so the residual t_true
     must be measurably non-zero.
     """
-    dataset, _ = _build_dataset(tmp_path)
-    dataset.total_epochs = 5
+    # Review LOW-6: total_epochs is passed through the public constructor
+    # (not set as a post-construction attribute), so this test is coupled to
+    # OPV2VObjectSetDataset's public API, not an internal attribute name.
+    dataset, _ = _build_dataset(tmp_path, total_epochs=5)
 
     dataset.set_epoch(0)
     sample_first_epoch = dataset[0]

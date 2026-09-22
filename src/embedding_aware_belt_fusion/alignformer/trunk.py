@@ -16,6 +16,8 @@ from typing import Tuple
 import torch
 from torch import Tensor, nn
 
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
+
 DEFAULT_MODEL_DIM = 256
 DEFAULT_LAYERS = 4
 DEFAULT_HEADS = 4
@@ -24,7 +26,8 @@ MAX_OBJECTS = 64
 
 # 8 geometry features plus the detector score.
 GEOMETRY_FEATURES = 9
-_BOX_YAW = 6
+# BOX_YAW (imported above): the yaw index is defined once, in boxes.py beside
+# AgentDetections (the class that commits to the 'hwl' layout). R34.
 
 
 def tokenize(boxes: Tensor, scores: Tensor, embeddings: Tensor) -> Tensor:
@@ -44,7 +47,7 @@ def tokenize(boxes: Tensor, scores: Tensor, embeddings: Tensor) -> Tensor:
     Tensor
         ``(B, N, GEOMETRY_FEATURES + d)``.
     """
-    yaw = boxes[..., _BOX_YAW]
+    yaw = boxes[..., BOX_YAW]
     geometry = torch.cat(
         [
             boxes[..., :6],
@@ -80,11 +83,25 @@ def _attend_without_degenerate_rows(
     empty key set should contribute no attention update -- and unlike
     ``nan_to_num`` this keeps every intermediate value finite, so gradients
     computed through it are finite as well.
+
+    Requires ``valid_keys.shape[1] > 0`` (a real, non-empty key dimension):
+    the caller (``AlignFormerA``/``AlignFormerB`` via ``_is_empty``) must
+    already have excluded a wholly empty ego/cav set before invoking the
+    trunk at all, since there is no key position 0 to unmask otherwise.
     """
+    if valid_keys.shape[1] == 0:
+        raise ValueError(
+            "valid_keys has zero keys (shape "
+            f"{tuple(valid_keys.shape)}); the caller must exclude a wholly "
+            "empty object set before calling attention -- see _is_empty in "
+            "model.py, which every caller of the trunk already checks"
+        )
+
     fully_masked = ~valid_keys.any(dim=1)
+    # ``~valid_keys`` already allocates a fresh tensor, so no further .clone()
+    # is needed before writing into it below.
     key_padding_mask = ~valid_keys
     if fully_masked.any():
-        key_padding_mask = key_padding_mask.clone()
         key_padding_mask[fully_masked, 0] = False
 
     attended, _ = attention(

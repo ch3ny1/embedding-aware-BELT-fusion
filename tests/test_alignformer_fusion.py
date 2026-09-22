@@ -18,6 +18,22 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
 # source -- external/OpenCOOD is a vendored submodule -- so it is silenced
 # here, scoped to this module and to exactly that shapely warning, rather than
 # with a blanket filter.
+#
+# Review LOW-4: investigated, not just filtered. Traced (via
+# `pytest -W error:...` with this filter disabled) to
+# external/OpenCOOD/opencood/utils/box_utils.py:624's `nms_rotated`, calling
+# `compute_iou` on the two widely-SEPARATED (non-overlapping) duplicate boxes
+# `test_late_fuse_suppresses_overlapping_cross_agent_duplicates` places 50 m
+# apart. Reproduced standalone: `Polygon([(2,-1),(2,1),(-2,1),(-2,-1)]).
+# intersection(Polygon([(52,-1),(52,1),(48,1),(48,-1)]))` on shapely 2.0.0
+# raises exactly this RuntimeWarning while still returning `POLYGON EMPTY`
+# with `area == 0.0` -- a correct, finite result. Both input polygons are
+# `shapely.is_valid`. So this is a GEOS/shapely-internal transient during the
+# robust intersection predicate for disjoint geometries, not a masked
+# correctness bug in either polygon's construction: independently confirmed
+# by wrapping `compute_iou` across this entire file's run (15 calls, 0
+# non-finite results reaching its return value). The filter is correctly
+# targeted and scoped; nothing here needed widening.
 pytestmark = pytest.mark.filterwarnings(
     "ignore:invalid value encountered in intersection:RuntimeWarning:shapely"
 )

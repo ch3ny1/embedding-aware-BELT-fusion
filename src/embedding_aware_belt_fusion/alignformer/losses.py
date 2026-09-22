@@ -13,10 +13,12 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-# Box layout is OpenCOOD 'hwl': [x, y, z, h, w, l, yaw].
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
+
+# Box layout is OpenCOOD 'hwl': [x, y, z, h, w, l, yaw]. R34: the yaw index
+# is defined once, in boxes.py beside AgentDetections, and imported here.
 _BOX_WIDTH = 4
 _BOX_LENGTH = 5
-_BOX_YAW = 6
 
 
 def bev_corners(boxes: Tensor) -> Tensor:
@@ -31,8 +33,8 @@ def bev_corners(boxes: Tensor) -> Tensor:
     along = half_length.unsqueeze(-1) * signs[:, 0]
     across = half_width.unsqueeze(-1) * signs[:, 1]
 
-    cosine = torch.cos(boxes[..., _BOX_YAW]).unsqueeze(-1)
-    sine = torch.sin(boxes[..., _BOX_YAW]).unsqueeze(-1)
+    cosine = torch.cos(boxes[..., BOX_YAW]).unsqueeze(-1)
+    sine = torch.sin(boxes[..., BOX_YAW]).unsqueeze(-1)
     x = boxes[..., 0:1] + along * cosine - across * sine
     y = boxes[..., 1:2] + along * sine + across * cosine
     return torch.stack([x, y], dim=-1)

@@ -126,6 +126,38 @@ These must be explicit or training produces NaNs:
 - Confidence is derived from match mass plus post-fit residual, and is exported
   so the BELT-style uncertainty fusion stage can consume it.
 
+#### `AlignFormerB`'s per-object `atan2(0, 0)` guard: reachability analysis
+
+`model.py::AlignFormerB._soft_correspondence` derives each ego object's
+virtual CAV heading via `atan2(direction_y, direction_x)`, where `direction`
+is the soft-match-weighted mean CAV heading. Any row with zero soft-match
+weight (an ordinary padded ego position in a collated batch, not just a
+wholly empty sample) has `direction == (0, 0)` exactly, which is a genuine
+`atan2` gradient singularity, guarded by routing those rows through a
+placeholder direction before the call (see the code comment there for the
+mechanism -- it differs between the padded-row case, where the row's own
+Kabsch weight is what makes the placeholder harmless, and the wholly-empty
+-sample case, where `MIN_MATCH_MASS` zeroes the whole correction instead).
+
+This subsection records, separately from the mechanism, whether the
+singularity is reachable *in the first place* for a real, trained model --
+i.e. whether `direction` can land arbitrarily close to, but not exactly at,
+`(0, 0)` for a row that is NOT simply zero-weight (which is safe regardless):
+`atan2`'s gradient magnitude is `1/r` where `r = sqrt(x^2+y^2)`, so it is
+`~7e14` at `r=1e-15` and literally `inf` by `r=1e-25` (float32 underflow of
+`x^2+y^2`). Two attempts to drive the end-to-end model into that window both
+failed, and the reason is structural: `weighted_se2_kabsch`'s
+`MIN_MATCH_MASS = 1.0` zeroes the gradient for any sample whose total mass is
+under 1, and above that floor Sinkhorn's normalization runs through a single
+shared dustbin scalar, so every row's dustbin share stays comparable to every
+other row's. Separating one row's weight from another's by the ~46 nats
+needed to reach `1e-20` while another stays near 1 would require a learned
+match-score temperature below ~0.043 (`tau` initializes at 0.1, see 3.5).
+Reachable in principle if `tau` collapses during training; not reproduced
+here. **If a non-finite gradient is ever seen from `AlignFormerB` in
+training, this is the first place to look** — check whether `log_temperature`
+has collapsed toward that range.
+
 ### 3.5 Hyperparameter defaults
 
 Starting values, all ablatable. Fixed here so the implementation plan is

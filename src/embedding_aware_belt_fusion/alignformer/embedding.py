@@ -14,10 +14,12 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-# Box layout is OpenCOOD 'hwl': [x, y, z, h, w, l, yaw].
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
+
+# Box layout is OpenCOOD 'hwl': [x, y, z, h, w, l, yaw]. R34: the yaw index
+# is defined once, in boxes.py beside AgentDetections, and imported here.
 _BOX_WIDTH = 4
 _BOX_LENGTH = 5
-_BOX_YAW = 6
 
 
 def rotated_roi_align(
@@ -75,8 +77,8 @@ def rotated_roi_align(
     along = along.reshape(1, -1) * boxes[:, _BOX_LENGTH : _BOX_LENGTH + 1]
     across = across.reshape(1, -1) * boxes[:, _BOX_WIDTH : _BOX_WIDTH + 1]
 
-    cosine = torch.cos(boxes[:, _BOX_YAW]).unsqueeze(1)
-    sine = torch.sin(boxes[:, _BOX_YAW]).unsqueeze(1)
+    cosine = torch.cos(boxes[:, BOX_YAW]).unsqueeze(1)
+    sine = torch.sin(boxes[:, BOX_YAW]).unsqueeze(1)
     world_x = boxes[:, 0:1] + along * cosine - across * sine
     world_y = boxes[:, 1:2] + along * sine + across * cosine
 

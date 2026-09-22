@@ -154,17 +154,25 @@ class AlignFormerB(_Base):
         # Test hook: score on the raw embeddings, bypassing an untrained trunk.
         self.use_raw_embedding_scores = False
 
-    def forward(self, batch: Mapping[str, Tensor]) -> PoseEstimate:
-        # Guard BEFORE the trunk call: see _is_empty's docstring. With an empty
-        # object set there is no correspondence to build anyway, so the zero
-        # correction below is not just a crash-avoidance shortcut - it is the
-        # correct answer.
-        if _is_empty(batch):
-            return _zero_estimate(batch)
+    def _soft_correspondence(
+        self,
+        batch: Mapping[str, Tensor],
+        ego: Tensor,
+        cav: Tensor,
+        ego_mask: Tensor,
+        cav_mask: Tensor,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Score, Sinkhorn-normalize, and reduce to one virtual CAV point per ego object.
 
-        ego_mask, cav_mask = batch["ego_mask"], batch["cav_mask"]
-        ego, cav = self._encode(batch)
+        Returns ``(virtual_centres, virtual_yaws, mass, log_assignment)``:
+        ``virtual_centres``/``virtual_yaws`` are the per-ego-object soft-matched
+        CAV centre/heading (``(B, M, 2)`` / ``(B, M)``), ``mass`` is each row's
+        total soft-match weight (``(B, M)``), and ``log_assignment`` is passed
+        through unchanged for :class:`PoseEstimate`.
 
+        LOW-7 (review): extracted out of ``forward`` so the pose-solving code
+        below is not buried under this block's own comments.
+        """
         if self.use_raw_embedding_scores:
             ego_features = batch["ego_embeddings"]
             cav_features = batch["cav_embeddings"]
@@ -189,42 +197,52 @@ class AlignFormerB(_Base):
             weights @ torch.stack([torch.cos(cav_yaws), torch.sin(cav_yaws)], dim=-1)
             / safe_mass
         )
-        # R27: atan2's gradient is undefined at exactly (0, 0) -- a
-        # mathematical singularity, not a precision issue -- and every ego
-        # row of a sample with zero soft-match weight (e.g. one all-masked
-        # row in an otherwise normal mixed batch, or a genuinely empty
-        # ego/cav set that reached this far) lands exactly there, since
-        # `weights` is identically 0 for that whole sample. Route those rows
-        # through a placeholder direction with a well-defined gradient before
-        # atan2 -- the same pattern weighted_se2_kabsch uses below for its own
-        # atan2 call. The placeholder's value is never read: MIN_MATCH_MASS
-        # zeroes the correction for exactly these zero-mass rows downstream.
-        # Threshold at `_MIN_MASS` rather than 0, so this guard agrees with the
-        # `safe_mass` clamp two lines above: a row below that floor is already
-        # not computing a true weighted mean, so treating it as zero-weight is
-        # the self-consistent choice.
+        # R27 / review MEDIUM-1: atan2's gradient is undefined at exactly
+        # (0, 0) -- a mathematical singularity -- and any row with zero
+        # soft-match weight (an ordinary padded ego position in a collated
+        # batch, or a wholly empty sample) lands exactly there, since
+        # `weights` is identically 0 for it. Route those rows through a
+        # placeholder direction with a well-defined gradient before atan2,
+        # mirroring weighted_se2_kabsch's own atan2 guard below.
         #
-        # Honest scope: this is consistency hardening, NOT a demonstrated bug
-        # fix. atan2's gradient does go as 1/(x^2 + y^2) -- 7e14 at 1e-15,
-        # literally inf by 1e-25 -- but two attempts to drive the end-to-end
-        # model into that window both failed, and the reason is structural:
-        # `weighted_se2_kabsch`'s MIN_MATCH_MASS = 1.0 zeroes the gradient for
-        # any sample whose total mass is under 1, and above it Sinkhorn's
-        # normalisation runs through a single shared dustbin scalar, so every
-        # row's dustbin share stays comparable. Separating one row by the ~46
-        # nats needed to reach 1e-20 while another holds near 1 would require
-        # a learned temperature below ~0.043 (it initialises at 0.1). Reachable
-        # in principle if the temperature collapses during training; not
-        # reproduced here. If Task 13 ever sees a non-finite gradient, this
-        # comment is the first place to look.
+        # The placeholder's value is never read, but for two DIFFERENT
+        # reasons depending on which case fired: for the dominant case (one
+        # padded row inside an otherwise ordinary, non-empty sample) that
+        # row's own Kabsch WEIGHT (`augmented_mass` below) is 0, so it drops
+        # out of weighted_se2_kabsch's sums regardless of its yaw --
+        # MIN_MATCH_MASS never even applies to a single row, it is a
+        # per-SAMPLE total-mass gate (procrustes.py). For a wholly empty
+        # sample specifically, MIN_MATCH_MASS zeroes the entire correction
+        # instead. Threshold at `_MIN_MASS`, not 0, to agree with the
+        # `safe_mass` clamp above. The reachability analysis for whether this
+        # singularity is achievable end-to-end (it has not been reproduced
+        # here) is in docs/superpowers/specs/2026-09-17-alignformer-design.md,
+        # section 3.4.
         has_weight = mass > _MIN_MASS
-        placeholder_direction = torch.ones_like(virtual_direction) * virtual_direction.new_tensor(
-            [1.0, 0.0]
+        placeholder_direction = virtual_direction.new_tensor([1.0, 0.0]).expand_as(
+            virtual_direction
         )
         safe_direction = torch.where(
             has_weight.unsqueeze(-1), virtual_direction, placeholder_direction
         )
         virtual_yaws = torch.atan2(safe_direction[..., 1], safe_direction[..., 0])
+
+        return virtual_centres, virtual_yaws, mass, log_assignment
+
+    def forward(self, batch: Mapping[str, Tensor]) -> PoseEstimate:
+        # Guard BEFORE the trunk call: see _is_empty's docstring. With an empty
+        # object set there is no correspondence to build anyway, so the zero
+        # correction below is not just a crash-avoidance shortcut - it is the
+        # correct answer.
+        if _is_empty(batch):
+            return _zero_estimate(batch)
+
+        ego_mask, cav_mask = batch["ego_mask"], batch["cav_mask"]
+        ego, cav = self._encode(batch)
+
+        virtual_centres, virtual_yaws, mass, log_assignment = self._soft_correspondence(
+            batch, ego, cav, ego_mask, cav_mask
+        )
 
         source = augment_with_heading(virtual_centres, virtual_yaws, self.heading_lambda)
         target = augment_with_heading(

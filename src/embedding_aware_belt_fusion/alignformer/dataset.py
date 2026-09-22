@@ -23,6 +23,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
 from embedding_aware_belt_fusion.alignformer.cache import cache_path, read_frame
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
 from embedding_aware_belt_fusion.coloca.dataset import sample_rng
@@ -38,8 +39,8 @@ from embedding_aware_belt_fusion.coloca.index import AgentPair
 YAW_STD_PER_XY_STD = 1.0
 
 # Box layout is OpenCOOD's "hwl" order [x, y, z, h, w, l, yaw] (see
-# alignformer.boxes.AgentDetections); yaw is the 7th (index 6) field.
-_BOX_YAW_INDEX = 6
+# alignformer.boxes.AgentDetections); BOX_YAW (imported above) is the 7th
+# (index 6) field, defined once in boxes.py. R34.
 # Pose layout is OPV2V/CARLA's [x, y, z, roll, yaw, pitch] with angles in
 # degrees (see coloca.geometry); x, y, yaw are indices 0, 1, 4.
 _POSE_X, _POSE_Y, _POSE_YAW = 0, 1, 4
@@ -167,7 +168,7 @@ def _project_boxes_to_ego(boxes: np.ndarray, agent_pose: Sequence[float],
     projected = boxes.copy()
     projected[:, :2] = boxes[:, :2] @ transform[:2, :2].T + transform[:2, 2]
     yaw_delta = np.arctan2(transform[1, 0], transform[0, 0])
-    projected[:, _BOX_YAW_INDEX] = boxes[:, _BOX_YAW_INDEX] + yaw_delta
+    projected[:, BOX_YAW] = boxes[:, BOX_YAW] + yaw_delta
     return projected
 
 
