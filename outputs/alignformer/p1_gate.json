@@ -1,0 +1,71 @@
+{
+  "method": "alignformer_b_stage1",
+  "metric": "top1",
+  "config": "configs/alignformer.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/stage1/best.pth",
+  "checkpoint_epoch": 9,
+  "cache_root": "/media/chenyi/basement2/cache/alignformer",
+  "comm_range_m": 40.0,
+  "train_scenarios": 37,
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "val_pairs": 4176,
+  "gate": {
+    "name": "P1",
+    "definition": "cross-agent Top-1: of the ego objects that have a true CAV counterpart, the fraction whose highest-scoring real CAV column is the correct one. Ego objects with no counterpart, and padded positions, are excluded.",
+    "threshold": 0.85,
+    "sigma_m": 0.5,
+    "value": 0.9964710008329315,
+    "passed": true
+  },
+  "results": {
+    "sigma_0.5m": {
+      "top1": 0.9964710008329315,
+      "top1_including_dustbin": 0.9775985270264346,
+      "top1_nearest_centre": 0.9998027267546359,
+      "top1_chance": 0.06549261422191512,
+      "dustbin_mass": 0.2488338891401496,
+      "match_nll": 0.36195129624596145,
+      "countable_objects": 45622.0,
+      "skipped_batches": 0.0
+    },
+    "sigma_0m": {
+      "top1": 0.9967559510762352,
+      "top1_including_dustbin": 0.9791767129893473,
+      "top1_nearest_centre": 1.0,
+      "top1_chance": 0.06549261422191512,
+      "dustbin_mass": 0.24763211520484382,
+      "match_nll": 0.36103561689907854,
+      "countable_objects": 45622.0,
+      "skipped_batches": 0.0
+    },
+    "sigma_1m": {
+      "top1": 0.9902678532287055,
+      "top1_including_dustbin": 0.9645784928324054,
+      "top1_nearest_centre": 0.9846784446100566,
+      "top1_chance": 0.06549261422191512,
+      "dustbin_mass": 0.25443717600905125,
+      "match_nll": 0.383759490016735,
+      "countable_objects": 45622.0,
+      "skipped_batches": 0.0
+    },
+    "sigma_2m": {
+      "top1": 0.9256499057472272,
+      "top1_including_dustbin": 0.8603743807812021,
+      "top1_nearest_centre": 0.8930559817631845,
+      "top1_chance": 0.06549261422191512,
+      "dustbin_mass": 0.29359731680863993,
+      "match_nll": 0.6807221092961051,
+      "countable_objects": 45622.0,
+      "skipped_batches": 0.0
+    }
+  }
+}

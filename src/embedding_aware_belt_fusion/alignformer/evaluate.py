@@ -1,10 +1,19 @@
 """AlignFormer evaluation CLI: ``--method`` selects the fusion pipeline,
 ``--metric`` selects what to report (ruling R1).
 
-Only ``--method late_fusion_clean --metric ap`` is wired up by this task (the
-P0 gate). ``alignformer_a``, ``alignformer_b``, ``ransac`` methods and the
-``top1``/``pose`` metrics are later tasks' work; the dispatch tables below
-exist so those slot in as new entries without reshaping the CLI.
+Two metrics are wired up:
+
+- ``--metric ap`` needs ``--config`` (an OpenCOOD detector hypes yaml) and
+  ``--split``, runs the full detect/correct/fuse pipeline over an OPV2V split
+  directory, and reports AP. This is the P0 gate.
+- ``--metric top1`` needs ``--config`` (``configs/alignformer.yaml``) and
+  ``--checkpoint`` (a stage-1 checkpoint), and reports cross-agent association
+  Top-1 on the held-out *validation scenarios* carved out of the train split.
+  This is the P1 gate. It touches neither OpenCOOD nor the raw point clouds:
+  everything it needs is in the detection/ROI cache.
+
+``ransac`` and the ``pose`` metric are later tasks' work; the dispatch tables
+below exist so those slot in as new entries without reshaping the CLI.
 
 ``run_late_fusion_clean`` reuses OpenCOOD's own ``LateFusionDataset`` (the
 same dataset class ``alignformer/cache.py`` and
@@ -42,23 +51,58 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
 _AP_IOU_THRESHOLDS = (0.3, 0.5, 0.7)
 _PROGRESS_INTERVAL = 200
 
+# Spec section 4: the P1 gate is cross-agent Top-1 at or above this, measured
+# at stage 1's own training-noise maximum (train.stage1_max_xy_std).
+P1_TOP1_GATE = 0.85
+# Reported alongside the gate. Stage 1 never trains above its own maximum, so
+# 1.0 and 2.0 m are out-of-distribution here; they are the levels stage 2's
+# curriculum reaches, and they are what separates the embedding's contribution
+# from geometry's -- at sub-metre error, nearest-centre matching alone is
+# already near-perfect, so the gate's own sigma cannot make that distinction.
+_TOP1_CONTEXT_SIGMAS = (0.0, 1.0, 2.0)
+_TOP1_BATCH_SIZE = 64
+_DEFAULT_TOP1_WORKERS = 10
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True, help="OpenCOOD-format detector hypes yaml")
-    parser.add_argument("--split", type=Path, required=True, help="OPV2V split directory, e.g. .../OPV2V/test")
     parser.add_argument(
-        "--method", choices=("late_fusion_clean",), default="late_fusion_clean",
-        help="Fusion pipeline to evaluate.",
+        "--config", type=Path, required=True,
+        help="OpenCOOD detector hypes yaml for --metric ap; configs/alignformer.yaml for top1",
     )
     parser.add_argument(
-        "--metric", choices=("ap",), default="ap",
-        help="What to report for the selected method.",
+        "--split", type=Path, default=None,
+        help="OPV2V split directory, e.g. .../OPV2V/test. Required by --metric ap only; "
+             "--metric top1 takes its split from the config's scenario-disjoint val slice.",
+    )
+    parser.add_argument(
+        "--checkpoint", type=Path, default=None,
+        help="stage-1 checkpoint; required by --metric top1 only (--metric ap reads the "
+             "detector checkpoint named in its own hypes yaml).",
+    )
+    parser.add_argument(
+        "--method", choices=("late_fusion_clean",), default="late_fusion_clean",
+        help="Fusion pipeline to evaluate. Ignored by --metric top1, which has no "
+             "fusion step: it scores the correspondence, not fused boxes.",
+    )
+    parser.add_argument(
+        "--metric", choices=("ap", "top1"), default="ap",
+        help="What to report.",
     )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--max-frames", type=int, default=None, help="limit frames, for smoke-testing")
-    return parser.parse_args()
+    parser.add_argument(
+        "--num-workers", type=int, default=_DEFAULT_TOP1_WORKERS,
+        help="cache-reading data loader workers; --metric top1 only",
+    )
+
+    args = parser.parse_args()
+    required = {"ap": ("split",), "top1": ("checkpoint",)}[args.metric]
+    for name in required:
+        if getattr(args, name) is None:
+            parser.error(f"--metric {args.metric} requires --{name}")
+    return args
 
 
 def _frame_identity(dataset, index: int) -> Tuple[str, str]:
@@ -215,12 +259,91 @@ def _ap_report(predictions, ground_truth) -> Dict[str, Dict[str, float]]:
     }
 
 
-def main() -> None:
-    args = parse_args()
-    if args.device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but is unavailable")
-    device = torch.device(args.device)
+def _sigma_key(sigma: float) -> str:
+    """Result-dict key for one evaluation noise level, e.g. ``sigma_0.5m``."""
+    return f"sigma_{sigma:g}m"
 
+
+def run_top1(args: argparse.Namespace, device) -> Dict:
+    """Score cross-agent association on the held-out validation scenarios.
+
+    The split is the same scenario-disjoint 15% slice stage 1 validated on, and
+    the same slice the per-agent detector held out, so nothing in the pipeline
+    has seen these scenarios. Splitting by scenario rather than by frame is not
+    a nicety: consecutive OPV2V frames are near-duplicates, so a frame split
+    would report a leaked number.
+    """
+    import yaml
+    from torch.utils.data import DataLoader
+
+    from embedding_aware_belt_fusion.alignformer.dataset import collate
+    from embedding_aware_belt_fusion.alignformer.train import (
+        build_eval_dataset,
+        build_pair_split,
+        evaluate_matching,
+        load_stage1,
+    )
+
+    config = yaml.safe_load(args.config.read_text())
+    modules, checkpoint = load_stage1(args.checkpoint, device)
+    _, val_pairs, train_scenarios, val_scenarios = build_pair_split(config)
+
+    gate_sigma = float(config["train"]["stage1_max_xy_std"])
+    results: Dict[str, Dict[str, float]] = {}
+    for sigma in (gate_sigma,) + _TOP1_CONTEXT_SIGMAS:
+        dataset = build_eval_dataset(config, val_pairs, sigma)
+        loader = DataLoader(
+            dataset,
+            batch_size=_TOP1_BATCH_SIZE,
+            num_workers=args.num_workers,
+            collate_fn=collate,
+            pin_memory=True,
+        )
+        metrics = evaluate_matching(modules, loader, device)
+        results[_sigma_key(sigma)] = metrics
+        print(
+            f"  sigma={sigma:g} m: top1={metrics['top1']:.4f} "
+            f"(nearest-centre control {metrics['top1_nearest_centre']:.4f}, "
+            f"chance {metrics['top1_chance']:.4f})",
+            flush=True,
+        )
+
+    measured = results[_sigma_key(gate_sigma)]["top1"]
+    return {
+        "method": "alignformer_b_stage1",
+        "metric": "top1",
+        "config": str(args.config),
+        "split": (
+            f"{config['data']['train_root']} :: validation scenarios "
+            f"(scenario-disjoint, val_scenario_fraction="
+            f"{config['data']['val_scenario_fraction']}, split_seed="
+            f"{config['data']['split_seed']})"
+        ),
+        "checkpoint": str(args.checkpoint.resolve()),
+        "checkpoint_epoch": checkpoint["epoch"],
+        "cache_root": config["data"]["cache_root"],
+        "comm_range_m": config["data"]["comm_range_m"],
+        "train_scenarios": len(train_scenarios),
+        "val_scenarios": val_scenarios,
+        "val_pairs": len(val_pairs),
+        "gate": {
+            "name": "P1",
+            "definition": (
+                "cross-agent Top-1: of the ego objects that have a true CAV "
+                "counterpart, the fraction whose highest-scoring real CAV column "
+                "is the correct one. Ego objects with no counterpart, and padded "
+                "positions, are excluded."
+            ),
+            "threshold": P1_TOP1_GATE,
+            "sigma_m": gate_sigma,
+            "value": measured,
+            "passed": bool(measured >= P1_TOP1_GATE),
+        },
+        "results": results,
+    }
+
+
+def _run_ap(args: argparse.Namespace, device) -> Dict:
     from opencood.data_utils.datasets import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
@@ -235,7 +358,7 @@ def main() -> None:
         dataset, detector, dataset.post_processor, device, max_frames=args.max_frames
     )
 
-    result = {
+    return {
         "method": args.method,
         "metric": args.metric,
         "config": str(args.config),
@@ -246,6 +369,20 @@ def main() -> None:
         "frames": len(predictions),
         "ap": _ap_report(predictions, ground_truth),
     }
+
+
+# Metric -> the runner that produces its result dict. Adding `pose` later is a
+# new entry here, not a change to the CLI or to either runner.
+_METRIC_RUNNERS = {"ap": _run_ap, "top1": run_top1}
+
+
+def main() -> None:
+    args = parse_args()
+    if args.device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is unavailable")
+    device = torch.device(args.device)
+
+    result = _METRIC_RUNNERS[args.metric](args, device)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
