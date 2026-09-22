@@ -199,7 +199,25 @@ class AlignFormerB(_Base):
         # atan2 -- the same pattern weighted_se2_kabsch uses below for its own
         # atan2 call. The placeholder's value is never read: MIN_MATCH_MASS
         # zeroes the correction for exactly these zero-mass rows downstream.
-        has_weight = mass > 0
+        # Threshold at `_MIN_MASS` rather than 0, so this guard agrees with the
+        # `safe_mass` clamp two lines above: a row below that floor is already
+        # not computing a true weighted mean, so treating it as zero-weight is
+        # the self-consistent choice.
+        #
+        # Honest scope: this is consistency hardening, NOT a demonstrated bug
+        # fix. atan2's gradient does go as 1/(x^2 + y^2) -- 7e14 at 1e-15,
+        # literally inf by 1e-25 -- but two attempts to drive the end-to-end
+        # model into that window both failed, and the reason is structural:
+        # `weighted_se2_kabsch`'s MIN_MATCH_MASS = 1.0 zeroes the gradient for
+        # any sample whose total mass is under 1, and above it Sinkhorn's
+        # normalisation runs through a single shared dustbin scalar, so every
+        # row's dustbin share stays comparable. Separating one row by the ~46
+        # nats needed to reach 1e-20 while another holds near 1 would require
+        # a learned temperature below ~0.043 (it initialises at 0.1). Reachable
+        # in principle if the temperature collapses during training; not
+        # reproduced here. If Task 13 ever sees a non-finite gradient, this
+        # comment is the first place to look.
+        has_weight = mass > _MIN_MASS
         placeholder_direction = torch.ones_like(virtual_direction) * virtual_direction.new_tensor(
             [1.0, 0.0]
         )
