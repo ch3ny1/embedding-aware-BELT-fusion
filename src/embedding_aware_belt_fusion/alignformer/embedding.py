@@ -30,7 +30,14 @@ def rotated_roi_align(
 
     Parameters
     ----------
-    features: ``(C, H, W)`` BEV map, H indexing y and W indexing x.
+    features: ``(C, H, W)`` BEV map, H indexing y and W indexing x. R26: a
+        ``(1, C, H, W)`` tensor -- an un-squeezed detector-batch leading dim,
+        e.g. forgetting the ``[0]`` that :class:`AgentDetections` normally
+        applies -- is also accepted and squeezed automatically. Any other
+        4-D shape (a genuine batch of more than one BEV map) is rejected with
+        a ``ValueError`` naming the received shape: this function pairs ONE
+        shared BEV map with every box in ``boxes``, so there is no per-box
+        map to select for batch size > 1.
     boxes: ``(M, 7)`` in ``hwl`` order, in the same frame as ``lidar_range``.
     lidar_range: ``[x_min, y_min, z_min, x_max, y_max, z_max]``.
     output_size: the ``k`` of the ``k x k`` sampling grid.
@@ -41,8 +48,17 @@ def rotated_roi_align(
         ``(M, C, k, k)``. Row index runs along the box's length (forward) axis
         and column index across its width, both in the box frame.
     """
+    if features.dim() == 4:
+        if features.shape[0] != 1:
+            raise ValueError(
+                "features with a leading batch dimension must have batch size 1 "
+                f"(one BEV map shared by every box); got {tuple(features.shape)}"
+            )
+        features = features.squeeze(0)
     if features.dim() != 3:
-        raise ValueError(f"features must be (C, H, W), got {tuple(features.shape)}")
+        raise ValueError(
+            f"features must be (C, H, W) or (1, C, H, W), got {tuple(features.shape)}"
+        )
     if boxes.dim() != 2 or boxes.shape[1] != 7:
         raise ValueError(f"boxes must be (M, 7), got {tuple(boxes.shape)}")
 

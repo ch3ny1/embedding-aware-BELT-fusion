@@ -119,6 +119,11 @@ model so the improvement is unambiguous.
 
 - Env: conda `opencood` (Python 3.8, torch 2.3.1+cu121, spconv). Note this is
   **not** the `belt-fusion` env, which lacks spconv and a working OpenCOOD.
+- R26: `pyproject.toml` declares `requires-python = ">=3.9"`, but the
+  `opencood` env this project actually runs in is **3.8.19** -- 3.8 is
+  authoritative for all AlignFormer code (e.g. no builtin generics like
+  `list[int]`; use `typing.List`/`Dict`/`Tuple`/`Optional` instead). The
+  `pyproject.toml` bound has not been reconciled with this yet.
 - OpenCOOD: `external/OpenCOOD` submodule, used via `PYTHONPATH` (its
   `iou3d_nms` CUDA extension is unbuilt, but CoLoca-QuA never needs NMS - the
   detection heads are discarded).

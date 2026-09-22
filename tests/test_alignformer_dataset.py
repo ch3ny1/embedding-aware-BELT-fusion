@@ -15,6 +15,8 @@ from embedding_aware_belt_fusion.alignformer.cache import FrameRecord, cache_pat
 from embedding_aware_belt_fusion.alignformer.dataset import (
     NoiseSchedule,
     OPV2VObjectSetDataset,
+    _project_boxes_to_ego,
+    _truncate_by_score,
     collate,
     correspondence_indices,
 )
@@ -38,6 +40,51 @@ def test_correspondences_pair_shared_object_ids():
 
     assert ego_match.tolist() == [1, -1, -1, 0]
     assert cav_match.tolist() == [3, 0, -1]
+
+
+def test_truncating_before_matching_drops_a_truncated_partner_cleanly():
+    """R26: pin __getitem__'s truncate-THEN-match order (see its own comment).
+
+    Matching on the full, untruncated arrays first would compute indices into
+    those untruncated arrays; truncating afterwards can then both drop a
+    detection that was somebody's match AND silently relabel a *different*,
+    surviving detection into the position the stale index now points at --
+    not a crash, a wrong pairing. This test constructs exactly that case and
+    checks both that the correct (truncate-then-match) order reports no match
+    for the truncated-away partner, and that matching on the full arrays
+    would have pointed at a row that is no longer the same object after
+    truncation.
+    """
+    ego_ids = ["X", "Y"]
+    ego_boxes = np.zeros((2, 7))
+    ego_scores = np.array([1.0, 0.9])
+    ego_roi = np.zeros((2, 2, 2, 2))
+
+    # "X" (score 0.5) is the lowest-scoring CAV detection and is the one
+    # truncation to max_objects=2 drops; "Z" and "W" survive.
+    cav_ids = ["Z", "X", "W"]
+    cav_boxes = np.zeros((3, 7))
+    cav_scores = np.array([1.0, 0.5, 0.9])
+    cav_roi = np.zeros((3, 2, 2, 2))
+
+    truncated_ego_ids = _truncate_by_score(ego_boxes, ego_scores, ego_roi, ego_ids, 2)[3]
+    truncated_cav_ids = _truncate_by_score(cav_boxes, cav_scores, cav_roi, cav_ids, 2)[3]
+    assert truncated_cav_ids == ["Z", "W"]  # "X" was the lowest score, dropped.
+
+    # Correct order (what __getitem__ does): truncate first, then match the
+    # surviving, final arrays.
+    ego_match, cav_match = correspondence_indices(truncated_ego_ids, truncated_cav_ids)
+    assert ego_match.tolist() == [-1, -1]  # X's only match was truncated away.
+    assert cav_match.tolist() == [-1, -1]
+
+    # What matching on the full, untruncated arrays would have produced:
+    # ego index 0 ("X") matched cav index 1 ("X").
+    wrong_ego_match, _ = correspondence_indices(ego_ids, cav_ids)
+    assert wrong_ego_match.tolist() == [1, -1]
+    # After truncation, cav index 1 in the FINAL array is "W", not "X" -- so
+    # blindly keeping that stale index would silently pair ego's "X" with
+    # cav's "W", a wrong match, not merely an out-of-range one.
+    assert truncated_cav_ids[wrong_ego_match[0].item()] == "W"
 
 
 def test_none_ids_never_match_each_other():
@@ -198,6 +245,29 @@ def test_negative_control_wrong_sign_correction_fails(tmp_path):
         np.testing.assert_allclose(wrongly_corrected.numpy(), expected, atol=1e-4)
 
 
+def test_projection_rotates_the_yaw_column_by_the_relative_heading():
+    """R30: the yaw column (index 6) must be exactly ``yaw + (agent_yaw - ego_yaw)``.
+
+    Poses chosen so the relative heading (agent 30deg minus ego -15deg... i.e.
+    -15 - 30 = -45deg) is non-zero: a projection with zero relative rotation
+    would pass even if the ``+ dyaw`` term were deleted entirely, so it is not
+    a valid test of the yaw update. The expected value is hand-computed here
+    as a literal, independent of the implementation under test:
+
+        dyaw = radians(agent_yaw_deg - ego_yaw_deg) = radians(-15 - 30)
+             = radians(-45) = -0.7853981633974483
+        expected_yaw = input_yaw + dyaw = 0.4 + (-0.7853981633974483)
+                     = -0.38539816339744826
+    """
+    boxes = np.array([[3.0, -2.0, 0.0, 1.5, 1.5, 4.0, 0.4]])
+
+    projected = _project_boxes_to_ego(boxes, _CAV_POSE_TRUE, _EGO_POSE)
+
+    assert projected[0, 6] == pytest.approx(-0.38539816339744826, abs=1e-12)
+    # Sanity: the case is not degenerate -- the yaw actually changed.
+    assert projected[0, 6] != pytest.approx(boxes[0, 6])
+
+
 def test_projection_puts_boxes_in_the_ego_frame_not_the_cav_frame(tmp_path):
     """trunk.tokenize requires boxes already in the ego frame (its docstring).
 
@@ -251,3 +321,33 @@ def test_correspondence_ids_reflect_truncated_final_index_positions(tmp_path):
 
     assert sample["ego_match"].tolist() == [0, -1]
     assert sample["cav_match"].tolist() == [0]
+
+
+def test_set_epoch_actually_changes_the_sampled_noise(tmp_path):
+    """R26: end-to-end check that set_epoch's epoch feeds the noise schedule.
+
+    NoiseSchedule.sigma_for_epoch is unit-tested on its own above, but nothing
+    end-to-end confirmed that OPV2VObjectSetDataset.set_epoch actually wires
+    the epoch it is given through to the noise that gets sampled -- a
+    disconnected set_epoch (e.g. one that updates self.epoch but a stale
+    closure/copy is what __getitem__ reads) would still pass that unit test.
+    At epoch 0 of a 5-epoch ramp the schedule returns sigma == 0, so the
+    injected noise is deterministically zero regardless of the RNG draw; at
+    the final epoch it returns the full max_xy_std, so the residual t_true
+    must be measurably non-zero.
+    """
+    dataset, _ = _build_dataset(tmp_path)
+    dataset.total_epochs = 5
+
+    dataset.set_epoch(0)
+    sample_first_epoch = dataset[0]
+
+    dataset.set_epoch(4)
+    sample_last_epoch = dataset[0]
+
+    np.testing.assert_allclose(
+        sample_first_epoch["t_true"].numpy(), np.zeros(2), atol=1e-6
+    )
+    assert sample_first_epoch["psi_true"].item() == pytest.approx(0.0, abs=1e-6)
+
+    assert torch.linalg.norm(sample_last_epoch["t_true"]).item() > 1e-3

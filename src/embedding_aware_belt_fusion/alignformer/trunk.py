@@ -57,6 +57,44 @@ def tokenize(boxes: Tensor, scores: Tensor, embeddings: Tensor) -> Tensor:
     return torch.cat([geometry, embeddings], dim=-1)
 
 
+def _attend_without_degenerate_rows(
+    attention: nn.MultiheadAttention, query: Tensor, key: Tensor, value: Tensor, valid_keys: Tensor
+) -> Tensor:
+    """Run ``attention`` while avoiding NaN for batch items with no valid keys.
+
+    R27: ``nn.MultiheadAttention`` computes softmax over an all ``-inf`` row
+    when every key in a batch item is masked out -- 0/0 -- which is a real
+    case here (an agent that detected nothing in this frame), not a synthetic
+    edge case. That NaN is not just in the forward output, where it could be
+    patched after the call with e.g. ``torch.nan_to_num``: it is inside the
+    attention weights themselves, which the backward pass differentiates
+    through directly, so gradients for shared parameters (the projections,
+    norms, feed-forward) come back NaN too -- confirmed empirically, and it
+    poisons every batch item's gradient, not just the degenerate one's, since
+    those parameters are shared across the batch.
+
+    The fix is to never let the pathological all-masked row reach softmax at
+    all: unmask one arbitrary key (position 0) for exactly those batch items,
+    run attention, then zero the (now finite, but meaningless) output for
+    those same items. Zeroing is the semantically correct value too -- an
+    empty key set should contribute no attention update -- and unlike
+    ``nan_to_num`` this keeps every intermediate value finite, so gradients
+    computed through it are finite as well.
+    """
+    fully_masked = ~valid_keys.any(dim=1)
+    key_padding_mask = ~valid_keys
+    if fully_masked.any():
+        key_padding_mask = key_padding_mask.clone()
+        key_padding_mask[fully_masked, 0] = False
+
+    attended, _ = attention(
+        query, key, value, key_padding_mask=key_padding_mask, need_weights=False
+    )
+    if fully_masked.any():
+        attended = attended.masked_fill(fully_masked.view(-1, 1, 1), 0.0)
+    return attended
+
+
 class _Layer(nn.Module):
     """One self-attention pass within each set, then cross-attention across."""
 
@@ -74,16 +112,20 @@ class _Layer(nn.Module):
         )
 
     def forward(self, x: Tensor, y: Tensor, x_mask: Tensor, y_mask: Tensor) -> Tensor:
-        # key_padding_mask marks positions to IGNORE, so invert the validity mask.
         normed = self.norm_self(x)
-        attended, _ = self.self_attention(
-            normed, normed, normed, key_padding_mask=~x_mask, need_weights=False
+        attended = _attend_without_degenerate_rows(
+            self.self_attention, normed, normed, normed, x_mask
         )
         x = x + attended
 
         normed_x, normed_y = self.norm_cross(x), self.norm_cross(y)
-        attended, _ = self.cross_attention(
-            normed_x, normed_y, normed_y, key_padding_mask=~y_mask, need_weights=False
+        # A batch item whose OWN set (x) is empty also has no valid queries
+        # here, so its cross-attention output does not matter; a batch item
+        # whose *other* set (y) is empty is exactly the degenerate-row case
+        # _attend_without_degenerate_rows exists for, and it is handled the
+        # same way regardless of which side is empty.
+        attended = _attend_without_degenerate_rows(
+            self.cross_attention, normed_x, normed_y, normed_y, y_mask
         )
         x = x + attended
 

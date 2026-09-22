@@ -23,6 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
 from embedding_aware_belt_fusion.alignformer.head_match import (
     DEFAULT_SINKHORN_ITERATIONS,
     log_sinkhorn,
@@ -38,7 +39,10 @@ from embedding_aware_belt_fusion.alignformer.trunk import AlignFormerTrunk, toke
 DEFAULT_HEADING_LAMBDA = 2.0
 # Score assigned to padded positions so they can never win a match.
 _MASKED_SCORE = -1e4
-_BOX_YAW = 6
+# Below this, a soft-match row's total weight is treated as zero (no matched
+# evidence): guards the /safe_mass divisions from a literal 0/0 without
+# perturbing any row that has real, non-negligible weight.
+_MIN_MASS = 1e-6
 
 
 @dataclass(frozen=True)
@@ -176,21 +180,38 @@ class AlignFormerB(_Base):
         weights = log_assignment[:, :-1, :-1].exp() * valid
 
         mass = weights.sum(dim=2)
-        safe_mass = mass.clamp_min(1e-6).unsqueeze(-1)
+        safe_mass = mass.clamp_min(_MIN_MASS).unsqueeze(-1)
         cav_centres = batch["cav_boxes"][..., :2]
-        cav_yaws = batch["cav_boxes"][..., _BOX_YAW]
+        cav_yaws = batch["cav_boxes"][..., BOX_YAW]
 
         virtual_centres = weights @ cav_centres / safe_mass
         virtual_direction = (
             weights @ torch.stack([torch.cos(cav_yaws), torch.sin(cav_yaws)], dim=-1)
             / safe_mass
         )
-        virtual_yaws = torch.atan2(virtual_direction[..., 1], virtual_direction[..., 0])
+        # R27: atan2's gradient is undefined at exactly (0, 0) -- a
+        # mathematical singularity, not a precision issue -- and every ego
+        # row of a sample with zero soft-match weight (e.g. one all-masked
+        # row in an otherwise normal mixed batch, or a genuinely empty
+        # ego/cav set that reached this far) lands exactly there, since
+        # `weights` is identically 0 for that whole sample. Route those rows
+        # through a placeholder direction with a well-defined gradient before
+        # atan2 -- the same pattern weighted_se2_kabsch uses below for its own
+        # atan2 call. The placeholder's value is never read: MIN_MATCH_MASS
+        # zeroes the correction for exactly these zero-mass rows downstream.
+        has_weight = mass > 0
+        placeholder_direction = torch.ones_like(virtual_direction) * virtual_direction.new_tensor(
+            [1.0, 0.0]
+        )
+        safe_direction = torch.where(
+            has_weight.unsqueeze(-1), virtual_direction, placeholder_direction
+        )
+        virtual_yaws = torch.atan2(safe_direction[..., 1], safe_direction[..., 0])
 
         source = augment_with_heading(virtual_centres, virtual_yaws, self.heading_lambda)
         target = augment_with_heading(
             batch["ego_boxes"][..., :2],
-            batch["ego_boxes"][..., _BOX_YAW],
+            batch["ego_boxes"][..., BOX_YAW],
             self.heading_lambda,
         )
         augmented_mass = torch.cat([mass, mass], dim=1)

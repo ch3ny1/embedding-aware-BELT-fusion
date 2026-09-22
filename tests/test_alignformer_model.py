@@ -192,3 +192,67 @@ def test_gradients_reach_the_trunk_through_the_closed_form_solver():
     gradients = [p.grad for p in model.trunk.parameters() if p.grad is not None]
     assert gradients, "no gradient reached the trunk"
     assert all(torch.isfinite(g).all() for g in gradients)
+
+
+def _mixed_batch(embed_dim=8):
+    """A 2-sample batch where sample 1's ego set is entirely masked out.
+
+    ``_is_empty`` in model.py only fires when a whole batch's token dimension
+    is 0 -- it does not catch a *mixed* batch where some individual rows
+    (samples) have zero real objects but the batch is still padded to a
+    non-zero size by the other, real samples. Sample 0 here has real ego and
+    cav objects; sample 1's ego_mask is all-False (an ego that detected
+    nothing this frame) while its cav_mask has real objects, so it takes the
+    ordinary forward path, not the pre-trunk guard.
+    """
+    torch.manual_seed(0)
+    ego_boxes = torch.randn(2, 3, 7)
+    cav_boxes = torch.randn(2, 4, 7)
+    ego_mask = torch.tensor([[True, True, True], [False, False, False]])
+    cav_mask = torch.ones(2, 4, dtype=torch.bool)
+    return {
+        "ego_boxes": ego_boxes,
+        "ego_scores": torch.ones(2, 3),
+        "ego_embeddings": torch.randn(2, 3, embed_dim),
+        "ego_mask": ego_mask,
+        "cav_boxes": cav_boxes,
+        "cav_scores": torch.ones(2, 4),
+        "cav_embeddings": torch.randn(2, 4, embed_dim),
+        "cav_mask": cav_mask,
+    }
+
+
+@pytest.mark.parametrize("model_cls", [AlignFormerA, AlignFormerB])
+def test_mixed_batch_with_an_empty_row_produces_no_nan(model_cls):
+    """R27: a mixed batch must not NaN, in the forward OR the backward pass.
+
+    ``nn.MultiheadAttention`` returns NaN for every query in a batch item
+    whose entire key set is masked (softmax over an all -inf row is 0/0).
+    The forward guards already in place (``torch.where(present, ..., 0)`` in
+    AlignFormerA, ``MIN_MATCH_MASS`` in weighted_se2_kabsch) mask that NaN out
+    of the returned *values*, but masking a NaN with a multiply-by-zero does
+    not clean the computation graph: ``0 * NaN == NaN``, so the corrupted
+    row's NaN reappears in the *gradient* of every shared parameter once you
+    call ``.backward()``, even though every forward value is finite. This is
+    the regression this test is for; see also
+    AlignFormerB's own atan2(0, 0) gradient singularity for a zero-weight row.
+    """
+    model = model_cls(embed_dim=8)
+    batch = _mixed_batch()
+
+    estimate = model(batch)
+
+    assert torch.isfinite(estimate.psi).all()
+    assert torch.isfinite(estimate.t).all()
+    assert torch.isfinite(estimate.confidence).all()
+
+    # The empty row (sample 1) must be the identity correction, zero confidence.
+    assert estimate.psi[1].item() == pytest.approx(0.0)
+    assert torch.allclose(estimate.t[1], torch.zeros(2))
+    assert estimate.confidence[1].item() == pytest.approx(0.0)
+
+    (estimate.psi.sum() + estimate.t.sum() + estimate.confidence.sum()).backward()
+
+    gradients = [p.grad for p in model.parameters() if p.grad is not None]
+    assert gradients, "no gradient reached any parameter"
+    assert all(torch.isfinite(g).all() for g in gradients)

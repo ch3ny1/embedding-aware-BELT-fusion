@@ -35,13 +35,13 @@ from typing import List, Sequence, Tuple
 import torch
 from torch import Tensor
 
-from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections
+from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW, AgentDetections
 from embedding_aware_belt_fusion.alignformer.losses import apply_se2
 
 # Box layout is OpenCOOD 'hwl': [x, y, z, h, w, l, yaw]. Every AgentDetections
-# in this project commits to this order (see boxes.AgentDetections), so it is
-# hardcoded here rather than threaded through as a parameter.
-_BOX_YAW = 6
+# in this project commits to this order (see boxes.AgentDetections). R26: the
+# yaw index itself is defined once, in boxes.py beside AgentDetections, and
+# imported here rather than re-declared.
 _ORDER = "hwl"
 
 
@@ -62,7 +62,7 @@ def correct_detections(detections: AgentDetections, psi: Tensor, t: Tensor) -> A
 
     corrected_boxes = boxes.clone()
     corrected_boxes[:, :2] = corrected_centers
-    corrected_boxes[:, _BOX_YAW] = boxes[:, _BOX_YAW] + psi
+    corrected_boxes[:, BOX_YAW] = boxes[:, BOX_YAW] + psi
 
     return replace(detections, boxes=corrected_boxes)
 

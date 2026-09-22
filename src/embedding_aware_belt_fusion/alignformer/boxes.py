@@ -20,6 +20,12 @@ from embedding_aware_belt_fusion.features.opencood_proposals import (
 # IoU below which a proposal is treated as having no ground-truth counterpart.
 DEFAULT_MINIMUM_IOU = 0.3
 
+# Index of the yaw field in the OpenCOOD "hwl" box layout this module commits
+# to (see AgentDetections.boxes below): [x, y, z, h, w, l, yaw]. R26: defined
+# once here, next to the layout it belongs to, and imported everywhere else
+# that indexes a box's yaw column instead of re-declaring the literal 6.
+BOX_YAW = 6
+
 
 @dataclass(frozen=True)
 class AgentDetections:

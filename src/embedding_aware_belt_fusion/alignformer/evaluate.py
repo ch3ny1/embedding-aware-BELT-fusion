@@ -20,7 +20,6 @@ the claim that this decomposition reproduces the same number.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import time
@@ -32,6 +31,7 @@ import torch
 from torch import Tensor
 
 from embedding_aware_belt_fusion.alignformer.boxes import detect_agent
+from embedding_aware_belt_fusion.alignformer.cache import frame_seed
 from embedding_aware_belt_fusion.alignformer.fusion import (
     average_precision,
     correct_detections,
@@ -59,23 +59,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--max-frames", type=int, default=None, help="limit frames, for smoke-testing")
     return parser.parse_args()
-
-
-def _frame_seed(scenario: str, cav_id: str, timestamp: str) -> int:
-    """Stable, frame-derived seed for OpenCOOD's unseeded point shuffle.
-
-    Deliberately reimplemented rather than imported from
-    ``alignformer.cache._frame_seed``: that module is being rebuilt
-    concurrently by another task, and this evaluation must not couple to its
-    churn. The formula is identical on purpose -- same inputs
-    (``scenario``, ``cav_id``, ``timestamp``), same ``hashlib.sha256``
-    construction, same big-endian truncation to 4 bytes -- so a live
-    per-agent detection and a cached one for the same agent-frame draw the
-    same point order and cannot silently diverge into an "unexplained delta"
-    when a later task compares them in one table.
-    """
-    digest = hashlib.sha256(f"{scenario}/{cav_id}/{timestamp}".encode("utf-8")).digest()
-    return int.from_bytes(digest[:4], byteorder="big")
 
 
 def _frame_identity(dataset, index: int) -> Tuple[str, str]:
@@ -125,7 +108,7 @@ def _build_test_frame(dataset, index: int, scenario: str, timestamp: str) -> Dic
         if distance > opencood_datasets.COM_RANGE:
             continue
 
-        np.random.seed(_frame_seed(scenario, cav_id, timestamp))
+        np.random.seed(frame_seed(scenario, cav_id, timestamp))
         processed = dataset.get_item_single_car(selected_cav_base)
         processed["transformation_matrix"] = x1_to_x2(cav_pose, ego_lidar_pose)
         frame["ego" if cav_id == ego_id else cav_id] = processed

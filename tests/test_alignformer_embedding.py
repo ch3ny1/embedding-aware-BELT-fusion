@@ -1,5 +1,6 @@
 import math
 
+import pytest
 import torch
 
 from embedding_aware_belt_fusion.alignformer.embedding import (
@@ -34,6 +35,42 @@ def test_empty_box_set_returns_empty_without_error():
     roi = rotated_roi_align(features, torch.zeros(0, 7), LIDAR_RANGE, output_size=4)
 
     assert roi.shape == (0, 8, 4, 4)
+
+
+def test_a_leading_batch_dim_of_one_is_squeezed_automatically():
+    # R26: an un-squeezed detector-batch leading dim (forgetting the [0]
+    # AgentDetections normally applies) must be accepted, not fail deep
+    # inside grid_sample with an unhelpful shape-mismatch message.
+    features_3d = torch.randn(8, 96, 256)
+    boxes = torch.tensor([[10.0, 5.0, 0.0, 1.6, 2.0, 4.5, 0.3]])
+
+    roi_from_4d = rotated_roi_align(
+        features_3d.unsqueeze(0), boxes, LIDAR_RANGE, output_size=4
+    )
+    roi_from_3d = rotated_roi_align(features_3d, boxes, LIDAR_RANGE, output_size=4)
+
+    assert roi_from_4d.shape == (1, 8, 4, 4)
+    assert torch.equal(roi_from_4d, roi_from_3d)
+
+
+def test_a_real_batch_of_feature_maps_is_rejected_with_a_clear_error():
+    # There is no per-box map to select for batch size > 1 -- this function
+    # pairs ONE shared BEV map with every box -- so this must raise, and name
+    # the shape it actually got, rather than fail unhelpfully inside
+    # grid_sample.
+    features = torch.randn(2, 8, 96, 256)
+    boxes = torch.tensor([[10.0, 5.0, 0.0, 1.6, 2.0, 4.5, 0.3]])
+
+    with pytest.raises(ValueError, match=r"\(2, 8, 96, 256\)"):
+        rotated_roi_align(features, boxes, LIDAR_RANGE, output_size=4)
+
+
+def test_an_unexpected_rank_is_rejected_with_a_clear_error():
+    features = torch.randn(96, 256)
+    boxes = torch.tensor([[10.0, 5.0, 0.0, 1.6, 2.0, 4.5, 0.3]])
+
+    with pytest.raises(ValueError, match=r"\(96, 256\)"):
+        rotated_roi_align(features, boxes, LIDAR_RANGE, output_size=4)
 
 
 def test_sampling_is_canonical_so_placement_does_not_change_the_patch():

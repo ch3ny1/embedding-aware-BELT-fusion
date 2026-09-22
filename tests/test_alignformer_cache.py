@@ -10,9 +10,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from embedding_aware_belt_fusion.alignformer import cache as cache_module
+from embedding_aware_belt_fusion.alignformer import evaluate as evaluate_module
 from embedding_aware_belt_fusion.alignformer.cache import (
     FrameRecord,
     cache_path,
+    frame_seed,
     read_frame,
     write_frame,
 )
@@ -98,3 +101,12 @@ def test_write_frame_rejects_a_real_gt_id_that_is_the_empty_string(tmp_path):
 
     with pytest.raises(ValueError, match="empty string"):
         write_frame(tmp_path / "000071.npz", record)
+
+
+def test_evaluate_and_cache_share_the_same_frame_seed_function():
+    # R31: cache.py and evaluate.py used to each define a byte-identical
+    # _frame_seed. Equal *output* would not catch the two copies drifting
+    # apart again after a future edit to only one of them -- only object
+    # identity proves there is exactly one implementation left to edit.
+    assert evaluate_module.frame_seed is cache_module.frame_seed
+    assert evaluate_module.frame_seed is frame_seed

@@ -60,6 +60,26 @@ def test_output_is_permutation_equivariant():
     assert torch.allclose(base[:, order], permuted, atol=1e-5)
 
 
+def test_output_is_permutation_equivariant_on_the_cav_side():
+    # R26: the mirror of test_output_is_permutation_equivariant above, which
+    # only ever permutes the EGO side, leaving the CAV-side equivariance
+    # unverified even though tokenize/AlignFormerTrunk carry no positional
+    # encoding and must be equivariant to permuting either set.
+    torch.manual_seed(0)
+    trunk = _trunk()
+    ego = torch.randn(1, 4, 25)
+    cav = torch.randn(1, 3, 25)
+    ego_mask = torch.ones(1, 4, dtype=torch.bool)
+    cav_mask = torch.ones(1, 3, dtype=torch.bool)
+
+    with torch.no_grad():
+        _, base_cav = trunk(ego, cav, ego_mask, cav_mask)
+        order = torch.tensor([2, 0, 1])
+        _, permuted_cav = trunk(ego, cav[:, order], ego_mask, cav_mask[:, order])
+
+    assert torch.allclose(base_cav[:, order], permuted_cav, atol=1e-5)
+
+
 def test_padded_objects_do_not_affect_real_ones():
     torch.manual_seed(0)
     trunk = _trunk()

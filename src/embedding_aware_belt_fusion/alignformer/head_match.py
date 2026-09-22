@@ -29,10 +29,27 @@ def log_sinkhorn(scores: Tensor, alpha: Tensor, iterations: int) -> Tensor:
     -------
     Tensor
         ``(B, M + 1, N + 1)`` log-assignment. The last row and column are the
-        dustbins. Rows sum to 1 and columns sum to 1 after ``.exp()`` — including
-        in the degenerate ``rows == 0`` or ``columns == 0`` case, where every
-        real object on the other side is assigned to its dustbin with certainty
-        (``log(1) == 0``, hence an all-zeros return).
+        dustbins.
+
+        In the non-degenerate case (``rows > 0`` and ``columns > 0``), this is
+        a proper Sinkhorn normalization: every row and every column sums to 1
+        after ``.exp()``.
+
+        R26: that row/column-sums-to-1 contract does NOT hold in the
+        degenerate ``rows == 0`` or ``columns == 0`` case (an agent that
+        detected nothing) -- the guard below returns ``couplings * 0``, i.e.
+        every entry is exactly ``log(1) == 0``, so every entry of ``.exp()``
+        is 1, not a per-row/column probability distribution (e.g. with
+        ``columns == 3`` the one remaining dustbin row sums to 4, not 1).
+        The semantic content is still correct: an all-zero log-assignment
+        says "every real object on the other side matches its dustbin with
+        certainty", it is just not phrased as a normalized distribution.
+        ``couplings * 0`` is used deliberately instead of the equal-valued
+        ``torch.zeros_like(couplings)``: multiplying by zero keeps the
+        result attached to the autograd graph (with a correctly zero-valued
+        gradient into ``scores``/``alpha``), whereas ``zeros_like`` would
+        return a disconnected constant and ``.backward()`` would then raise
+        on this path.
     """
     if scores.dim() != 3:
         raise ValueError(f"scores must be (B, M, N), got {tuple(scores.shape)}")

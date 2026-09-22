@@ -175,21 +175,30 @@ def verify_pcd_cache_equivalence(
     return checked
 
 
-def _frame_seed(scenario: str, cav_id: str, timestamp: str) -> int:
+# WHY this seeding exists: LateFusionDataset.get_item_single_car calls
+# shuffle_points (external/OpenCOOD/opencood/utils/pcd_utils.py), which is a
+# bare np.random.permutation with no seed of its own. Left unseeded, two runs
+# of the same frame draw a different point order and, via
+# max_points_per_voxel truncation, a slightly different detection -- both
+# this cache and evaluate.py's live re-derivation of the same frames are
+# source-of-truth artifacts, so that build-to-build (or cache-vs-live) drift
+# is not acceptable.
+#
+# WHY hashlib.sha256 rather than builtin hash(): Python randomizes string
+# hashing per process unless PYTHONHASHSEED is set at interpreter start,
+# which would silently defeat the entire fix -- hashlib is stable across
+# processes and interpreter versions with no environment dependency.
+#
+# This used to be duplicated byte-for-byte in cache.py and evaluate.py while
+# both were being written concurrently (R31); it now lives here, the
+# lower-level module, and evaluate.py imports it from here.
+def frame_seed(scenario: str, cav_id: str, timestamp: str) -> int:
     """Stable, frame-derived seed for OpenCOOD's unseeded point shuffle.
 
-    ``LateFusionDataset.get_item_single_car`` calls ``shuffle_points``
-    (``external/OpenCOOD/opencood/utils/pcd_utils.py``), which is a bare
-    ``np.random.permutation`` with no seed of its own. Left unseeded, two
-    runs of the same frame draw a different point order and, via
-    ``max_points_per_voxel`` truncation, a slightly different detection --
-    this cache is a source-of-truth artifact, so that build-to-build drift is
-    not acceptable. Deriving the seed from ``(scenario, cav_id, timestamp)``
-    (rather than one fixed constant for the whole run) keeps each frame's
-    shuffle independent of every other frame's and of processing order, while
-    making a given frame reproducible byte-for-byte on any rebuild.
-    ``hashlib`` is used instead of the builtin ``hash()`` because the latter
-    is randomized per process (``PYTHONHASHSEED``) and would defeat the point.
+    Deriving the seed from ``(scenario, cav_id, timestamp)`` (rather than one
+    fixed constant for the whole run) keeps each frame's shuffle independent
+    of every other frame's and of processing order, while making a given
+    frame reproducible byte-for-byte on any rebuild.
     """
     digest = hashlib.sha256(f"{scenario}/{cav_id}/{timestamp}".encode("utf-8")).digest()
     return int.from_bytes(digest[:4], byteorder="big")
@@ -241,13 +250,13 @@ def _cav_content_for_frame(
 
     Seeds numpy's global RNG with a frame-derived seed immediately before the
     call, since that is what ``get_item_single_car`` -> ``shuffle_points``
-    consumes (see ``_frame_seed``) -- this is what makes the cache
+    consumes (see ``frame_seed``) -- this is what makes the cache
     byte-reproducible across rebuilds.
     """
     import numpy as np
     import torch
 
-    np.random.seed(_frame_seed(scenario, cav_id, timestamp))
+    np.random.seed(frame_seed(scenario, cav_id, timestamp))
     raw = dataset.get_item_single_car({"lidar_np": lidar_np, "params": params})
     processed_lidar = dataset.pre_processor.collate_batch([raw["processed_lidar"]])
     processed_lidar = {key: value.to(device) for key, value in processed_lidar.items()}

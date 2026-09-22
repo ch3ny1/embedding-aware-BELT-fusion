@@ -10,6 +10,18 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     late_fuse,
 )
 
+# R26: shapely's set_operations.intersection (called by OpenCOOD's own
+# common_utils.compute_iou, not by this project's code) emits a RuntimeWarning
+# for the exactly-coincident and heavily-overlapping polygon pairs several of
+# this module's tests deliberately construct (predicted == truth boxes,
+# duplicate cross-agent detections). This is not our call to fix at its
+# source -- external/OpenCOOD is a vendored submodule -- so it is silenced
+# here, scoped to this module and to exactly that shapely warning, rather than
+# with a blanket filter.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:invalid value encountered in intersection:RuntimeWarning:shapely"
+)
+
 
 def _detections(boxes, scores=None):
     count = boxes.shape[0]
