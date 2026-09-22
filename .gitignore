@@ -210,6 +210,12 @@ checkpoints/
 pointpillar_late_fusion*/
 outputs/*
 !outputs/.gitkeep
+# Gate/result JSONs are small, are the record of what was measured, and
+# belong in history. Everything else under outputs/ (checkpoints, logs,
+# caches, split symlinks) stays ignored.
+!outputs/alignformer/
+outputs/alignformer/*
+!outputs/alignformer/*_gate.json
 *.pth
 *.pt
 *.ckpt
