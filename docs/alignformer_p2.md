@@ -25,7 +25,8 @@
 > content measures nothing.)
 
 Stage 1 established that the two agents' object sets can be put into
-correspondence (P1: cross-agent Top-1 0.9961 at 70 m). It also established,
+correspondence (P1: cross-agent Top-1 0.9961 at 70 m; 0.9983 once the
+detector was widened to +/-140.8 m). It also established,
 through the association diagnostic, that the *embedding* contributes nothing to
 that correspondence on OPV2V -- a finding that still holds, and is re-checked
 below at the pose and AP levels. P2 asks the question the method actually
