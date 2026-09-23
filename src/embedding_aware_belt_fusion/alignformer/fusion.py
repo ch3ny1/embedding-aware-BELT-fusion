@@ -45,26 +45,36 @@ from embedding_aware_belt_fusion.alignformer.losses import apply_se2
 _ORDER = "hwl"
 
 
-def correct_detections(detections: AgentDetections, psi: Tensor, t: Tensor) -> AgentDetections:
-    """Return a **new** ``AgentDetections`` with boxes moved by SE(2) ``(psi, t)``.
+def correct_boxes(boxes: Tensor, psi: Tensor, t: Tensor) -> Tensor:
+    """Return a **new** ``(N, 7)`` box tensor moved by SE(2) ``(psi, t)``.
 
     Centres are transformed by ``losses.apply_se2``; yaw is incremented by
-    ``psi``. ``detections`` is never mutated: a fresh boxes tensor is built via
-    ``.clone()`` before being written into, and the new object is produced
-    with ``dataclasses.replace``.
+    ``psi``. ``boxes`` is never mutated: a fresh tensor is built via
+    ``.clone()`` before being written into.
+
+    Separate from :func:`correct_detections` because the object sets AlignFormer
+    consumes are bare box tensors (truncated to the trunk's token budget, with
+    no corners or gt ids attached), and moving them by a second, parallel
+    implementation is exactly how a projection convention drifts between the
+    model's input and the boxes that are actually fused.
     """
-    boxes = detections.boxes
     psi = psi.reshape(1).to(boxes.dtype)
     t = t.reshape(1, 2).to(boxes.dtype)
 
     centers = boxes[:, :2].unsqueeze(0)  # (1, N, 2), the batch dim apply_se2 expects
-    corrected_centers = apply_se2(centers, psi, t).squeeze(0)
+    corrected = boxes.clone()
+    corrected[:, :2] = apply_se2(centers, psi, t).squeeze(0)
+    corrected[:, BOX_YAW] = boxes[:, BOX_YAW] + psi
+    return corrected
 
-    corrected_boxes = boxes.clone()
-    corrected_boxes[:, :2] = corrected_centers
-    corrected_boxes[:, BOX_YAW] = boxes[:, BOX_YAW] + psi
 
-    return replace(detections, boxes=corrected_boxes)
+def correct_detections(detections: AgentDetections, psi: Tensor, t: Tensor) -> AgentDetections:
+    """Return a **new** ``AgentDetections`` with boxes moved by SE(2) ``(psi, t)``.
+
+    ``detections`` is never mutated: :func:`correct_boxes` returns a fresh boxes
+    tensor and the new object is produced with ``dataclasses.replace``.
+    """
+    return replace(detections, boxes=correct_boxes(detections.boxes, psi, t))
 
 
 def late_fuse(

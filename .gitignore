@@ -212,10 +212,13 @@ outputs/*
 !outputs/.gitkeep
 # Gate/result JSONs are small, are the record of what was measured, and
 # belong in history. Everything else under outputs/ (checkpoints, logs,
-# caches, split symlinks) stays ignored.
+# caches, split symlinks) stays ignored. `*_result.json` covers measurements
+# that are evidence but are not themselves a pass/fail gate -- the fused-AP
+# noise sweep, for one.
 !outputs/alignformer/
 outputs/alignformer/*
 !outputs/alignformer/*_gate.json
+!outputs/alignformer/*_result.json
 *.pth
 *.pt
 *.ckpt

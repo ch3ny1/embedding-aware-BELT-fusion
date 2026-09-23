@@ -23,6 +23,11 @@ Three deliberate choices, because each one could otherwise flatter the number:
 No AMP: the model is a few million parameters over object sets of at most 64
 tokens, so the run is data-loader bound and fp16 would buy nothing while
 putting Sinkhorn's log-domain normalization at risk.
+
+Stage 2 lives in :mod:`embedding_aware_belt_fusion.alignformer.stage2`, which
+imports this module's shared pieces (the scenario split, the loaders, the LR
+schedule, ``embed_batch``). ``--stage 2`` on this module's CLI imports it
+lazily, inside the functions, so the dependency stays one-directional.
 """
 
 from __future__ import annotations
@@ -138,10 +143,21 @@ def build_datasets(
 
 
 def build_eval_dataset(
-    config: Mapping[str, Any], pairs: Sequence[AgentPair], sigma: float
+    config: Mapping[str, Any],
+    pairs: Sequence[AgentPair],
+    sigma: float,
+    *,
+    seed: Optional[int] = None,
 ) -> OPV2VObjectSetDataset:
-    """A fixed-noise, deterministic dataset at exactly ``sigma`` metres."""
+    """A fixed-noise, deterministic dataset at exactly ``sigma`` metres.
+
+    ``seed`` selects WHICH deterministic draw: the noise stays reproducible
+    either way, but a sweep that wants several independent draws of the same
+    pairs at the same sigma varies it. Left ``None``, the dataset's own default
+    is used, which is what every earlier gate measured under.
+    """
     data = config["data"]
+    extra = {} if seed is None else {"seed": int(seed)}
     return OPV2VObjectSetDataset(
         pairs,
         cache_root=data["cache_root"],
@@ -149,6 +165,7 @@ def build_eval_dataset(
         noise_schedule=NoiseSchedule(max_xy_std=sigma),
         train=False,
         total_epochs=1,
+        **extra,
     )
 
 
@@ -204,30 +221,71 @@ def build_modules(
     return modules.to(device)
 
 
-def _embed(head: ObjectEmbedding, roi: Tensor, zero: bool) -> Tensor:
+# The two fields ``embed_batch`` writes and ``zero_embeddings`` ablates.
+_EMBEDDING_FIELDS = ("ego_embeddings", "cav_embeddings")
+
+
+def zero_embeddings(batch: Mapping[str, Tensor]) -> Dict[str, Tensor]:
+    """Return a **new** batch dict with every embedding replaced by zeros.
+
+    This is the ``boxes_only`` message content: the trunk then sees box
+    geometry and detector scores only, so the gap against the full model is the
+    embedding's actual contribution. Geometry is passed through untouched --
+    zeroing it too would ablate the wrong thing -- and the input dict is never
+    mutated, so a caller can run both conditions on the same batch.
+
+    A batch that does not carry the embedding fields yet (a raw collated batch,
+    before :func:`embed_batch`) is returned unchanged apart from being copied:
+    there is nothing to zero, which is not an error.
+    """
+    ablated = dict(batch)
+    for field in _EMBEDDING_FIELDS:
+        value = batch.get(field)
+        if value is not None:
+            ablated[field] = torch.zeros_like(value)
+    return ablated
+
+
+def _embed(head: ObjectEmbedding, roi: Tensor) -> Tensor:
     """Run the embedding head over a padded ``(B, N, C, k, k)`` ROI stack.
 
-    ``zero=True`` is the ablation control: the trunk then sees box geometry
-    and detector scores only, so the gap against it is the embedding's actual
-    contribution. Padded rows are embedded too and then masked out downstream
-    by ``ego_mask``/``cav_mask``; the alternative, gathering only the real rows,
+    Padded rows are embedded too and then masked out downstream by
+    ``ego_mask``/``cav_mask``; the alternative, gathering only the real rows,
     saves nothing measurable on object sets this small.
     """
     batch, count = roi.shape[0], roi.shape[1]
-    if zero:
-        return roi.new_zeros((batch, count, head.dim))
     flat = head(roi.reshape((batch * count,) + tuple(roi.shape[2:])).float())
     return flat.reshape(batch, count, head.dim)
+
+
+def embed_batch(
+    head: ObjectEmbedding, batch: Mapping[str, Tensor], *, ablate: bool = False
+) -> Dict[str, Tensor]:
+    """Return a new batch carrying per-object embeddings for both sets.
+
+    ``ablate=True`` routes the result through :func:`zero_embeddings`, so the
+    boxes-only condition is *literally* the full model with its embeddings set
+    to zero rather than a second code path that could drift from it. The head
+    still runs, which costs one small MLP over at most 64 tokens per agent and
+    buys a single definition of the ablation.
+    """
+    enriched = dict(batch)
+    enriched["ego_embeddings"] = _embed(head, batch["ego_roi"])
+    enriched["cav_embeddings"] = _embed(head, batch["cav_roi"])
+    return zero_embeddings(enriched) if ablate else enriched
 
 
 def forward_batch(
     modules: nn.ModuleDict, batch: Dict[str, Tensor], *, zero_embeddings: bool = False
 ):
-    """Embed both object sets and run head B over them."""
-    head = modules["embedding"]
-    enriched = dict(batch)
-    enriched["ego_embeddings"] = _embed(head, batch["ego_roi"], zero_embeddings)
-    enriched["cav_embeddings"] = _embed(head, batch["cav_roi"], zero_embeddings)
+    """Embed both object sets and run head B over them.
+
+    The keyword deliberately keeps its stage-1 name (``scripts/
+    analyze_association.py`` calls it) even though it shadows the module-level
+    :func:`zero_embeddings` inside this function; ``embed_batch`` above is the
+    one that calls it.
+    """
+    enriched = embed_batch(modules["embedding"], batch, ablate=zero_embeddings)
     return modules["matcher"](enriched)
 
 
@@ -574,16 +632,38 @@ def load_stage1(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train AlignFormer stage 1 (matching)")
+    from embedding_aware_belt_fusion.alignformer import stage2
+
+    parser = argparse.ArgumentParser(
+        description="Train AlignFormer stage 1 (matching) or stage 2 (pose)"
+    )
     parser.add_argument("--config", type=Path, default=Path("configs/alignformer.yaml"))
-    parser.add_argument("--stage", type=int, choices=(1,), default=1)
+    parser.add_argument("--stage", type=int, choices=(1, 2), default=1)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--num-workers", type=int, default=DEFAULT_NUM_WORKERS)
-    parser.add_argument("--epochs", type=int, default=None, help="overrides train.stage1_epochs")
+    parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="overrides train.stage1_epochs / train.stage2_epochs",
+    )
     parser.add_argument(
         "--zero-embeddings",
         action="store_true",
-        help="ablation control: feed the trunk zero embeddings, leaving box geometry only",
+        help="stage 1 ablation control: feed the trunk zero embeddings, leaving box "
+             "geometry only. Stage 2 uses --message-content boxes_only for the same thing.",
+    )
+    parser.add_argument("--head", choices=stage2.HEADS, default="B", help="stage 2 only")
+    parser.add_argument(
+        "--message-content", choices=stage2.MESSAGE_CONTENTS, default="boxes+embeddings",
+        help="stage 2 only: what each agent transmits",
+    )
+    parser.add_argument(
+        "--match-weight", type=float, default=None,
+        help="stage 2 only: weight on the auxiliary matching NLL. Defaults to "
+             "train.match_weight for head B and 0 for head A.",
+    )
+    parser.add_argument(
+        "--stage1-checkpoint", type=Path, default=None,
+        help="stage 2 only: overrides the warm-start checkpoint chosen by --message-content",
     )
     return parser.parse_args()
 
@@ -591,13 +671,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = yaml.safe_load(args.config.read_text())
-    if args.epochs is not None:
-        config["train"]["stage1_epochs"] = args.epochs
-    train_stage1(
+    if args.stage == 1:
+        if args.epochs is not None:
+            config["train"]["stage1_epochs"] = args.epochs
+        train_stage1(
+            config,
+            output_dir=args.output_dir,
+            num_workers=args.num_workers,
+            zero_embeddings=args.zero_embeddings,
+        )
+        return
+    from embedding_aware_belt_fusion.alignformer.stage2 import train_stage2
+
+    train_stage2(
         config,
+        args.head,
+        args.message_content,
+        args.match_weight,
         output_dir=args.output_dir,
         num_workers=args.num_workers,
-        zero_embeddings=args.zero_embeddings,
+        stage1_checkpoint=args.stage1_checkpoint,
+        epochs=args.epochs,
     )
 
 

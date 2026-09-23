@@ -52,6 +52,26 @@ def apply_se2(points: Tensor, psi: Tensor, t: Tensor) -> Tensor:
     return rotated + t.reshape(shape + (2,))
 
 
+def corner_displacements(
+    boxes: Tensor,
+    psi_pred: Tensor,
+    t_pred: Tensor,
+    psi_true: Tensor,
+    t_true: Tensor,
+) -> Tensor:
+    """Per-object L1 corner displacement, ``(B, N)``, summed over the 4 corners.
+
+    The unreduced quantity behind :func:`corner_loss`. Kept separate so that a
+    per-sample or per-subset breakdown (e.g. the ego-CAV pairs that share no
+    object at all) is the *same* measurement as the training loss rather than a
+    second definition of it.
+    """
+    corners = bev_corners(boxes)
+    predicted = apply_se2(corners, psi_pred, t_pred)
+    target = apply_se2(corners, psi_true, t_true)
+    return (predicted - target).abs().sum(dim=-1).sum(dim=-1)
+
+
 def corner_loss(
     boxes: Tensor,
     psi_pred: Tensor,
@@ -72,15 +92,11 @@ def corner_loss(
     Returns
     -------
     Tensor
-        Scalar loss in metres, averaged over real corners only.
+        Scalar loss in metres, averaged over real objects only.
     """
-    corners = bev_corners(boxes)
-    predicted = apply_se2(corners, psi_pred, t_pred)
-    target = apply_se2(corners, psi_true, t_true)
-
-    per_corner = (predicted - target).abs().sum(dim=-1)
-    weights = mask.unsqueeze(-1).to(per_corner.dtype)
-    return (per_corner * weights).sum() / weights.sum().clamp_min(1.0)
+    per_object = corner_displacements(boxes, psi_pred, t_pred, psi_true, t_true)
+    weights = mask.to(per_object.dtype)
+    return (per_object * weights).sum() / weights.sum().clamp_min(1.0)
 
 
 def match_nll(log_assignment: Tensor, ego_match: Tensor, cav_match: Tensor) -> Tensor:

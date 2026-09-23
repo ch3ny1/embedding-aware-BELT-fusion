@@ -12,8 +12,18 @@ Two metrics are wired up:
   This is the P1 gate. It touches neither OpenCOOD nor the raw point clouds:
   everything it needs is in the detection/ROI cache.
 
-``ransac`` and the ``pose`` metric are later tasks' work; the dispatch tables
-below exist so those slot in as new entries without reshaping the CLI.
+- ``--metric pose`` needs ``configs/alignformer.yaml`` and one or more stage-2
+  checkpoints, and reports translation and yaw MAE against the **predict-zero**
+  baseline over a sigma sweep on the same scenario-disjoint validation
+  scenarios. This is the P2 gate.
+- ``--metric noisy_ap`` needs an OpenCOOD detector hypes yaml, ``--split``, a
+  stage-2 checkpoint and ``--alignformer-config``, and reports fused AP under
+  localization error for three conditions at each sigma: plain late fusion on
+  the noisy pose, AlignFormer-corrected, and the true-pose oracle. This is the
+  number the method exists for; see ``alignformer.noisy_fusion``.
+
+``ransac`` is a later task's work; the dispatch tables below exist so it slots
+in as a new entry without reshaping the CLI.
 
 ``run_late_fusion_clean`` reuses OpenCOOD's own ``LateFusionDataset`` (the
 same dataset class ``alignformer/cache.py`` and
@@ -63,6 +73,18 @@ _TOP1_CONTEXT_SIGMAS = (0.0, 1.0, 2.0)
 _TOP1_BATCH_SIZE = 64
 _DEFAULT_TOP1_WORKERS = 10
 
+# Spec section 4 / task 14: the P2 gate is head B's yaw MAE strictly below the
+# predict-zero value at every NON-ZERO sigma. Predicting the identity
+# correction gives E|dpsi| = sigma_yaw * sqrt(2/pi) for zero-mean Gaussian yaw
+# noise; at sigma = 0 that baseline is 0 and nothing can be strictly below it,
+# so sigma = 0 is reported as context (does the model damage the clean case?)
+# rather than gated on.
+_DEFAULT_POSE_SWEEP = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0)
+_DEFAULT_POSE_SEEDS = 3
+# Seeds are consecutive from here, so a sweep is reproducible by name.
+_POSE_SEED_BASE = 1000
+_HALF_NORMAL_MEAN = math.sqrt(2.0 / math.pi)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -76,9 +98,12 @@ def parse_args() -> argparse.Namespace:
              "--metric top1 takes its split from the config's scenario-disjoint val slice.",
     )
     parser.add_argument(
-        "--checkpoint", type=Path, default=None,
-        help="stage-1 checkpoint; required by --metric top1 only (--metric ap reads the "
-             "detector checkpoint named in its own hypes yaml).",
+        "--checkpoint", type=Path, nargs="+", default=None,
+        help="stage-1 checkpoint for --metric top1; one or more stage-2 checkpoints for "
+             "--metric pose (each is measured over the whole sweep, so one run produces "
+             "the whole head x message-content table); one stage-2 checkpoint for "
+             "--metric noisy_ap. --metric ap reads the detector checkpoint named in its "
+             "own hypes yaml instead.",
     )
     parser.add_argument(
         "--method", choices=("late_fusion_clean",), default="late_fusion_clean",
@@ -86,8 +111,22 @@ def parse_args() -> argparse.Namespace:
              "fusion step: it scores the correspondence, not fused boxes.",
     )
     parser.add_argument(
-        "--metric", choices=("ap", "top1"), default="ap",
+        "--metric", choices=("ap", "top1", "pose", "noisy_ap"), default="ap",
         help="What to report.",
+    )
+    parser.add_argument(
+        "--sweep", type=float, nargs="+", default=list(_DEFAULT_POSE_SWEEP),
+        help="localization-noise levels in metres (yaw noise in degrees matches); "
+             "--metric pose and --metric noisy_ap",
+    )
+    parser.add_argument(
+        "--seeds", type=int, default=_DEFAULT_POSE_SEEDS,
+        help="independent noise draws per sigma; --metric pose only",
+    )
+    parser.add_argument(
+        "--alignformer-config", type=Path, default=Path("configs/alignformer.yaml"),
+        help="AlignFormer model/data config; --metric noisy_ap only (--config there is "
+             "the OpenCOOD detector hypes yaml)",
     )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -98,10 +137,17 @@ def parse_args() -> argparse.Namespace:
     )
 
     args = parser.parse_args()
-    required = {"ap": ("split",), "top1": ("checkpoint",)}[args.metric]
+    required = {
+        "ap": ("split",),
+        "top1": ("checkpoint",),
+        "pose": ("checkpoint",),
+        "noisy_ap": ("split", "checkpoint"),
+    }[args.metric]
     for name in required:
         if getattr(args, name) is None:
             parser.error(f"--metric {args.metric} requires --{name}")
+    if args.metric in ("top1", "noisy_ap") and len(args.checkpoint) != 1:
+        parser.error(f"--metric {args.metric} takes exactly one --checkpoint")
     return args
 
 
@@ -122,8 +168,16 @@ def _frame_identity(dataset, index: int) -> Tuple[str, str]:
     return scenario_name, timestamp_key
 
 
-def _build_test_frame(dataset, index: int, scenario: str, timestamp: str) -> Dict[str, dict]:
+def _build_test_frame(
+    dataset, index: int, scenario: str, timestamp: str
+) -> Tuple[Dict[str, dict], Dict[str, List[float]], List[float]]:
     """Reimplement ``LateFusionDataset.get_item_test`` with a reproducible seed.
+
+    Returns ``(frame, lidar_poses, ego_lidar_pose)``. The raw poses come back
+    alongside the processed frame because ``collate_batch_test`` keeps only the
+    fields it knows about, and the noisy sweep needs the un-collated pose to
+    perturb -- re-reading it would mean a second ``retrieve_base_data`` and a
+    second point-cloud decode per frame.
 
     OpenCOOD's own ``__getitem__`` gives no hook to reseed between agents, so
     this replicates its ego-selection / communication-range / per-agent
@@ -146,6 +200,7 @@ def _build_test_frame(dataset, index: int, scenario: str, timestamp: str) -> Dic
         raise RuntimeError(f"frame {index} ({scenario}/{timestamp}) has no ego vehicle")
 
     frame: Dict[str, dict] = {}
+    poses: Dict[str, List[float]] = {}
     for cav_id, selected_cav_base in base_data_dict.items():
         cav_pose = selected_cav_base["params"]["lidar_pose"]
         distance = math.hypot(cav_pose[0] - ego_lidar_pose[0], cav_pose[1] - ego_lidar_pose[1])
@@ -155,9 +210,11 @@ def _build_test_frame(dataset, index: int, scenario: str, timestamp: str) -> Dic
         np.random.seed(frame_seed(scenario, cav_id, timestamp))
         processed = dataset.get_item_single_car(selected_cav_base)
         processed["transformation_matrix"] = x1_to_x2(cav_pose, ego_lidar_pose)
-        frame["ego" if cav_id == ego_id else cav_id] = processed
+        key = "ego" if cav_id == ego_id else cav_id
+        frame[key] = processed
+        poses[key] = list(cav_pose)
 
-    return frame
+    return frame, poses, list(ego_lidar_pose)
 
 
 def _cav_content(entry: Dict, device) -> Dict:
@@ -200,7 +257,7 @@ def run_late_fusion_clean(
 
     for index in range(frame_count):
         scenario, timestamp = _frame_identity(dataset, index)
-        sample = _build_test_frame(dataset, index, scenario, timestamp)
+        sample, _, _ = _build_test_frame(dataset, index, scenario, timestamp)
         batch = dataset.collate_batch_test([sample])
 
         corrected = []
@@ -285,7 +342,8 @@ def run_top1(args: argparse.Namespace, device) -> Dict:
     )
 
     config = yaml.safe_load(args.config.read_text())
-    modules, checkpoint = load_stage1(args.checkpoint, device)
+    checkpoint_path = args.checkpoint[0]
+    modules, checkpoint = load_stage1(checkpoint_path, device)
     _, val_pairs, train_scenarios, val_scenarios = build_pair_split(config)
 
     gate_sigma = float(config["train"]["stage1_max_xy_std"])
@@ -319,7 +377,7 @@ def run_top1(args: argparse.Namespace, device) -> Dict:
             f"{config['data']['val_scenario_fraction']}, split_seed="
             f"{config['data']['split_seed']})"
         ),
-        "checkpoint": str(args.checkpoint.resolve()),
+        "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_epoch": checkpoint["epoch"],
         "cache_root": config["data"]["cache_root"],
         "comm_range_m": config["data"]["comm_range_m"],
@@ -340,6 +398,253 @@ def run_top1(args: argparse.Namespace, device) -> Dict:
             "passed": bool(measured >= P1_TOP1_GATE),
         },
         "results": results,
+    }
+
+
+def _mean(values: List[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _pose_provenance(checkpoint: Dict) -> Dict:
+    """The (head, message content, match weight) a stage-2 checkpoint was trained under."""
+    return {
+        "head": checkpoint["head"],
+        "message_content": checkpoint["message_content"],
+        "match_weight": checkpoint["match_weight"],
+        "stage1_checkpoint": checkpoint["stage1_checkpoint"],
+        "epoch": checkpoint["epoch"],
+    }
+
+
+def _configuration_name(checkpoint: Dict) -> str:
+    suffix = "" if checkpoint["match_weight"] else " (match_weight 0)"
+    return f"{checkpoint['head']} / {checkpoint['message_content']}{suffix}"
+
+
+def run_pose(args: argparse.Namespace, device) -> Dict:
+    """Sweep localization noise and report pose MAE against the predict-zero baseline.
+
+    The split is the same scenario-disjoint 15% slice stages 1 and 2 validated
+    on, and the same slice the per-agent detector held out. Each sigma is
+    measured under ``--seeds`` independent deterministic noise draws of the same
+    pairs; the tables report the mean, and the per-seed values are kept so a
+    spread can be read off rather than assumed.
+
+    Every configuration passed via ``--checkpoint`` is measured over the same
+    draws, so the head and message-content comparisons are paired -- they see
+    byte-identical perturbations, not merely the same distribution.
+    """
+    import yaml
+    from torch.utils.data import DataLoader
+
+    from embedding_aware_belt_fusion.alignformer.dataset import (
+        YAW_STD_PER_XY_STD,
+        collate,
+    )
+    from embedding_aware_belt_fusion.alignformer.stage2 import evaluate_pose, load_stage2
+    from embedding_aware_belt_fusion.alignformer.train import (
+        build_eval_dataset,
+        build_pair_split,
+    )
+
+    config = yaml.safe_load(args.config.read_text())
+    _, val_pairs, train_scenarios, val_scenarios = build_pair_split(config)
+
+    loaded = []
+    for path in args.checkpoint:
+        modules, checkpoint = load_stage2(path, device)
+        loaded.append((path, modules, checkpoint))
+
+    seeds = [_POSE_SEED_BASE + offset for offset in range(args.seeds)]
+    results: Dict[str, Dict[str, Dict]] = {}
+
+    for sigma in args.sweep:
+        per_configuration: Dict[str, List[Dict[str, float]]] = {
+            _configuration_name(checkpoint): [] for _, _, checkpoint in loaded
+        }
+        for seed in seeds:
+            dataset = build_eval_dataset(config, val_pairs, sigma, seed=seed)
+            loader = DataLoader(
+                dataset, batch_size=_TOP1_BATCH_SIZE, num_workers=args.num_workers,
+                collate_fn=collate, pin_memory=True,
+            )
+            for _, modules, checkpoint in loaded:
+                metrics = evaluate_pose(
+                    modules, loader, device,
+                    ablate_embeddings=checkpoint["message_content"] == "boxes_only",
+                )
+                per_configuration[_configuration_name(checkpoint)].append(metrics)
+
+        cell: Dict[str, Dict] = {}
+        for name, runs in per_configuration.items():
+            keys = [key for key, value in runs[0].items() if isinstance(value, float)]
+            cell[name] = {
+                "mean": {key: _mean([run[key] for run in runs]) for key in keys},
+                "per_seed_yaw_mae_deg": [run["yaw_mae_deg"] for run in runs],
+                "per_seed_translation_mae_m": [run["translation_mae_m"] for run in runs],
+            }
+        analytic = sigma * YAW_STD_PER_XY_STD * _HALF_NORMAL_MEAN
+        results[_sigma_key(sigma)] = {
+            "sigma_xy_m": sigma,
+            "sigma_yaw_deg": sigma * YAW_STD_PER_XY_STD,
+            "analytic_predict_zero_yaw_mae_deg": analytic,
+            "configurations": cell,
+        }
+        for name, values in cell.items():
+            print(
+                f"  sigma={sigma:g} m  {name:<34} "
+                f"t_mae={values['mean']['translation_mae_m']:.4f} m "
+                f"(zero {values['mean']['predict_zero_translation_mae_m']:.4f}) "
+                f"yaw_mae={values['mean']['yaw_mae_deg']:.4f} deg "
+                f"(zero {values['mean']['predict_zero_yaw_mae_deg']:.4f}, "
+                f"analytic {analytic:.4f})",
+                flush=True,
+            )
+
+    return {
+        "method": "alignformer_stage2",
+        "metric": "pose",
+        "config": str(args.config),
+        "split": (
+            f"{config['data']['train_root']} :: validation scenarios "
+            f"(scenario-disjoint, val_scenario_fraction="
+            f"{config['data']['val_scenario_fraction']}, split_seed="
+            f"{config['data']['split_seed']})"
+        ),
+        "checkpoints": {
+            _configuration_name(checkpoint): {
+                "path": str(Path(path).resolve()),
+                **_pose_provenance(checkpoint),
+            }
+            for path, _, checkpoint in loaded
+        },
+        "cache_root": config["data"]["cache_root"],
+        "comm_range_m": config["data"]["comm_range_m"],
+        "train_scenarios": len(train_scenarios),
+        "val_scenarios": val_scenarios,
+        "val_pairs": len(val_pairs),
+        "sweep_sigmas_m": list(args.sweep),
+        "noise_seeds": seeds,
+        "gate": _p2_gate(results),
+        "results": results,
+    }
+
+
+def _p2_gate(results: Dict[str, Dict]) -> Dict:
+    """The P2 verdict: head B's yaw MAE below predict-zero at every non-zero sigma.
+
+    Measured against the EMPIRICAL predict-zero value on the same samples, not
+    against the analytic ``sigma * sqrt(2/pi)``: the two agree to within the
+    sample noise, but only the empirical one is a statement about the data that
+    was actually scored. The analytic value is reported beside it.
+    """
+    name = next(
+        (
+            key
+            for key in next(iter(results.values()))["configurations"]
+            if key == "B / boxes+embeddings"
+        ),
+        None,
+    )
+    if name is None:
+        return {"name": "P2", "passed": None, "reason": "no B / boxes+embeddings run supplied"}
+
+    cells = []
+    for sigma_key, entry in results.items():
+        if entry["sigma_xy_m"] == 0.0:
+            continue
+        mean = entry["configurations"][name]["mean"]
+        cells.append(
+            {
+                "sigma": sigma_key,
+                "yaw_mae_deg": mean["yaw_mae_deg"],
+                "predict_zero_yaw_mae_deg": mean["predict_zero_yaw_mae_deg"],
+                "analytic_predict_zero_yaw_mae_deg": entry[
+                    "analytic_predict_zero_yaw_mae_deg"
+                ],
+                "below": mean["yaw_mae_deg"] < mean["predict_zero_yaw_mae_deg"],
+            }
+        )
+    return {
+        "name": "P2",
+        "definition": (
+            "head B (boxes+embeddings) yaw MAE strictly below the predict-zero "
+            "yaw MAE at every non-zero sigma. sigma = 0 is excluded because the "
+            "predict-zero baseline is exactly 0 there and nothing can be below "
+            "it; it is reported in `results` as a clean-case diagnostic."
+        ),
+        "configuration": name,
+        "cells": cells,
+        "passed": bool(cells) and all(cell["below"] for cell in cells),
+    }
+
+
+def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
+    """Fused AP under localization error: uncorrected vs AlignFormer vs oracle."""
+    import yaml
+    from opencood.data_utils.datasets import build_dataset
+    from opencood.hypes_yaml.yaml_utils import load_yaml
+
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        ALIGNFORMER,
+        ORACLE,
+        UNCORRECTED,
+        condition_key,
+        run_noise_sweep,
+    )
+    from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
+
+    hypes = load_yaml(str(args.config), None)
+    hypes["validate_dir"] = str(args.split.resolve())
+    dataset = build_dataset(hypes, visualize=False, train=False)
+    detector = _build_detector(hypes, device)
+
+    model_config = yaml.safe_load(args.alignformer_config.read_text())
+    checkpoint_path = args.checkpoint[0]
+    modules, checkpoint = load_stage2(checkpoint_path, device)
+
+    predictions, ground_truth, pose_stats = run_noise_sweep(
+        dataset, detector, dataset.post_processor, device,
+        modules=modules,
+        ablate_embeddings=checkpoint["message_content"] == "boxes_only",
+        lidar_range=hypes["preprocess"]["cav_lidar_range"],
+        output_size=int(model_config["model"]["output_size"]),
+        sigmas=list(args.sweep),
+        seed=int(model_config["train"]["seed"]),
+        max_frames=args.max_frames,
+    )
+
+    ap = {}
+    for name, frames in predictions.items():
+        ap[name] = _ap_report(frames, ground_truth)
+        print(
+            f"  {name:<32} AP@0.3={ap[name]['ap_30']['global_sorted']:.4f} "
+            f"AP@0.5={ap[name]['ap_50']['global_sorted']:.4f} "
+            f"AP@0.7={ap[name]['ap_70']['global_sorted']:.4f}",
+            flush=True,
+        )
+
+    return {
+        "method": "alignformer_noisy_late_fusion",
+        "metric": "noisy_ap",
+        "config": str(args.config),
+        "alignformer_config": str(args.alignformer_config),
+        "split": str(args.split),
+        "detector_checkpoint": hypes["detector"]["checkpoint"],
+        "pose_checkpoint": str(checkpoint_path.resolve()),
+        "pose_checkpoint_provenance": _pose_provenance(checkpoint),
+        "cav_lidar_range": hypes["preprocess"]["cav_lidar_range"],
+        "nms_thresh": dataset.post_processor.params["nms_thresh"],
+        "frames": len(ground_truth),
+        "sweep_sigmas_m": list(args.sweep),
+        "conditions": {
+            "oracle": ORACLE,
+            "uncorrected": UNCORRECTED,
+            "alignformer": ALIGNFORMER,
+            "key_format": condition_key(ALIGNFORMER, 1.0),
+        },
+        "ap": ap,
+        "pose": pose_stats,
     }
 
 
@@ -371,9 +676,33 @@ def _run_ap(args: argparse.Namespace, device) -> Dict:
     }
 
 
-# Metric -> the runner that produces its result dict. Adding `pose` later is a
-# new entry here, not a change to the CLI or to either runner.
-_METRIC_RUNNERS = {"ap": _run_ap, "top1": run_top1}
+# Metric -> the runner that produces its result dict. Each one is a new entry
+# here, not a change to the CLI or to any other runner (ruling R1).
+_METRIC_RUNNERS = {
+    "ap": _run_ap,
+    "top1": run_top1,
+    "pose": run_pose,
+    "noisy_ap": _run_noisy_ap,
+}
+
+
+def _json_safe(value):
+    """Replace NaN with ``null`` so the written file is valid JSON.
+
+    An empty subset (e.g. the structurally unalignable pairs, of which the
+    validation split has none) yields NaN rather than 0.0, because nothing was
+    scored is not the same as scoring nothing correctly. ``json.dumps`` writes
+    that as the bare token ``NaN``, which Python reads back but which is not
+    JSON and which several readers reject outright -- and these result files
+    are committed evidence that other tools read.
+    """
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def main() -> None:
@@ -382,7 +711,7 @@ def main() -> None:
         raise RuntimeError("CUDA was requested but is unavailable")
     device = torch.device(args.device)
 
-    result = _METRIC_RUNNERS[args.metric](args, device)
+    result = _json_safe(_METRIC_RUNNERS[args.metric](args, device))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")

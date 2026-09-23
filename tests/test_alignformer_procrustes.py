@@ -3,11 +3,13 @@ import math
 import pytest
 import torch
 
+from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
 from embedding_aware_belt_fusion.alignformer.procrustes import (
     MIN_MATCH_MASS,
     augment_with_heading,
     weighted_se2_kabsch,
 )
+from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 
 
 def _apply(psi, t, q):
@@ -103,3 +105,62 @@ def test_degenerate_gradients_are_finite_not_nan():
 
 def test_min_match_mass_is_one_effective_object():
     assert MIN_MATCH_MASS == 1.0
+
+
+# --- The effective match-mass floor is half MIN_MATCH_MASS (task 14) ---------
+
+
+def _augmented(centres, yaws, weights, lam=2.0):
+    """Exactly what ``AlignFormerB.forward`` hands the solver."""
+    return augment_with_heading(centres, yaws, lam), torch.cat([weights, weights], dim=1)
+
+
+def test_the_heading_augmentation_halves_the_effective_match_mass_floor():
+    """``MIN_MATCH_MASS`` gates the AUGMENTED weight vector, not the raw mass.
+
+    ``AlignFormerB`` appends a heading virtual point per object and passes
+    ``cat([mass, mass])`` as the weights, so the total this function sees is
+    twice the ``PoseEstimate.confidence`` reported alongside it. The constant's
+    docstring says "less than one effective matched object"; what is enforced is
+    **half** an effective matched object. Pinned here because anything that
+    reasons about low-overlap fallback from the constant alone gets the wrong
+    answer for a confidence in ``[MIN_MATCH_MASS / 2, MIN_MATCH_MASS)``.
+    """
+    source_centres = torch.tensor([[[0.0, 0.0], [5.0, 1.0]]])
+    source_yaws = torch.tensor([[0.0, 0.4]])
+    target_centres = _apply(0.3, (1.5, -2.0), source_centres[0]).unsqueeze(0)
+    target_yaws = source_yaws + 0.3
+
+    def solve(per_object_mass):
+        weights = torch.full((1, 2), per_object_mass)
+        source, w = _augmented(source_centres, source_yaws, weights)
+        target, _ = _augmented(target_centres, target_yaws, weights)
+        return weighted_se2_kabsch(target, source, w)
+
+    # Confidence 0.6 -- BELOW MIN_MATCH_MASS, yet the correction is applied,
+    # because the augmented total is 1.2.
+    psi, t = solve(0.3)
+    assert 2 * 0.3 < MIN_MATCH_MASS
+    assert float(psi.abs().max()) > 0.0
+
+    # Confidence 0.4 -- augmented total 0.8, now genuinely below the floor.
+    psi, t = solve(0.2)
+    assert float(psi.abs().max()) == 0.0
+    assert float(t.abs().max()) == 0.0
+
+
+def test_is_fallback_reads_the_emitted_correction_not_the_confidence():
+    """The reported fallback must be the observed identity output.
+
+    A pair whose confidence sits between ``MIN_MATCH_MASS / 2`` and
+    ``MIN_MATCH_MASS`` is corrected despite looking suppressed by the constant,
+    so a fallback statistic derived from ``confidence < MIN_MATCH_MASS``
+    over-reports it. :func:`stage2.is_fallback` reads ``(psi, t)`` instead.
+    """
+    estimate = PoseEstimate(
+        psi=torch.tensor([0.0, 0.3, 0.0]),
+        t=torch.tensor([[0.0, 0.0], [0.0, 0.0], [0.1, 0.0]]),
+        confidence=torch.tensor([0.2, 0.7, 0.7]),
+    )
+
+    assert is_fallback(estimate).tolist() == [True, False, False]

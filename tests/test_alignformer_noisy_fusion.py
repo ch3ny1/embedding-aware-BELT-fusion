@@ -1,0 +1,130 @@
+"""The noisy-AP sweep's wiring, where a silent mistake would look like a result.
+
+The sweep itself is a multi-hour run over the OPV2V test split and is measured
+by ``outputs/alignformer/p2_noisy_ap.json``, not by a test. What is tested here
+are the four places a bug would be invisible in that output:
+
+- the object set AlignFormer scores must pair each box with *its own* ROI
+  features after truncation reorders by score;
+- the boxes fed to the model and the boxes that are fused must be moved by one
+  shared SE(2) implementation, not two;
+- "shares an object" must not treat two unmatched detections as the same
+  object, which would make structurally unalignable pairs look alignable;
+- each sigma in the sweep must draw independent noise, or the sweep reports one
+  perturbation rescaled rather than a curve.
+"""
+
+import numpy as np
+import torch
+
+from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections
+from embedding_aware_belt_fusion.alignformer.fusion import correct_boxes, correct_detections
+from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+    ALIGNFORMER,
+    ORACLE,
+    _object_set,
+    _shares_an_object,
+    _sweep_rng,
+    _truncate_by_score,
+    condition_key,
+)
+
+
+def _detections(scores, *, channels: int = 2) -> AgentDetections:
+    count = len(scores)
+    boxes = torch.arange(count * 7, dtype=torch.float32).reshape(count, 7)
+    return AgentDetections(
+        boxes=boxes,
+        scores=torch.tensor(scores, dtype=torch.float32),
+        corners=torch.zeros(count, 8, 3),
+        gt_ids=[str(index) for index in range(count)],
+        features=torch.zeros(channels, 4, 4),
+    )
+
+
+def test_truncation_keeps_every_box_with_its_own_roi_features_and_id():
+    detections = _detections([0.1, 0.9, 0.5, 0.7])
+    # Row i of the ROI stack is filled with i, so a mispairing is visible.
+    roi = torch.arange(4, dtype=torch.float32).reshape(4, 1, 1, 1).expand(4, 2, 4, 4)
+
+    boxes, scores, kept_roi, gt_ids = _truncate_by_score(detections, roi, 2)
+
+    assert torch.equal(scores, detections.scores[[1, 3]])
+    # Original rows 1 and 3, in that order, everywhere.
+    assert torch.equal(boxes, detections.boxes[[1, 3]])
+    assert kept_roi[:, 0, 0, 0].tolist() == [1.0, 3.0]
+    assert gt_ids == ["1", "3"]
+
+
+def test_truncation_is_a_no_op_below_the_budget():
+    detections = _detections([0.1, 0.9])
+    roi = torch.zeros(2, 2, 4, 4)
+
+    boxes, scores, kept_roi, gt_ids = _truncate_by_score(detections, roi, 64)
+
+    assert torch.equal(boxes, detections.boxes)
+    assert torch.equal(scores, detections.scores)
+    assert kept_roi.shape == roi.shape
+    assert gt_ids == list(detections.gt_ids)
+
+
+def test_the_model_input_and_the_fused_boxes_move_by_the_same_se2():
+    # The sweep projects the TRUNCATED box tensor for the model and the FULL
+    # AgentDetections for fusion. If those two ever disagree, the model is
+    # scoring a differently-placed object set than the one being fused, and
+    # nothing in the AP number would show it.
+    detections = _detections([0.9, 0.8, 0.7])
+    psi = torch.tensor(0.37)
+    translation = torch.tensor([1.5, -2.25])
+
+    from_detections = correct_detections(detections, psi, translation).boxes
+    from_boxes = correct_boxes(detections.boxes, psi, translation)
+
+    assert torch.allclose(from_detections, from_boxes)
+    # And neither mutated its input.
+    assert torch.equal(detections.boxes, _detections([0.9, 0.8, 0.7]).boxes)
+
+
+def test_two_unmatched_detections_are_not_the_same_object():
+    # None means "matched no ground-truth object". Treating two of them as a
+    # shared object would report a structurally unalignable pair as alignable.
+    assert not _shares_an_object([None, None], [None])
+    assert not _shares_an_object(["7"], ["9", None])
+    assert _shares_an_object(["7", None], [None, "7"])
+
+
+def test_each_sigma_draws_independent_noise():
+    first = _sweep_rng(0, 0.5, 3, 0).normal(size=4)
+    second = _sweep_rng(0, 1.0, 3, 0).normal(size=4)
+    again = _sweep_rng(0, 0.5, 3, 0).normal(size=4)
+
+    # Reproducible for a given (seed, sigma, frame, agent) ...
+    assert np.array_equal(first, again)
+    # ... and not merely the same draw rescaled across sigmas.
+    assert not np.allclose(first / np.linalg.norm(first), second / np.linalg.norm(second))
+
+
+def test_a_condition_key_names_its_sigma_except_for_the_oracle():
+    assert condition_key(ORACLE, 1.5) == "oracle"
+    assert condition_key(ALIGNFORMER, 1.5) == "alignformer_sigma_1.5m"
+    assert condition_key(ALIGNFORMER, 0.0) == "alignformer_sigma_0m"
+
+
+def test_the_object_set_batch_marks_every_real_object_valid():
+    ego = {
+        "boxes": torch.randn(3, 7),
+        "scores": torch.rand(3),
+        "roi": torch.randn(3, 2, 4, 4),
+    }
+    cav = {
+        "boxes": torch.randn(5, 7),
+        "scores": torch.rand(5),
+        "roi": torch.randn(5, 2, 4, 4),
+    }
+
+    batch = _object_set(ego, cav)
+
+    assert batch["ego_boxes"].shape == (1, 3, 7)
+    assert batch["cav_roi"].shape == (1, 5, 2, 4, 4)
+    assert bool(batch["ego_mask"].all()) and batch["ego_mask"].shape == (1, 3)
+    assert bool(batch["cav_mask"].all()) and batch["cav_mask"].shape == (1, 5)

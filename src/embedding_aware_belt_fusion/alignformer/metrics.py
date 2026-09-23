@@ -5,12 +5,14 @@ counterpart in the CAV's object set, how many score their true counterpart
 highest. Two exclusions are what make the number mean that, and both are easy
 to get wrong:
 
-- Ego objects with ``ego_match == -1`` are excluded. 18.5% of ego-CAV pairs in
-  OPV2V's train split share no object at all, and a large further share of
-  individual objects are seen by one agent only; those rows have no correct
-  answer, so counting them would dilute the metric with rows no model could
-  ever get right and put the gate out of reach for reasons unrelated to the
-  model.
+- Ego objects with ``ego_match == -1`` are excluded. A large share of
+  individual objects are seen by one agent only, and some ego-CAV pairs share
+  no detected object at all (measured on this cache: 4.55% of the train-split
+  pairs and 0 of the 4176 scenario-disjoint validation pairs; an earlier
+  revision of this docstring said 18.5%, which does not reproduce). Those rows
+  have no correct answer, so counting them would dilute the metric with rows no
+  model could ever get right and put the gate out of reach for reasons
+  unrelated to the model.
 - Padded rows (``ego_mask == False``, from :func:`alignformer.dataset.collate`
   padding both object sets to the batch maximum) are excluded for the same
   reason, plus they carry a ``-1`` match target that would otherwise look like
