@@ -938,8 +938,8 @@ ground truth and *trails* it by 0.0005 under the intermediate one: a dead heat
 either way. At 0.6 m it leads by +0.068 and +0.060 respectively, and the lead
 only grows. **So the claim that survives both conventions is: AlignFormer ties
 V2X-ViT at sigma = 0.4 m and leads it from 0.6 m upward.** Against the other
-six baselines the 0.4 m lead is between +0.137 and +0.294 under either
-convention, so no crossover point there is in question. The AlignFormer rows in
+six baselines the 0.4 m lead is between +0.119 (CoAlign, intermediate GT) and
++0.297 (F-Cooper, late-fusion GT), so no crossover point there is in question. The AlignFormer rows in
 that table reproduce `p2_r70_noisy_ap_result.json` to the last digit, which is
 also the check that adding the second ground truth changed nothing else.
 
