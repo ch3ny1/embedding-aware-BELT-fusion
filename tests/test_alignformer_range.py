@@ -122,14 +122,50 @@ def test_the_two_ranges_do_not_share_an_roi_cache():
 
 
 def test_the_two_ranges_share_the_split_the_comm_range_and_the_model():
-    """Only the cache root may differ: the split and the model are the control."""
+    """Only the cache root and the fitted variance model may differ.
+
+    ``model.correspondence_variance`` is excluded because it is not
+    architecture: it is a *measurement* of how much two agents' detections of
+    the same object disagree, fitted per detector range on that range's own
+    validation correspondences (``scripts/fit_correspondence_variance.py``).
+    Carrying the +/-140.8 m fit over to the +/-70.4 m config would attribute
+    one detector's statistics to another. The r70 config declares no block at
+    all, which is the unweighted estimator every r70 number was measured
+    under; ``test_the_r70_configuration_is_the_unweighted_estimator`` pins that.
+    """
     narrow, wide = _load(R70_ALIGNFORMER), _load(R140_ALIGNFORMER)
 
-    assert narrow["model"] == wide["model"]
+    def architecture(config):
+        return {
+            key: value
+            for key, value in config["model"].items()
+            if key != "correspondence_variance"
+        }
+
+    assert architecture(narrow) == architecture(wide)
     assert narrow["train"] == wide["train"]
     for key in ("train_root", "test_root", "pair_cache_dir", "val_scenario_fraction",
                 "split_seed", "comm_range_m"):
         assert narrow["data"][key] == wide["data"][key], f"data.{key} drifted"
+
+
+def test_the_r70_configuration_is_the_unweighted_estimator():
+    """The r70 tables are kept as a result, so their estimator must stay put."""
+    from embedding_aware_belt_fusion.alignformer.variance import (
+        variance_model_from_config,
+    )
+
+    assert variance_model_from_config(_load(R70_ALIGNFORMER)["model"]).mode == "none"
+
+
+def test_the_r140_configuration_defaults_to_the_unweighted_estimator():
+    """The weighting is selected per run, so the config's default must not move
+    a number that was measured without it."""
+    from embedding_aware_belt_fusion.alignformer.variance import (
+        variance_model_from_config,
+    )
+
+    assert variance_model_from_config(_load(R140_ALIGNFORMER)["model"]).mode == "none"
 
 
 def test_the_pair_index_is_still_the_seed_0_scenario_disjoint_slice():
