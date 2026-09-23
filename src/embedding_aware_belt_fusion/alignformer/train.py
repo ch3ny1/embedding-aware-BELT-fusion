@@ -62,6 +62,10 @@ from embedding_aware_belt_fusion.alignformer.metrics import (
 )
 from embedding_aware_belt_fusion.alignformer.model import AlignFormerB
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
+from embedding_aware_belt_fusion.alignformer.variance import (
+    VARIANCE_MODES,
+    variance_model_from_config,
+)
 from embedding_aware_belt_fusion.coloca.index import (
     AgentPair,
     load_or_build_pairs,
@@ -192,12 +196,21 @@ def roi_channels(dataset: OPV2VObjectSetDataset) -> int:
 
 
 def build_modules(
-    config: Mapping[str, Any], channels: int, device: torch.device
+    config: Mapping[str, Any],
+    channels: int,
+    device: torch.device,
+    *,
+    variance_weighting: Optional[str] = None,
 ) -> nn.ModuleDict:
     """The trainable stage-1 pair: the embedding head plus AlignFormer head B.
 
     A ``ModuleDict`` rather than a bespoke wrapper class, so one ``state_dict``
     round-trips both and stage 2 can load the embedding head alone by prefix.
+
+    ``variance_weighting`` reaches head B's Procrustes weights only. Stage 1's
+    loss is ``match_nll`` on the Sinkhorn assignment and never touches the
+    Kabsch solve, so stage-1 results are identical under every mode -- which is
+    why the stage-1 checkpoint is shared across the stage-2 variants.
     """
     model_cfg = config["model"]
     if int(model_cfg["max_objects"]) != MAX_OBJECTS:
@@ -217,6 +230,7 @@ def build_modules(
                 embed_dim=embed_dim,
                 heading_lambda=float(model_cfg["heading_lambda"]),
                 sinkhorn_iterations=int(model_cfg["sinkhorn_iterations"]),
+                variance_model=variance_model_from_config(model_cfg, variance_weighting),
                 model_dim=int(model_cfg["model_dim"]),
                 layers=int(model_cfg["layers"]),
                 heads=int(model_cfg["heads"]),
@@ -670,6 +684,12 @@ def parse_args() -> argparse.Namespace:
         "--stage1-checkpoint", type=Path, default=None,
         help="stage 2 only: overrides the warm-start checkpoint chosen by --message-content",
     )
+    parser.add_argument(
+        "--variance-weighting", choices=VARIANCE_MODES, default=None,
+        help="stage 2 only: how to weight each correspondence in the Procrustes fit by "
+             "its inverse disagreement variance. Overrides the config's "
+             "model.correspondence_variance.mode. See alignformer/variance.py.",
+    )
     return parser.parse_args()
 
 
@@ -693,6 +713,7 @@ def main() -> None:
         args.head,
         args.message_content,
         args.match_weight,
+        variance_weighting=args.variance_weighting,
         output_dir=args.output_dir,
         num_workers=args.num_workers,
         stage1_checkpoint=args.stage1_checkpoint,

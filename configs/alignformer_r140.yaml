@@ -30,6 +30,31 @@ model:
   heading_lambda: 2.0     # metres, about half a vehicle length
   sinkhorn_iterations: 20
   max_objects: 64
+  # Inverse-variance weighting of the correspondences entering the Procrustes
+  # fit (src/.../alignformer/variance.py). The parameters are DATA: they are
+  # fitted on the scenario-disjoint validation slice under the true pose
+  # projection by scripts/fit_correspondence_variance.py, and recorded in
+  # outputs/alignformer/r140/correspondence_variance_result.json. `mode` is the
+  # experimental switch and is overridden per run by
+  # `--variance-weighting {none,scalar,split}`; `none` here keeps this file
+  # reproducing the unweighted estimator every earlier r140 number was measured
+  # under.
+  #
+  #   v_t(s)   = (0.2516 m   * (s / 0.4)^-1.1281)^2   per detection, 2-D
+  #   v_psi(s) = (4.6392 deg * (s / 0.4)^-1.9322)^2   per detection, scalar
+  #
+  # Confidence, not range, is the variable the data implicates: over 63,988
+  # validation correspondences the confidence form improves the Gamma deviance
+  # by 0.129 (centre) / 0.438 (heading) against a homoscedastic fit, a range
+  # form by 0.020 / 0.020, and adding range on top of confidence by nothing at
+  # all (its fitted range scale runs to 1.7e4 m and 6.8e5 m).
+  correspondence_variance:
+    mode: none
+    sigma_translation_m: 0.2516
+    translation_exponent: 1.1281
+    sigma_yaw_deg: 4.6392
+    yaw_exponent: 1.9322
+    score_reference: 0.4
 
 train:
   # Stage 1 trains the embedding head and trunk on the matching loss alone, at

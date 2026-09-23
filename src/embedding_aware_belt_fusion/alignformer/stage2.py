@@ -84,6 +84,10 @@ from embedding_aware_belt_fusion.alignformer.train import (
     roi_channels,
 )
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
+from embedding_aware_belt_fusion.alignformer.variance import (
+    VARIANCE_MODES,
+    variance_model_from_config,
+)
 
 # Stage 2 writes one directory per (head, message content) configuration under here.
 STAGE2_ROOT = Path("outputs/alignformer")
@@ -137,6 +141,7 @@ def build_stage2_modules(
             embed_dim=embed_dim,
             heading_lambda=float(model_cfg["heading_lambda"]),
             sinkhorn_iterations=int(model_cfg["sinkhorn_iterations"]),
+            variance_model=variance_model_from_config(model_cfg),
             **trunk_kwargs,
         )
     else:
@@ -571,7 +576,12 @@ def build_stage2_datasets(
     return train_set, build_eval_dataset(config, val_pairs, sigma)
 
 
-def stage2_output_dir(head: str, message_content: str, match_weight: float) -> Path:
+def stage2_output_dir(
+    head: str,
+    message_content: str,
+    match_weight: float,
+    variance_weighting: str = "none",
+) -> Path:
     """The conventional directory name for one stage-2 configuration.
 
     The ``_nomatch`` suffix marks head B's *fairness control* -- B's
@@ -579,9 +589,38 @@ def stage2_output_dir(head: str, message_content: str, match_weight: float) -> P
     head B. Head A exposes no assignment at all, so ``match_weight`` is 0 for it
     by necessity rather than by choice; suffixing head A would name every head-A
     run after a control it cannot be the counterpart of.
+
+    ``variance_weighting`` suffixes only when it is on, so every directory name
+    written before ``variance.py`` existed still means what it meant.
     """
     suffix = "_nomatch" if head == "B" and not match_weight else ""
+    if variance_weighting != "none":
+        suffix += f"_ivw_{variance_weighting}"
     return STAGE2_ROOT / f"stage2_{head}_{message_content}{suffix}"
+
+
+def _with_variance_weighting(
+    config: Mapping[str, Any], mode: Optional[str]
+) -> Dict[str, Any]:
+    """A new config whose ``model.correspondence_variance.mode`` is ``mode``.
+
+    Returns a copy; the caller's config is never mutated. ``None`` leaves the
+    config's own mode alone, which is what every call site before this argument
+    existed does.
+    """
+    if mode is None:
+        return dict(config)
+    model_cfg = dict(config["model"])
+    block = model_cfg.get("correspondence_variance")
+    if block is None:
+        if mode != "none":
+            raise ValueError(
+                f"variance_weighting={mode!r} needs a model.correspondence_variance "
+                "block with fitted parameters; this config has none"
+            )
+        return dict(config)
+    model_cfg["correspondence_variance"] = {**block, "mode": mode}
+    return {**config, "model": model_cfg}
 
 
 def train_stage2(
@@ -590,6 +629,7 @@ def train_stage2(
     message_content: str = "boxes+embeddings",
     match_weight: Optional[float] = None,
     *,
+    variance_weighting: Optional[str] = None,
     output_dir: Optional[Path] = None,
     num_workers: int = DEFAULT_NUM_WORKERS,
     device: Optional[torch.device] = None,
@@ -608,6 +648,11 @@ def train_stage2(
         config's value for head B and 0 for head A, which exposes no assignment
         to supervise. Passing 0 explicitly for head B is the fairness control:
         B's architecture without B's extra supervision.
+    variance_weighting: one of ``variance.VARIANCE_MODES``, overriding the
+        config's ``model.correspondence_variance.mode``. The resolved mode is
+        written into the checkpoint's own config copy, so ``load_stage2``
+        rebuilds the head that was trained rather than the config file's
+        current default.
 
     Returns
     -------
@@ -635,6 +680,17 @@ def train_stage2(
             f"{match_weight}"
         )
 
+    if variance_weighting is not None and variance_weighting not in VARIANCE_MODES:
+        raise ValueError(
+            f"variance_weighting must be one of {VARIANCE_MODES}, got "
+            f"{variance_weighting!r}"
+        )
+    # Resolve the mode into a COPY of the config, never in place: the resolved
+    # copy is what builds the head and what the checkpoint carries, so
+    # `load_stage2` rebuilds exactly the estimator that was trained.
+    config = _with_variance_weighting(config, variance_weighting)
+    variance_weighting = variance_model_from_config(config["model"]).mode
+
     epochs = int(epochs if epochs is not None else train_cfg["stage2_epochs"])
     ablate = message_content == "boxes_only"
     stage1_checkpoint = Path(
@@ -645,7 +701,7 @@ def train_stage2(
     output_dir = Path(
         output_dir
         if output_dir is not None
-        else stage2_output_dir(head, message_content, match_weight)
+        else stage2_output_dir(head, message_content, match_weight, variance_weighting)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -656,7 +712,8 @@ def train_stage2(
     train_set, val_set = build_stage2_datasets(config, epochs=epochs)
     channels = roi_channels(train_set)
     print(
-        f"stage 2 [head {head} / {message_content} / match_weight {match_weight:g}]: "
+        f"stage 2 [head {head} / {message_content} / match_weight {match_weight:g} / "
+        f"inverse-variance weighting {variance_weighting}]: "
         f"{len(train_set)} train pairs / {len(val_set)} val pairs, {channels}-channel ROI, "
         f"sigma 0 -> {float(train_cfg['max_xy_std']):g} m over {epochs} epochs",
         flush=True,
@@ -677,6 +734,7 @@ def train_stage2(
         "head": head,
         "message_content": message_content,
         "match_weight": match_weight,
+        "variance_weighting": variance_weighting,
         "stage1_checkpoint": str(stage1_checkpoint.resolve()),
         "stage2_epochs": epochs,
         "max_xy_std_m": float(train_cfg["max_xy_std"]),

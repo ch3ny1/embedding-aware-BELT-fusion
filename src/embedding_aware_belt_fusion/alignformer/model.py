@@ -34,6 +34,10 @@ from embedding_aware_belt_fusion.alignformer.procrustes import (
     weighted_se2_kabsch,
 )
 from embedding_aware_belt_fusion.alignformer.trunk import AlignFormerTrunk, tokenize
+from embedding_aware_belt_fusion.alignformer.variance import (
+    UNWEIGHTED,
+    CorrespondenceVarianceModel,
+)
 
 # Heading virtual-point offset in metres, about half a vehicle length so that
 # headings and centres contribute comparably to the Kabsch fit.
@@ -54,6 +58,18 @@ class PoseEstimate:
     t: Tensor
     confidence: Tensor
     log_assignment: Optional[Tensor] = None
+
+
+@dataclass(frozen=True)
+class _SoftCorrespondence:
+    """One Sinkhorn correspondence, reduced to one virtual CAV point per ego object."""
+
+    virtual_centres: Tensor
+    virtual_yaws: Tensor
+    mass: Tensor
+    cav_variance_centre: Tensor
+    cav_variance_heading: Tensor
+    log_assignment: Tensor
 
 
 def _tokens(batch: Mapping[str, Tensor], prefix: str) -> Tensor:
@@ -143,6 +159,7 @@ class AlignFormerB(_Base):
         embed_dim: int,
         heading_lambda: float = DEFAULT_HEADING_LAMBDA,
         sinkhorn_iterations: int = DEFAULT_SINKHORN_ITERATIONS,
+        variance_model: CorrespondenceVarianceModel = UNWEIGHTED,
         **trunk_kwargs,
     ) -> None:
         super().__init__(embed_dim, **trunk_kwargs)
@@ -152,6 +169,9 @@ class AlignFormerB(_Base):
         self.log_temperature = nn.Parameter(torch.tensor(0.1).log())
         self.heading_lambda = heading_lambda
         self.sinkhorn_iterations = sinkhorn_iterations
+        # Carries no parameters and no buffers, so it stays out of state_dict
+        # and an old checkpoint still loads strictly.
+        self.variance_model = variance_model
         # Test hook: score on the raw embeddings, bypassing an untrained trunk.
         self.use_raw_embedding_scores = False
 
@@ -162,14 +182,15 @@ class AlignFormerB(_Base):
         cav: Tensor,
         ego_mask: Tensor,
         cav_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    ) -> "_SoftCorrespondence":
         """Score, Sinkhorn-normalize, and reduce to one virtual CAV point per ego object.
 
-        Returns ``(virtual_centres, virtual_yaws, mass, log_assignment)``:
-        ``virtual_centres``/``virtual_yaws`` are the per-ego-object soft-matched
-        CAV centre/heading (``(B, M, 2)`` / ``(B, M)``), ``mass`` is each row's
-        total soft-match weight (``(B, M)``), and ``log_assignment`` is passed
-        through unchanged for :class:`PoseEstimate`.
+        Returns a :class:`_SoftCorrespondence`: the per-ego-object soft-matched
+        CAV centre/heading (``(B, M, 2)`` / ``(B, M)``), each row's total
+        soft-match weight (``(B, M)``), the Sinkhorn-weighted average of its
+        candidates' per-detection disagreement variances (which is what the
+        inverse-variance weighting consumes on the CAV side), and
+        ``log_assignment`` passed through unchanged for :class:`PoseEstimate`.
 
         LOW-7 (review): extracted out of ``forward`` so the pose-solving code
         below is not buried under this block's own comments.
@@ -236,7 +257,26 @@ class AlignFormerB(_Base):
         )
         virtual_yaws = torch.atan2(safe_direction[..., 1], safe_direction[..., 0])
 
-        return virtual_centres, virtual_yaws, mass, log_assignment
+        # The CAV side of each correspondence is a mixture, so its variance is
+        # the soft-match-weighted average of its candidates' variances. Same
+        # `weights @ x / safe_mass` reduction as the centre and the heading.
+        cav_centre_variance, cav_heading_variance = (
+            self.variance_model.detection_variances(batch["cav_scores"])
+        )
+        return _SoftCorrespondence(
+            virtual_centres=virtual_centres,
+            virtual_yaws=virtual_yaws,
+            mass=mass,
+            cav_variance_centre=(
+                (weights @ cav_centre_variance.unsqueeze(-1)).squeeze(-1)
+                / safe_mass.squeeze(-1)
+            ),
+            cav_variance_heading=(
+                (weights @ cav_heading_variance.unsqueeze(-1)).squeeze(-1)
+                / safe_mass.squeeze(-1)
+            ),
+            log_assignment=log_assignment,
+        )
 
     def forward(self, batch: Mapping[str, Tensor]) -> PoseEstimate:
         # Guard BEFORE the trunk call: see _is_empty's docstring. With an empty
@@ -249,19 +289,33 @@ class AlignFormerB(_Base):
         ego_mask, cav_mask = batch["ego_mask"], batch["cav_mask"]
         ego, cav = self._encode(batch)
 
-        virtual_centres, virtual_yaws, mass, log_assignment = self._soft_correspondence(
-            batch, ego, cav, ego_mask, cav_mask
-        )
+        correspondence = self._soft_correspondence(batch, ego, cav, ego_mask, cav_mask)
+        mass = correspondence.mass
 
-        source = augment_with_heading(virtual_centres, virtual_yaws, self.heading_lambda)
+        source = augment_with_heading(
+            correspondence.virtual_centres, correspondence.virtual_yaws, self.heading_lambda
+        )
         target = augment_with_heading(
             batch["ego_boxes"][..., :2],
             batch["ego_boxes"][..., BOX_YAW],
             self.heading_lambda,
         )
-        augmented_mass = torch.cat([mass, mass], dim=1)
+        # Inverse-variance weighting MULTIPLIES the soft-match mass rather than
+        # replacing it: identity uncertainty and positional imprecision are two
+        # separate reasons to discount a correspondence. `mode="none"` returns
+        # cat([mass, mass]) bit for bit (variance.py).
+        augmented_mass = self.variance_model.augmented_weights(
+            mass,
+            batch["ego_scores"],
+            correspondence.cav_variance_centre,
+            correspondence.cav_variance_heading,
+            self.heading_lambda,
+        )
 
         psi, t = weighted_se2_kabsch(target, source, augmented_mass)
         return PoseEstimate(
-            psi=psi, t=t, confidence=mass.sum(dim=1), log_assignment=log_assignment
+            psi=psi,
+            t=t,
+            confidence=mass.sum(dim=1),
+            log_assignment=correspondence.log_assignment,
         )

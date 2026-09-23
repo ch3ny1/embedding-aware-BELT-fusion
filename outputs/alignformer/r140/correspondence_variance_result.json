@@ -1,0 +1,352 @@
+{
+  "method": "correspondence_variance_fit",
+  "config": "configs/alignformer_r140.yaml",
+  "cache_root": "/media/chenyi/basement2/cache/alignformer_r140",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "sigma_m": 0.0,
+  "correspondences": 63988,
+  "val_pairs": 6262,
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "overall": {
+    "rms_translation_m": 0.33205652236938477,
+    "rms_yaw_deg": 6.705249215280762
+  },
+  "range_profile": [
+    {
+      "low": 0.0,
+      "high": 20.0,
+      "n": 23580,
+      "mean_key": 12.50016975402832,
+      "rms_translation_m": 0.29871779680252075,
+      "rms_yaw_deg": 6.005534754627037
+    },
+    {
+      "low": 20.0,
+      "high": 35.0,
+      "n": 19794,
+      "mean_key": 27.641489028930664,
+      "rms_translation_m": 0.33298158645629883,
+      "rms_yaw_deg": 6.824263980907765
+    },
+    {
+      "low": 35.0,
+      "high": 50.0,
+      "n": 14341,
+      "mean_key": 41.66117858886719,
+      "rms_translation_m": 0.34813058376312256,
+      "rms_yaw_deg": 7.33571537614749
+    },
+    {
+      "low": 50.0,
+      "high": 70.4,
+      "n": 4482,
+      "mean_key": 57.776912689208984,
+      "rms_translation_m": 0.3883846402168274,
+      "rms_yaw_deg": 6.594548070534135
+    },
+    {
+      "low": 70.4,
+      "high": 90.0,
+      "n": 1459,
+      "mean_key": 78.62783813476562,
+      "rms_translation_m": 0.433513879776001,
+      "rms_yaw_deg": 8.131658664470232
+    },
+    {
+      "low": 90.0,
+      "high": 110.0,
+      "n": 251,
+      "mean_key": 98.82352447509766,
+      "rms_translation_m": 0.4310499429702759,
+      "rms_yaw_deg": 11.30606848218276
+    },
+    {
+      "low": 110.0,
+      "high": 145.0,
+      "n": 81,
+      "mean_key": 114.62543487548828,
+      "rms_translation_m": 0.5170754790306091,
+      "rms_yaw_deg": 10.805757125479325
+    }
+  ],
+  "range_decile_profile": [
+    {
+      "low": 2.7621824741363525,
+      "high": 9.58205156326294,
+      "n": 6399,
+      "mean_key": 7.263354301452637,
+      "rms_translation_m": 0.27177199721336365,
+      "rms_yaw_deg": 4.414224475192772
+    },
+    {
+      "low": 9.58205156326294,
+      "high": 12.950461387634277,
+      "n": 6398,
+      "mean_key": 11.357973098754883,
+      "rms_translation_m": 0.2891210615634918,
+      "rms_yaw_deg": 4.971682744021234
+    },
+    {
+      "low": 12.950461387634277,
+      "high": 16.92092590332031,
+      "n": 6400,
+      "mean_key": 14.772747039794922,
+      "rms_translation_m": 0.29591187834739685,
+      "rms_yaw_deg": 6.957033466862704
+    },
+    {
+      "low": 16.92092590332031,
+      "high": 21.56666221618653,
+      "n": 6398,
+      "mean_key": 19.20817756652832,
+      "rms_translation_m": 0.3455006182193756,
+      "rms_yaw_deg": 7.346302169361009
+    },
+    {
+      "low": 21.56666221618653,
+      "high": 26.582530975341797,
+      "n": 6398,
+      "mean_key": 24.079160690307617,
+      "rms_translation_m": 0.32899200916290283,
+      "rms_yaw_deg": 7.144403485042725
+    },
+    {
+      "low": 26.582530975341797,
+      "high": 31.31823387145996,
+      "n": 6400,
+      "mean_key": 29.044614791870117,
+      "rms_translation_m": 0.3230809271335602,
+      "rms_yaw_deg": 6.196421039569145
+    },
+    {
+      "low": 31.31823387145996,
+      "high": 36.002691650390624,
+      "n": 6398,
+      "mean_key": 33.70500564575195,
+      "rms_translation_m": 0.34745898842811584,
+      "rms_yaw_deg": 7.042735692360262
+    },
+    {
+      "low": 36.002691650390624,
+      "high": 41.74921798706055,
+      "n": 6398,
+      "mean_key": 38.85084533691406,
+      "rms_translation_m": 0.34103018045425415,
+      "rms_yaw_deg": 7.912065521333383
+    },
+    {
+      "low": 41.74921798706055,
+      "high": 49.802459716796875,
+      "n": 6398,
+      "mean_key": 45.67385482788086,
+      "rms_translation_m": 0.35459765791893005,
+      "rms_yaw_deg": 6.966436929802519
+    },
+    {
+      "low": 49.802459716796875,
+      "high": 120.15156555175783,
+      "n": 6399,
+      "mean_key": 64.68388366699219,
+      "rms_translation_m": 0.40356728434562683,
+      "rms_yaw_deg": 7.271433050773915
+    }
+  ],
+  "score_decile_profile": [
+    {
+      "low": 0.20003323256969452,
+      "high": 0.28449150919914246,
+      "n": 6398,
+      "mean_key": 0.24806536734104156,
+      "rms_translation_m": 0.53178870677948,
+      "rms_yaw_deg": 13.560287894154488
+    },
+    {
+      "low": 0.28449150919914246,
+      "high": 0.3287396728992462,
+      "n": 6398,
+      "mean_key": 0.3083652853965759,
+      "rms_translation_m": 0.4094281494617462,
+      "rms_yaw_deg": 9.303273456201076
+    },
+    {
+      "low": 0.3287396728992462,
+      "high": 0.3599514365196228,
+      "n": 6400,
+      "mean_key": 0.3444565534591675,
+      "rms_translation_m": 0.3579542636871338,
+      "rms_yaw_deg": 6.969017033761491
+    },
+    {
+      "low": 0.3599514365196228,
+      "high": 0.3877893388271332,
+      "n": 6398,
+      "mean_key": 0.3742513954639435,
+      "rms_translation_m": 0.31298044323921204,
+      "rms_yaw_deg": 5.614583264271969
+    },
+    {
+      "low": 0.3877893388271332,
+      "high": 0.4148462414741516,
+      "n": 6400,
+      "mean_key": 0.40096962451934814,
+      "rms_translation_m": 0.2959243953227997,
+      "rms_yaw_deg": 5.337394977845812
+    },
+    {
+      "low": 0.4148462414741516,
+      "high": 0.4453519284725189,
+      "n": 6396,
+      "mean_key": 0.42996203899383545,
+      "rms_translation_m": 0.28136128187179565,
+      "rms_yaw_deg": 4.22964715060964
+    },
+    {
+      "low": 0.4453519284725189,
+      "high": 0.47831249237060547,
+      "n": 6398,
+      "mean_key": 0.46138808131217957,
+      "rms_translation_m": 0.27838459610939026,
+      "rms_yaw_deg": 4.190540048743086
+    },
+    {
+      "low": 0.47831249237060547,
+      "high": 0.5138665199279786,
+      "n": 6402,
+      "mean_key": 0.4955097436904907,
+      "rms_translation_m": 0.26981788873672485,
+      "rms_yaw_deg": 3.8235804516213348
+    },
+    {
+      "low": 0.5138665199279786,
+      "high": 0.560163140296936,
+      "n": 6398,
+      "mean_key": 0.535830557346344,
+      "rms_translation_m": 0.25126564502716064,
+      "rms_yaw_deg": 3.2579688579145825
+    },
+    {
+      "low": 0.560163140296936,
+      "high": 0.7728838920593263,
+      "n": 6398,
+      "mean_key": 0.6035453081130981,
+      "rms_translation_m": 0.21440498530864716,
+      "rms_yaw_deg": 3.15215492696251
+    }
+  ],
+  "range_score_correlation": -0.352107111487184,
+  "candidate_forms": {
+    "translation": {
+      "const": {
+        "deviance": -1.2049003839492798,
+        "parameters": {
+          "sigma_m": 0.33201598812593147
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.0
+      },
+      "range": {
+        "deviance": -1.2252663373947144,
+        "parameters": {
+          "sigma_0": 0.2721000042812872,
+          "range_scale_m": 134.7405398497358
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.02036595344543457
+      },
+      "score_min": {
+        "deviance": -1.3413448333740234,
+        "parameters": {
+          "sigma_1": 0.31525149376336364,
+          "exponent": 0.9487117761764241
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.13644444942474365
+      },
+      "score_additive": {
+        "deviance": -1.334364891052246,
+        "parameters": {
+          "sigma_1": 0.2516183905791849,
+          "exponent": 1.128084189072251
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.1294645071029663
+      },
+      "score_additive_range": {
+        "deviance": -1.3343651294708252,
+        "parameters": {
+          "sigma_1": 0.25113256722616406,
+          "exponent": 1.1254946278938531,
+          "range_scale_m": 17403.24686164515
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.1294647455215454
+      }
+    },
+    "heading": {
+      "const": {
+        "deviance": -3.290673017501831,
+        "parameters": {
+          "sigma_m": 0.11702867597341537
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.0
+      },
+      "range": {
+        "deviance": -3.3109734058380127,
+        "parameters": {
+          "sigma_0": 0.09388794073533052,
+          "range_scale_m": 119.29150430170239
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.02030038833618164
+      },
+      "score_min": {
+        "deviance": -3.747499942779541,
+        "parameters": {
+          "sigma_1": 0.09588519750283958,
+          "exponent": 1.687189295642024
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.45682692527770996
+      },
+      "score_additive": {
+        "deviance": -3.7288975715637207,
+        "parameters": {
+          "sigma_1": 0.08096878475925151,
+          "exponent": 1.9322440787684163
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.43822455406188965
+      },
+      "score_additive_range": {
+        "deviance": -3.7288947105407715,
+        "parameters": {
+          "sigma_1": 0.08094232812140095,
+          "exponent": 1.9306458876744088,
+          "range_scale_m": 677702.8659427208
+        },
+        "converged": true,
+        "deviance_improvement_over_const": 0.43822169303894043
+      }
+    }
+  },
+  "selected_form": "score_additive",
+  "selection_rule": "fixed in advance: the additive form, because a correspondence's disagreement is the difference of two independent detections and its variance is therefore the sum of theirs. The other four forms are fitted and reported so 'nothing else fits materially better' is a measurement; five forms were tried per channel, and no further ones.",
+  "correspondence_variance": {
+    "mode": "split",
+    "sigma_translation_m": 0.2516183905791849,
+    "translation_exponent": 1.128084189072251,
+    "sigma_yaw_rad": 0.08096878475925151,
+    "sigma_yaw_deg": 4.639169639008295,
+    "yaw_exponent": 1.9322440787684163,
+    "score_reference": 0.4
+  }
+}

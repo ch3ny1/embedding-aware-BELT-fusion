@@ -424,19 +424,52 @@ def _mean(values: List[float]) -> float:
 
 
 def _pose_provenance(checkpoint: Dict) -> Dict:
-    """The (head, message content, match weight) a stage-2 checkpoint was trained under."""
+    """What a stage-2 checkpoint was trained under.
+
+    ``variance_weighting`` defaults to ``"none"`` for checkpoints written before
+    ``alignformer.variance`` existed, which is what they were trained under.
+    """
     return {
         "head": checkpoint["head"],
         "message_content": checkpoint["message_content"],
         "match_weight": checkpoint["match_weight"],
+        "variance_weighting": checkpoint.get("variance_weighting", "none"),
         "stage1_checkpoint": checkpoint["stage1_checkpoint"],
         "epoch": checkpoint["epoch"],
     }
 
 
 def _configuration_name(checkpoint: Dict) -> str:
+    """The table label for one stage-2 configuration.
+
+    Deliberately blind to ``variance_weighting``: the P2 gate selects its
+    subject by this name, and appending the estimator variant to it would make
+    the gate's definition depend on which estimator was being measured.
+    ``_reject_duplicate_configurations`` is what stops two variants from being
+    silently merged into one row instead.
+    """
     suffix = "" if checkpoint["match_weight"] else " (match_weight 0)"
     return f"{checkpoint['head']} / {checkpoint['message_content']}{suffix}"
+
+
+def _reject_duplicate_configurations(loaded) -> None:
+    """Refuse a ``--metric pose`` run whose checkpoints share a table label.
+
+    Two estimator variants of the same (head, message content) are a legitimate
+    comparison, but they must be measured in separate runs, not collapsed onto
+    one row. The noise draws are keyed on (seed, sigma, sample index) alone, so
+    separate runs still see byte-identical perturbations and the comparison
+    stays paired.
+    """
+    seen: Dict[str, str] = {}
+    for path, _, checkpoint in loaded:
+        name = _configuration_name(checkpoint)
+        if name in seen:
+            raise ValueError(
+                f"{path} and {seen[name]} both report as {name!r}; measure them in "
+                "separate runs (the noise draws are identical across runs)"
+            )
+        seen[name] = str(path)
 
 
 def run_pose(args: argparse.Namespace, device) -> Dict:
@@ -473,6 +506,7 @@ def run_pose(args: argparse.Namespace, device) -> Dict:
     for path in args.checkpoint:
         modules, checkpoint = load_stage2(path, device)
         loaded.append((path, modules, checkpoint))
+    _reject_duplicate_configurations(loaded)
 
     seeds = [_POSE_SEED_BASE + offset for offset in range(args.seeds)]
     results: Dict[str, Dict[str, Dict]] = {}
