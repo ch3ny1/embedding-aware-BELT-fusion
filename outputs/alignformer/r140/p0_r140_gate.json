@@ -1,0 +1,31 @@
+{
+  "method": "late_fusion_clean",
+  "metric": "ap",
+  "config": "configs/alignformer_detector_r140.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion_r140/net_epoch15.pth",
+  "cav_lidar_range": [
+    -140.8,
+    -40,
+    -3,
+    140.8,
+    40,
+    1
+  ],
+  "nms_thresh": 0.15,
+  "frames": 2170,
+  "ap": {
+    "ap_30": {
+      "global_sorted": 0.9551810856020954,
+      "frame_order": 0.8164355718826593
+    },
+    "ap_50": {
+      "global_sorted": 0.950248676405886,
+      "frame_order": 0.8089866323818042
+    },
+    "ap_70": {
+      "global_sorted": 0.8963903054754454,
+      "frame_order": 0.7325144280333498
+    }
+  }
+}

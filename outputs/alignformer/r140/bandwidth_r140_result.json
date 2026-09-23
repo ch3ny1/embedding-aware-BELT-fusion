@@ -1,0 +1,239 @@
+{
+  "metric": "bytes_per_frame_per_agent",
+  "frames_measured": 100,
+  "precision": "float32",
+  "alignformer": {
+    "agent_frames": 5986,
+    "objects_per_agent_mean": 15.692281991313063,
+    "objects_per_agent_median": 16.0,
+    "objects_per_agent_max": 37,
+    "truncated_at_max_objects": 0,
+    "box_floats": 7,
+    "embed_dim": 128,
+    "bytes_per_object": 540,
+    "bytes_per_frame_per_agent": 8473.832275309054,
+    "bytes_per_frame_per_agent_boxes_only": 439.38389575676575
+  },
+  "baselines": {
+    "attfuse": {
+      "frames": 100,
+      "site": "backbone.fuse_modules.0",
+      "what": "the first scale AttBEVBackbone fuses. The block chain that produces the deeper scales is unfused, so a receiver can run it on this tensor alone.",
+      "tensor_shape": [
+        2,
+        64,
+        100,
+        352
+      ],
+      "elements_per_agent": 2252800.0,
+      "bytes_per_frame_per_agent": 9011200.0,
+      "baseline": "attfuse",
+      "label": "AttFuse",
+      "model_core_method": "point_pillar_intermediate",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_attentive_fusion/latest.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -40,
+        -3,
+        140.8,
+        40,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "coalign": {
+      "frames": 100,
+      "site": "fusion_net.0",
+      "what": "the first multiscale feature. The model file's own comment names this as the transmitted tensor; the deeper scales are derived from it by the shared backbone.",
+      "tensor_shape": [
+        2,
+        64,
+        100,
+        352
+      ],
+      "elements_per_agent": 2252800.0,
+      "bytes_per_frame_per_agent": 9011200.0,
+      "baseline": "coalign",
+      "label": "CoAlign (fusion only)",
+      "model_core_method": "point_pillar_coalign",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_coalign/point_pillar_coalign/net_epoch15.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -40,
+        -3,
+        140.8,
+        40,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "cobevt": {
+      "frames": 100,
+      "site": "shrink_conv",
+      "what": "spatial_features_2d after the shrink header, the input to SwapFusionEncoder.",
+      "tensor_shape": [
+        2,
+        256,
+        96,
+        352
+      ],
+      "elements_per_agent": 8650752.0,
+      "bytes_per_frame_per_agent": 34603008.0,
+      "baseline": "cobevt",
+      "label": "CoBEVT",
+      "model_core_method": "point_pillar_cobevt",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_cobevt/no_compression/net_epoch19.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -38.4,
+        -3,
+        140.8,
+        38.4,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "fcooper": {
+      "frames": 100,
+      "site": "shrink_conv",
+      "what": "spatial_features_2d after the shrink header, the input to SpatialFusion (maxout).",
+      "tensor_shape": [
+        2,
+        256,
+        100,
+        352
+      ],
+      "elements_per_agent": 9011200.0,
+      "bytes_per_frame_per_agent": 36044800.0,
+      "baseline": "fcooper",
+      "label": "F-Cooper",
+      "model_core_method": "point_pillar_fcooper",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/f_cooper/latest.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -40,
+        -3,
+        140.8,
+        40,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "v2vam": {
+      "frames": 100,
+      "site": "shrink_conv",
+      "what": "spatial_features_2d after the shrink header.",
+      "tensor_shape": [
+        2,
+        256,
+        50,
+        176
+      ],
+      "elements_per_agent": 2252800.0,
+      "bytes_per_frame_per_agent": 9011200.0,
+      "baseline": "v2vam",
+      "label": "V2VAM",
+      "model_core_method": "point_pillar_intermediate_V2VAM",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_v2vam/no-compression/latest.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -40,
+        -3,
+        140.8,
+        40,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "v2xvit": {
+      "frames": 100,
+      "site": "shrink_conv",
+      "what": "spatial_features_2d after the shrink header -- exactly what regroup() packs for the V2X-ViT fusion transformer.",
+      "tensor_shape": [
+        2,
+        256,
+        48,
+        176
+      ],
+      "elements_per_agent": 2162688.0,
+      "bytes_per_frame_per_agent": 8650752.0,
+      "baseline": "v2xvit",
+      "label": "V2X-ViT",
+      "model_core_method": "point_pillar_transformer",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_v2xvit/net_epoch60.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -38.4,
+        -3,
+        140.8,
+        38.4,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59
+    },
+    "where2comm": {
+      "frames": 100,
+      "site": "fusion_net",
+      "what": "the high-resolution spatial_features Where2comm fuses over (multi_scale), before its communication mask sparsifies it.",
+      "tensor_shape": [
+        2,
+        64,
+        192,
+        704
+      ],
+      "elements_per_agent": 8650752.0,
+      "bytes_per_frame_per_agent": 34603008.0,
+      "baseline": "where2comm",
+      "label": "Where2comm",
+      "model_core_method": "point_pillar_where2comm",
+      "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_where2comm/net_epoch50.pth",
+      "cav_lidar_range": [
+        -140.8,
+        -38.4,
+        -3,
+        140.8,
+        38.4,
+        1
+      ],
+      "voxel_size": [
+        0.4,
+        0.4,
+        4
+      ],
+      "agents_per_frame_mean": 1.59,
+      "communication_rate": 0.21098959013819696,
+      "bytes_per_frame_per_agent_after_selection": 7300874.47546875
+    }
+  },
+  "failed": {}
+}

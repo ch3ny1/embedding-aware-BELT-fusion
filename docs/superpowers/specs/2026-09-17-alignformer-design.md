@@ -329,7 +329,7 @@ use a single seed and flag this as a weakness; it is fixed here.
 
 ## 7. Phases and go/no-go gates
 
-- **P0** cache, dataset, clean reproduction - *gate: clean AP@0.7 = 0.856 +/- 0.01* - **PASSED, measured 0.8764**; the band came from a lost checkpoint, so 0.8764 is the baseline to beat
+- **P0** cache, dataset, clean reproduction - *gate: clean AP@0.7 = 0.856 +/- 0.01* - **PASSED, measured 0.8764** at `cav_lidar_range` +/-70.4 m; the band came from a lost checkpoint. **Superseded: 0.8964** since the detector was retrained at the +/-140.8 m range the evaluation and every baseline use (task 18) - that is the baseline to beat
 - **P1** embedding head + matching - *gate: cross-agent Top-1 >= 0.85*
 - **P2** Head B + the boxes-only ablation - *gate: yaw MAE strictly below the
   predict-zero conditional-mean value at each sigma*

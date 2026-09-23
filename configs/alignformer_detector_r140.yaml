@@ -138,9 +138,28 @@ lr_scheduler:
 # --- AlignFormer-specific (not part of OpenCOOD's hypes schema) ---
 # Task 18 loads the widened per-agent detector from this path. Trained by
 # scripts/train_late_fusion.py --output-dir
-# outputs/alignformer/point_pillar_late_fusion_r140, 15 epochs, same schedule
-# and same scenario-disjoint split (seed 0) as the +/-70.4 m run, so the two
-# differ only in cav_lidar_range. The epoch below is the lowest-validation-loss
-# checkpoint of the 15; see the task-18 report for the full curve.
+# outputs/alignformer/point_pillar_late_fusion_r140, all 15 epochs, same
+# schedule and same scenario-disjoint split (seed 0) as the +/-70.4 m run, so
+# the two differ only in cav_lidar_range. 2h19m from the trainer's first write
+# to the last checkpoint, against the +/-70.4 m run's 2h02m; pcd cache
+# 317041/317041 hits (100.0%).
+#
+# Validation loss per epoch (0-indexed), against the +/-70.4 m run's:
+#   0: 0.847504 (0.70 m run 1.049276)    8: 0.445239 (0.449057)
+#   1: 0.627000 (0.741035)               9: 0.472856 (0.435437)
+#   2: 0.556220 (0.701557)              10: 0.385982 (0.369924)
+#   3: 0.520889 (0.537389)              11: 0.382134 (0.362845)
+#   4: 0.476609 (0.567841)              12: 0.376374 (0.366617)
+#   5: 0.455781 (0.578438)              13: 0.371325 (0.354794)
+#   6: 0.475714 (0.483917)              14: 0.368220 (0.356513)
+#   7: 0.480749 (0.427981)
+#
+# The minimum is the LAST epoch (0.368220 -> net_epoch15.pth), unlike the
+# narrow run whose minimum was epoch 13. The curve is monotone over the last
+# five epochs rather than oscillating, so this is a plateau, not an early
+# stop. The wide run's loss sits slightly above the narrow run's from epoch 10
+# on; that is expected and is not a regression -- the wider range adds
+# far-field, low-point-density objects to the loss that the narrow run never
+# had to fit.
 detector:
   checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion_r140/net_epoch15.pth"

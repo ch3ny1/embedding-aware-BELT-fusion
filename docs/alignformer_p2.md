@@ -1,15 +1,28 @@
 # AlignFormer P2: stage-2 pose training, the boxes-only ablation, and fused AP under localization error
 
-> **Current.** Every number in this document was measured after the two
-> defects P2 originally surfaced were fixed: the heading channel's pi ambiguity
-> (diagnosed in [alignformer_pose_floor.md](alignformer_pose_floor.md)) and the
+> **Current: the `r140` detector.** The headline numbers in this document are
+> from the per-agent detector running at the **full `cav_lidar_range` of
+> +/-140.8 m** -- the range every intermediate-fusion baseline uses and the
+> range the evaluated `GT_RANGE` (+/-140 m) covers. It replaces an earlier
+> detector at OpenCOOD's stock +/-70.4 m, which no agent could report the 9.9%
+> of evaluated ground truth beyond |x| = 70.4 m from, and whose measured clean
+> recall at IoU 0.7 was therefore capped at 0.894 against the new 0.916.
+> The +/-70.4 m results are **kept**, clearly labelled `r70`, because the
+> difference between the two ranges is itself a result; see
+> [The detector range fix](#the-detector-range-fix-704-m---1408-m). Tables that
+> have not been re-run at +/-140.8 m -- the head A / boxes-only / `match_weight
+> 0` ablations and the per-epoch curve -- say so where they appear.
+>
+> Both ranges were measured after the two defects P2 originally surfaced were
+> fixed: the heading channel's pi ambiguity (diagnosed in
+> [alignformer_pose_floor.md](alignformer_pose_floor.md)) and the
 > communication-range mismatch between the pair index and the evaluation
-> protocol. Four configurations -- head A, head B, the boxes-only ablation and
-> the `match_weight 0` control -- were retrained from scratch on the corrected
-> pair index and re-measured together, so the comparisons here are
-> like-for-like. (P2's fifth configuration, head A / boxes_only, was dropped:
-> head A collapses to predict-zero either way, so ablating its message content
-> measures nothing.)
+> protocol. The four `r70` configurations -- head A, head B, the boxes-only
+> ablation and the `match_weight 0` control -- were retrained from scratch on
+> the corrected pair index and re-measured together, so the comparisons among
+> them are like-for-like. (P2's fifth configuration, head A / boxes_only, was
+> dropped: head A collapses to predict-zero either way, so ablating its message
+> content measures nothing.)
 
 Stage 1 established that the two agents' object sets can be put into
 correspondence (P1: cross-agent Top-1 0.9961 at 70 m). It also established,
@@ -33,16 +46,31 @@ oracle, across a localization-noise sweep.
 
 | Question | Answer |
 |---|---|
-| **P2 gate** (head B yaw MAE below predict-zero at every non-zero sigma) | **PASS, 7 of 7.** Definition unmodified, and now measured on a *larger and harder* validation population (6262 pairs out to 70 m, against the 4176 the 40 m index admitted). |
+| **P2 gate** (head B yaw MAE below predict-zero at every non-zero sigma) | **PASS, 7 of 7 on validation**, definition unmodified, at both detector ranges (6262 pairs out to 70 m). On the **test** split the same criterion still **fails at sigma = 0.2 and 0.4 m** and passes from 0.6 m up -- and at +/-140.8 m the *translation* criterion now fails at 0.2 m too (0.3043 against 0.2797 m), where at +/-70.4 m it passed everywhere. The gate is a validation statement and is not a claim about test; see [below](#p2-gate). |
 | Head A vs head B | **Decisive for B, and head A's collapse reproduces post-fix.** Head A's translation MAE tracks predict-zero to within 1-3% at every sigma (2.688 against 2.734 m at sigma = 2) and its **yaw MAE is *worse* than predict-zero** (1.643 against 1.600 deg). It never leaves the conditional mean -- exactly [CoLoca-QuA's failure](coloca_qua_baseline.md) on the same data. Head B is 8.0x better on yaw and 17x better on translation at sigma = 2 m. |
 | Does the embedding help? | **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
-| **mAP under localization error** (the number the project needs) | **AlignFormer recovers 75-81% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.43 to +0.57 AP@0.7** on the 2170-frame test split, and **+0.16 at sigma = 0.2 m** where it used to lose. At sigma = 0 it still costs **0.070**. |
-| **Head-to-head against intermediate fusion** (the claim the project exists to make) | **Beaten on the clean rows, ahead of the whole field from sigma = 0.6 m, at 1,227x to 5,112x fewer bytes.** Six of seven baselines outscore AlignFormer at sigma = 0 and 0.2 m; from 0.4 m it leads all but V2X-ViT (a tie there), and from 0.6 m it leads every one. All seven were run locally under this sweep and this evaluator -- no published number is quoted. See [below](#head-to-head-against-intermediate-fusion). |
+| **mAP under localization error** (the number the project needs) | **AlignFormer recovers 78-84% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.46 to +0.60 AP@0.7** on the 2170-frame test split, and **+0.18 at sigma = 0.2 m**. At sigma = 0 it still costs **0.055** (it cost 0.070 at +/-70.4 m: the regression shrank by a fifth but did **not** close). |
+| **Head-to-head against intermediate fusion** (the claim the project exists to make) | **Ties the strongest baseline on the clean row, loses one row at 0.2 m, and leads the whole field from 0.4 m, at 1,021x to 4,254x fewer bytes.** At sigma = 0 AlignFormer is above V2X-ViT, Where2comm and F-Cooper and below CoAlign, CoBEVT, AttFuse and V2VAM; at 0.2 m six of seven are ahead of it; from 0.4 m it leads every one, by +0.030 to +0.040 over V2X-ViT and +0.16 to +0.33 over the rest. All seven were run locally under this sweep and this evaluator -- no published number is quoted. See [below](#head-to-head-against-intermediate-fusion). |
 
 ### The headline
 
-On the official 2170-frame OPV2V test split, global-sorted AP@0.7:
+On the official 2170-frame OPV2V test split, global-sorted AP@0.7, with the
+detector at **+/-140.8 m** (`r140`):
+
+| sigma (m) | Vanilla late fusion | AlignFormer | Oracle (true pose) | Gain | Gap recovered |
+|---|---:|---:|---:|---:|---:|
+| 0 | **0.8964** | 0.8415 | 0.8964 | -0.0549 | -- |
+| 0.2 | 0.5978 | **0.7743** | 0.8964 | **+0.1765** | 59.1% |
+| 0.4 | 0.3158 | **0.7717** | 0.8964 | **+0.4559** | 78.5% |
+| 0.6 | 0.2154 | **0.7717** | 0.8964 | **+0.5564** | 81.7% |
+| 0.8 | 0.1844 | **0.7804** | 0.8964 | **+0.5961** | 83.7% |
+| 1.0 | 0.1763 | **0.7771** | 0.8964 | **+0.6008** | 83.4% |
+| 1.5 | 0.1799 | **0.7728** | 0.8964 | **+0.5928** | 82.7% |
+| 2.0 | 0.1898 | **0.7441** | 0.8964 | **+0.5542** | 78.4% |
+
+And the same table at the superseded **+/-70.4 m** range (`r70`), kept because
+the difference between the two is a result in its own right:
 
 | sigma (m) | Vanilla late fusion | AlignFormer | Oracle (true pose) | Gain | Gap recovered |
 |---|---:|---:|---:|---:|---:|
@@ -55,45 +83,59 @@ On the official 2170-frame OPV2V test split, global-sorted AP@0.7:
 | 1.5 | 0.1737 | **0.7326** | 0.8764 | **+0.5588** | 79.5% |
 | 2.0 | 0.1831 | **0.7046** | 0.8764 | **+0.5215** | 75.2% |
 
+Both tables are on **the same 33,089 ground-truth boxes**: OpenCOOD filters
+test-time ground truth by the fixed `GT_RANGE`, not by `cav_lidar_range`
+(`base_postprocessor.generate_object_center` uses `anchor_args` only when
+`train=True`), so the two ranges differ in what the detector can *find*, never
+in what it is *scored against*. Verified frame by frame on 120 test frames:
+zero frames where the two ground-truth sets differ.
+
 Three things are visible at a glance.
 
-**Vanilla late fusion collapses under localization error** -- 0.8764 -> 0.1690
-AP@0.7 by sigma = 1 m, an 81% relative loss. That collapse is the problem
+**Vanilla late fusion collapses under localization error** -- 0.8964 -> 0.1763
+AP@0.7 by sigma = 1 m, an 80% relative loss. That collapse is the problem
 AlignFormer exists to solve, and it is severe.
 
-**AlignFormer is almost flat in sigma** -- 0.8068 at sigma = 0 down to 0.7046 at
+**AlignFormer is almost flat in sigma** -- 0.8415 at sigma = 0 down to 0.7441 at
 sigma = 2 m. That flatness is the closed-form solver working: it removes
 essentially all of the *injected* error, leaving a residual set by the detector
 rather than by the noise. It is also why the method wins by more as conditions
 get worse, which is the right direction for a robustness method.
 
-**The remaining cost is at sigma = 0 only, and it is now 0.070.** Where
+**The remaining cost is at sigma = 0 only, and it is now 0.055** (0.070 at
++/-70.4 m). Where
 localization is already perfect, moving boxes by an imperfect estimate can only
-lose AP, and shrinkage suppresses the correction entirely on 66% of test pairs
+lose AP, and shrinkage suppresses the correction entirely on 74% of test pairs
 there rather than on all of them. The stated target -- AP@0.7 at or above
 uncorrected at **every** sigma including 0 -- is therefore still not met at
-sigma = 0, and that is the one row that fails it. At every other sigma it is met
-by a wide margin, including at 0.2 m where the method used to lose 0.043 and now
-gains 0.164.
+sigma = 0, and that is the one row that fails it. Widening the detector shrank
+that regression by a fifth; it did not close it, and nothing in this document
+claims it did. At every other sigma the target is met by a wide margin.
 
-### How the three fixes accumulate
+### How the four fixes accumulate
 
-Same evaluator, same detections, same 2170-frame test split, AP@0.7:
+Same evaluator, same 2170-frame test split, AP@0.7. The first four columns are
+at +/-70.4 m; the last is the widened detector, whose uncorrected and oracle
+rows move too (shown in the `r140 oracle` column).
 
-| sigma (m) | Uncorrected | P2 as first measured | + heading fold & shrinkage | **+ 70 m pair index** | Oracle |
-|---|---:|---:|---:|---:|---:|
-| 0 | **0.8764** | 0.5424 | 0.7665 | **0.8068** | 0.8764 |
-| 0.2 | 0.5846 | 0.5419 | 0.7096 | **0.7488** | 0.8764 |
-| 0.4 | 0.3069 | 0.5398 | 0.6963 | **0.7410** | 0.8764 |
-| 0.6 | 0.2106 | 0.5368 | 0.6948 | **0.7412** | 0.8764 |
-| 0.8 | 0.1785 | 0.5320 | 0.6971 | **0.7404** | 0.8764 |
-| 1.0 | 0.1690 | 0.5303 | 0.6957 | **0.7386** | 0.8764 |
-| 1.5 | 0.1737 | 0.5198 | 0.6845 | **0.7326** | 0.8764 |
-| 2.0 | 0.1831 | 0.4961 | 0.6707 | **0.7046** | 0.8764 |
+| sigma (m) | r70 uncorrected | P2 as first measured | + heading fold & shrinkage | + 70 m pair index | **+ 140.8 m detector** | r140 oracle |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 0.8764 | 0.5424 | 0.7665 | 0.8068 | **0.8415** | 0.8964 |
+| 0.2 | 0.5846 | 0.5419 | 0.7096 | 0.7488 | **0.7743** | 0.8964 |
+| 0.4 | 0.3069 | 0.5398 | 0.6963 | 0.7410 | **0.7717** | 0.8964 |
+| 0.6 | 0.2106 | 0.5368 | 0.6948 | 0.7412 | **0.7717** | 0.8964 |
+| 0.8 | 0.1785 | 0.5320 | 0.6971 | 0.7404 | **0.7804** | 0.8964 |
+| 1.0 | 0.1690 | 0.5303 | 0.6957 | 0.7386 | **0.7771** | 0.8964 |
+| 1.5 | 0.1737 | 0.5198 | 0.6845 | 0.7326 | **0.7728** | 0.8964 |
+| 2.0 | 0.1831 | 0.4961 | 0.6707 | 0.7046 | **0.7441** | 0.8964 |
 
 ### What shrinkage is still buying
 
-Same checkpoint, same sweep, `--shrinkage` on and off, AP@0.7:
+Same checkpoint, same sweep, `--shrinkage` on and off, AP@0.7. **This table is
+`r70` and has not been re-run at +/-140.8 m**; `tau` was recalibrated for the
+widened detector (0.1806 m / 0.2670 deg against 0.1590 m / 0.2468 deg) and the
+sigma = 0 exact-fallback rate rose from 66.1% to 74.2% accordingly, so the
+trade below is expected to be larger, not smaller, at the wider range.
 
 | sigma (m) | Uncorrected | Shrinkage off | **Shrinkage on** | Shrinkage buys |
 |---|---:|---:|---:|---:|
@@ -106,17 +148,211 @@ Same checkpoint, same sweep, `--shrinkage` on and off, AP@0.7:
 | 1.5 | 0.1737 | 0.7360 | **0.7326** | -0.0034 |
 | 2 | 0.1831 | 0.7060 | **0.7046** | -0.0013 |
 
-Unchanged in character from before the range fix: shrinkage buys the clean case
--- **+0.050 at sigma = 0** -- for 0.001 to 0.008 everywhere else. That is the
-trade it exists to make, and it is what keeps the sigma = 0 cost at 0.070
+Unchanged in character from before the pair-index fix: shrinkage buys the clean
+case -- **+0.050 at sigma = 0** -- for 0.001 to 0.008 everywhere else. That is
+the trade it exists to make, and it is what keeps the sigma = 0 cost at 0.070
 instead of 0.120.
 
 The heading fold is the large one (+0.167 to +0.177 everywhere). Matching the
 pair index to the evaluation protocol is the second (+0.034 to +0.048), and it
 is the only one that helps the clean case materially (+0.040 at sigma = 0).
-Neither is a modelling change: both are defects in what the model was shown.
+Widening the detector is the third (+0.026 to +0.040 on AlignFormer's own rows,
+and +0.020 on the oracle it is measured against). None of the four is a
+modelling change: every one is a defect in what the model was shown or in what
+the detector was allowed to see.
+
+## The detector range fix (+/-70.4 m -> +/-140.8 m)
+
+### What was wrong
+
+`configs/alignformer_detector.yaml` was a copy of OpenCOOD's stock
+`point_pillar_late_fusion.yaml`, whose `cav_lidar_range` is
+`[-70.4, -40, -3, 70.4, 40, 1]`. Every intermediate-fusion baseline in the
+head-to-head below runs at `[-140.8, -40, -3, 140.8, 40, 1]`, and the evaluated
+`GT_RANGE` is `[-140, -40, -3, 140, 40, 1]` for all of them. **9.6% of the
+evaluated ground truth lies beyond |x| = 70.4 m** (176 of 1824 boxes over 120
+sampled test frames; task 17 measured 10.0% over a different sample), and the
+narrow detector could not produce a box there at all. Its recall was capped
+near 90% in every published row.
+
+The consequence was a recall cap, and it was partial rather than total: late
+fusion merges several agents, so a box 90 m from the ego can be 30 m from a CAV
+and still be found. Measured, the +/-70.4 m detector's clean recall at IoU 0.7
+was **0.894** over the whole test split, against **0.916** for the widened one
+-- see [Where the AP came from](#where-the-ap-came-from-and-what-it-cost).
+
+`configs/alignformer_detector_r140.yaml` is the same detector at the wider
+range. Only `cav_lidar_range` and the output paths differ --
+`tests/test_alignformer_range.py` asserts that the optimizer, scheduler,
+augmentation, anchors, NMS and the **voxel budget** are identical. The voxel
+budget needed no change, which is worth stating because it is the opposite of
+what the doubled grid suggests: over 400 randomly sampled OPV2V train
+agent-frames the occupied-pillar count is 7,481 mean / 11,885 max at
++/-140.8 m against 7,235 / 11,535 at +/-70.4 m, both far below
+`max_voxel_train = 16000`. OPV2V's LiDAR simply returns few points past 70 m.
+The extra cost is the BEV grid (704 x 200 cells against 352 x 200): 2h19m to
+train against 2h02m.
+
+The ROI cache **had** to be rebuilt rather than inherited.
+`embedding.rotated_roi_align` maps each box's world coordinates into normalized
+BEV grid coordinates through `lidar_range`, so the same box pools different
+features at the two ranges (pinned by
+`test_roi_features_depend_on_the_lidar_range`). The new cache is 5.12 GB at
+`/media/chenyi/basement2/cache/alignformer_r140`; the +/-70.4 m one is kept.
+Reproducibility was re-verified the way it was before -- six cached frames
+re-derived live through `cache._cache_one_frame` and compared with
+`np.array_equal` on boxes, scores, gt_ids and ROI: all identical. The pair
+index is pose-derived and range-independent; the 70 m index was reused
+unchanged, and rebuilding it from scratch reproduces it element for element
+(35,298 train pairs, 10,790 test).
+
+### The P0 clean gate
+
+Clean late fusion, 2170-frame official test split, global-sorted, on the same
+33,089 ground-truth boxes:
+
+| Metric | r70 (+/-70.4 m) | **r140 (+/-140.8 m)** | Delta |
+|---|---:|---:|---:|
+| AP@0.3 | 0.9284 | **0.9552** | +0.0268 |
+| AP@0.5 | 0.9251 | **0.9502** | +0.0251 |
+| **AP@0.7** | **0.8764** | **0.8964** | **+0.0200** |
+
+**0.8964 is the new oracle and the new `uncorrected` sigma = 0 row**, and it
+replaces 0.8764 as the number the project's late-fusion ceiling is quoted
+against.
+
+The `frame_order` variant moves the other way (AP@0.7 0.8180 -> 0.7325). That
+is not the reported metric -- `fusion.average_precision` documents per-frame
+accumulation as silently inflating AP, and every number in this project is
+`global_sorted` -- but the direction is informative: the wide detector emits
+more low-confidence far-field detections, which cost per-frame precision on
+frames with few ground-truth boxes while helping the dataset-level curve.
+
+### Where the AP came from, and what it cost
+
+**The gain is a recall gain, and it is concentrated exactly where the handicap
+was.** Clean late fusion, per-ground-truth-box recall at IoU 0.7, over all
+33,089 boxes of the test split:
+
+| ego-frame \|x\| (m) | GT boxes | r70 recall | **r140 recall** | recovered |
+|---|---:|---:|---:|---:|
+| 0 - 35 | 19,189 | 0.966 | **0.969** | +51 boxes |
+| 35 - 70.4 | 10,619 | 0.889 | **0.895** | +68 |
+| 70.4 - 105 | 2,737 | 0.541 | **0.721** | **+493** |
+| 105 - 140 | 544 | 0.243 | **0.421** | **+97** |
+| **all** | **33,089** | **0.894** | **0.916** | **+709** |
+
+Overall recall goes 0.894 -> 0.916, which is the +0.020 AP@0.7 almost exactly,
+and **83% of the recovered boxes are beyond |x| = 70.4 m**.
+
+Two things in that table correct earlier statements in this project.
+
+**The narrow detector was not blind past 70.4 m -- it was partially sighted.**
+Task 17 described the 10% of ground truth beyond |x| = 70.4 m as "invisible to
+our detector". It is not: late fusion merges several agents, and a box 90 m from
+the ego can be 30 m from a CAV, so the +/-70.4 m detector still recalled **54%**
+of the 70.4-105 m bucket and **24%** of the 105-140 m one. The recall ceiling it
+imposed was about 0.894, not 0.90 exactly, and the headroom the range fix could
+possibly recover was 3,281 boxes rather than all of them. That the fix recovered
+590 of them -- 18% of the far-field population, not 100% -- is the honest size of
+the effect.
+
+**The far field is genuinely harder, not merely out of range.** Even at
++/-140.8 m, recall is 0.721 and 0.421 in the two far buckets against 0.969 near
+the ego. OPV2V's LiDAR returns few points there (which is also why the pillar
+count barely moved), and low-point-density objects are hard to detect and, as
+the next table shows, hard to localize.
+
+The cost lands on the pose estimate. Cross-agent detection disagreement per
+correspondence, measured with the **true** pose (so it is detector disagreement,
+not pose error), over all 6262 validation pairs:
+
+| ego-frame \|x\| (m) | r70 correspondences | r70 mean \|dx\|,\|dy\| (m) | r140 correspondences | r140 mean \|dx\|,\|dy\| (m) | r140 mean \|dyaw\| (deg) |
+|---|---:|---:|---:|---:|---:|
+| 0 - 35 | 46,550 | 0.151 | 46,901 | 0.154 | 3.69 |
+| 35 - 70.4 | 14,940 | 0.175 | 15,721 | 0.179 | 4.49 |
+| **70.4 - 140.8** | **0** | -- | **1,366** | **0.230** | **6.65** |
+| all | 61,490 | 0.157 | 63,988 | 0.162 | -- |
+
+The far-field correspondences the wide detector adds are **52% noisier in
+translation and 80% noisier in heading** than the near-field ones. They are
+only 2.1% of the population, but they enter the Procrustes fit with the same
+weight as everything else, and they raise the mean per-correspondence
+disagreement from 0.157 m to 0.162 m.
+
+**That is measurable in the pose metric, and it is a regression.** On the test
+split, AlignFormer's translation MAE at sigma = 0.2 m goes 0.2509 -> 0.3043 m
+and its yaw MAE 0.3605 -> 0.4308 deg; on validation, translation MAE at
+sigma = 1 m goes 0.1288 -> 0.1373 m (yaw improves there, 0.1726 -> 0.1632).
+**Pose estimation got worse and fused AP got better**, because IoU is far more
+sensitive to a missing box than to a few centimetres of residual centre error,
+and the recall the wider range buys is worth more than the precision the
+far-field correspondences cost. This is reported rather than averaged away, and
+nothing was tuned to recover it.
 
 ## Reproducing
+
+### The +/-140.8 m pipeline (`r140`, the headline numbers)
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
+export PYTHONPATH=src:external/OpenCOOD
+O=outputs/alignformer/r140
+DET=configs/alignformer_detector_r140.yaml
+AF=configs/alignformer_r140.yaml
+TEST=/media/chenyi/Elements1/Dataset/OPV2V/test
+
+# The per-agent detector, 15 epochs, 2h19m on an RTX 4090. --split-root points
+# the train/val symlink split at the ext4 disk: the repository's own volume is
+# NTFS and no longer round-trips symlinks.
+python -u scripts/train_late_fusion.py --hypes_yaml $DET \
+  --split-root /media/chenyi/basement2/cache/opv2v_splits \
+  --output-dir outputs/alignformer/point_pillar_late_fusion_r140
+
+# P0 clean gate (~22 min)
+python -m embedding_aware_belt_fusion.alignformer.evaluate \
+  --config $DET --split $TEST --metric ap --output $O/p0_r140_gate.json
+
+# The ROI cache, rebuilt because rotated_roi_align is range-dependent
+# (28.6 min train + 10.8 min test, 5.12 GB)
+python -m embedding_aware_belt_fusion.alignformer.cache --config $DET \
+  --splits /media/chenyi/Elements1/Dataset/OPV2V/{train,test} \
+  --cache-root /media/chenyi/basement2/cache/alignformer_r140
+
+# Stage 1, stage 2 head B, shrinkage recalibration, the P2 gate, the sweep
+python -m embedding_aware_belt_fusion.alignformer.train \
+  --config $AF --stage 1 --output-dir $O/stage1
+python -m embedding_aware_belt_fusion.alignformer.train \
+  --config $AF --stage 2 --head B --message-content boxes+embeddings \
+  --stage1-checkpoint $O/stage1/best.pth \
+  --output-dir $O/stage2_B_boxes+embeddings
+
+E="python -m embedding_aware_belt_fusion.alignformer.evaluate"
+$E --config $AF --metric shrinkage \
+  --checkpoint $O/stage2_B_boxes+embeddings/best.pth \
+  --output $O/shrinkage_B_calibration_result.json
+$E --config $AF --metric pose \
+  --checkpoint $O/stage2_B_boxes+embeddings/best.pth \
+  --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 --seeds 3 \
+  --shrinkage $O/shrinkage_B_calibration_result.json --output $O/p2_r140_gate.json
+$E --config $DET --split $TEST --metric noisy_ap --alignformer-config $AF \
+  --checkpoint $O/stage2_B_boxes+embeddings/best.pth \
+  --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 \
+  --shrinkage $O/shrinkage_B_calibration_result.json \
+  --output $O/p2_r140_noisy_ap_result.json
+
+# Bytes per frame per agent, re-measured: the wider detector transmits more
+# objects (15.69 per agent against 13.06), so AlignFormer's own side moves.
+python -m embedding_aware_belt_fusion.alignformer.bandwidth --frames 100 \
+  --alignformer-cache /media/chenyi/basement2/cache/alignformer_r140/test \
+  --output $O/bandwidth_r140_result.json
+
+python scripts/summarize_alignformer_p2.py \
+  --pose $O/p2_r140_gate.json --noisy-ap $O/p2_r140_noisy_ap_result.json \
+  --history $O/stage2_B_boxes+embeddings/history.json
+```
+
+### The +/-70.4 m pipeline (`r70`, the ablations and the range comparison)
 
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
@@ -406,32 +642,39 @@ positive-part empirical-Bayes rule in `alignformer/shrinkage.py`, calibrated
 once on validation at sigma = 0 (`tau_t = 0.1590 m`, `tau_yaw = 0.2468 deg`,
 6262 pairs) and used unchanged at every sigma and on the test split.
 
-Head B's yaw MAE is now **0.1473-0.2065 deg**, strictly below the empirical
-predict-zero value at all seven non-zero sigmas. **The gate passes, with its
-definition unmodified** -- and on a harder population than it was originally
-posed on, since the widened index adds 2086 further-apart validation pairs that
-share fewer objects (7.61 matched objects per pair beyond 40 m against 10.92
+Head B's yaw MAE is **0.1489-0.1942 deg** at +/-140.8 m (0.1473-0.2065 at
++/-70.4 m), strictly below the empirical predict-zero value at all seven
+non-zero sigmas at both ranges. **The gate passes, with its definition
+unmodified** -- and on a harder population than it was originally posed on,
+since the widened index adds 2086 further-apart validation pairs that share
+fewer objects (7.61 matched objects per pair beyond 40 m against 10.92
 within it).
 
-### The clean case still costs 0.070 AP@0.7
+### The clean case still costs 0.055 AP@0.7
 
 This is the one target not met. At sigma = 0 the true correction is exactly the
-identity, so any correction at all can only lose AP; the method scores 0.8068
-against the oracle's 0.8764.
+identity, so any correction at all can only lose AP; the method scores 0.8415
+against the oracle's 0.8964.
 
 It is much smaller than it was -- P2 measured -0.334, the heading fold and
-shrinkage brought it to -0.110, and matching the pair index to the protocol
-brings it to **-0.070** -- but it is not zero, and the honest statement is that
-AlignFormer is still not unconditionally free to leave on.
+shrinkage brought it to -0.110, matching the pair index to the protocol brought
+it to -0.070, and widening the detector brings it to **-0.055** -- but it is
+not zero, and the honest statement is that AlignFormer is still not
+unconditionally free to leave on. The widened range shrank the regression by a
+fifth; it did not close it.
 
 Shrinkage is what keeps it this small: at sigma = 0 it suppresses the
-correction **entirely** on 66.1% of test pairs (the fallback fraction in the
-test-split pose table below is the exact-identity rate), against 19.4% at
+correction **entirely** on 74.2% of test pairs (the fallback fraction in the
+test-split pose table below is the exact-identity rate), against 24.6% at
 sigma = 0.2 and 2% at sigma >= 1. On the pairs it does not fully suppress, the
-residual it lets through is 0.1453 m and 0.2692 deg -- enough to drop a box
+residual it lets through is 0.1856 m and 0.3440 deg -- enough to drop a box
 below the 0.7 IoU threshold that was above it. AP@0.3, which tolerates that
-residual, is 0.9092 against an oracle 0.9284, i.e. at the looser threshold the
-clean-case cost is only 0.019.
+residual, is 0.9357 against an oracle 0.9552, i.e. at the looser threshold the
+clean-case cost is only 0.020.
+
+(The paragraphs above are `r140`. The numbers quoted in the sub-sections that
+follow -- the embedding ablation, the `match_weight 0` control and the
+unalignable-pair counts -- are `r70` and say so.)
 
 Two routes remain and neither is taken here, because both are tuning against
 the measurement this document exists to take: gate the correction on an
@@ -439,6 +682,10 @@ estimate of the localization error, or train with a loss that pins the identity
 at sigma = 0.
 
 ### The embedding: still nothing on association, marginal on AP, larger on pose
+
+**This sub-section is `r70` throughout**: the boxes-only ablation was not
+retrained at +/-140.8 m, so comparing it against an `r140` deployed
+configuration would confound the message content with the detector range.
 
 This is the project's most-cited finding, so it was re-run in full rather than
 assumed. The pre-registered association diagnostic ruled that the appearance
@@ -497,30 +744,44 @@ pose level and should be stated with the numbers above.
 
 ## Tables
 
-All of the following are rendered by `scripts/summarize_alignformer_p2.py`
-from `outputs/alignformer/r70/p2_r70_gate.json` (the gate, shrunk),
-`outputs/alignformer/r70/p2_r70_ablations_result.json` (the configuration comparison,
-**without** shrinkage, since one calibration cannot describe four different
-estimators) and `outputs/alignformer/r70/p2_r70_noisy_ap_result.json` (fused
-AP, shrunk).
+All of the following are rendered by `scripts/summarize_alignformer_p2.py`.
+The gate, pose and fused-AP tables come from
+`outputs/alignformer/r140/p2_r140_gate.json` and
+`outputs/alignformer/r140/p2_r140_noisy_ap_result.json` unless a heading says
+`r70`; the four-configuration ablation comparison
+(`outputs/alignformer/r70/p2_r70_ablations_result.json`, **without** shrinkage,
+since one calibration cannot describe four different estimators) and the
+per-epoch curve are `r70` and have not been re-run at +/-140.8 m.
 
 ## P2 gate
 
-Gate configuration: **B / boxes+embeddings** -- **PASS**
+Gate configuration: **B / boxes+embeddings** -- **PASS, 7 of 7** (`r140`)
 
-| sigma | Yaw MAE (deg) | Predict-zero yaw (deg) | Below? |
-|---|---:|---:|---|
-| sigma_0.2m | 0.1473 | 0.1600 | yes |
-| sigma_0.4m | 0.1654 | 0.3199 | yes |
-| sigma_0.6m | 0.1690 | 0.4799 | yes |
-| sigma_0.8m | 0.1708 | 0.6398 | yes |
-| sigma_1m | 0.1726 | 0.7998 | yes |
-| sigma_1.5m | 0.1816 | 1.1996 | yes |
-| sigma_2m | 0.2065 | 1.5995 | yes |
+| sigma | Yaw MAE (deg) | Predict-zero yaw (deg) | Below? | r70 yaw MAE (deg) |
+|---|---:|---:|---|---:|
+| sigma_0.2m | 0.1489 | 0.1600 | yes | 0.1473 |
+| sigma_0.4m | 0.1624 | 0.3199 | yes | 0.1654 |
+| sigma_0.6m | 0.1629 | 0.4799 | yes | 0.1690 |
+| sigma_0.8m | 0.1626 | 0.6398 | yes | 0.1708 |
+| sigma_1m | 0.1632 | 0.7998 | yes | 0.1726 |
+| sigma_1.5m | 0.1702 | 1.1996 | yes | 0.1816 |
+| sigma_2m | 0.1942 | 1.5995 | yes | 0.2065 |
 
-Measured on the scenario-disjoint validation split (6262 pairs, `val_scenario_fraction` 0.15, `split_seed` 0), mean of 3 independent noise draws, with the validation-calibrated shrinkage applied. `sigma = 0` is excluded from the gate because the predict-zero baseline is exactly 0 there; it is reported in the pose sweep below as the clean-case diagnostic, at **0.0320 m / 0.0509 deg**.
+Measured on the scenario-disjoint validation split (6262 pairs, `val_scenario_fraction` 0.15, `split_seed` 0), mean of 3 independent noise draws, with the validation-calibrated shrinkage applied. The population is identical at both ranges: the pair index is pose-derived and was not rebuilt. `sigma = 0` is excluded from the gate because the predict-zero baseline is exactly 0 there; it is reported in the pose sweep below as the clean-case diagnostic, at **0.0327 m / 0.0497 deg** (`r70`: 0.0320 m / 0.0509 deg).
+
+Yaw is better at the wider range at every sigma from 0.4 m up. Translation is
+**worse** at every sigma (0.1575 against 0.1265 m at sigma = 0.2, 0.1373
+against 0.1288 at sigma = 1), which is the far-field correspondences entering
+the fit -- see [Where the AP came from, and what it
+cost](#where-the-ap-came-from-and-what-it-cost). Translation is not part of the
+gate's definition and the gate was not changed to accommodate it.
 
 ## Pose sweep
+
+**This table is `r70` and covers all four configurations.** The `r140` run
+retrained only the deployed configuration (B / boxes+embeddings); its numbers
+are in the P2 gate table above and the test-split table below.
+
 
 | sigma (m) | Configuration | Translation MAE (m) | Predict-zero translation (m) | Yaw MAE (deg) | Predict-zero yaw (deg) | Analytic predict-zero yaw (deg) |
 |---|---|---:|---:|---:|---:|---:|
@@ -561,72 +822,99 @@ No shrinkage in this table: it is calibrated per estimator, so applying one conf
 
 ## Fused AP under localization error
 
+`r140`, and the `r70` AP@0.7 alongside:
 
-| sigma (m) | Condition | AP@0.3 | AP@0.5 | AP@0.7 |
-|---|---|---:|---:|---:|
-| -- | oracle (true pose) | 0.9284 | 0.9251 | 0.8764 |
-| 0 | vanilla late fusion (uncorrected) | 0.9284 | 0.9251 | 0.8764 |
-| 0 | AlignFormer-corrected | 0.9092 | 0.8882 | 0.8068 |
-| 0.2 | vanilla late fusion (uncorrected) | 0.9277 | 0.8991 | 0.5846 |
-| 0.2 | AlignFormer-corrected | 0.9087 | 0.8840 | 0.7488 |
-| 0.4 | vanilla late fusion (uncorrected) | 0.8928 | 0.6699 | 0.3069 |
-| 0.4 | AlignFormer-corrected | 0.9073 | 0.8787 | 0.7410 |
-| 0.6 | vanilla late fusion (uncorrected) | 0.7595 | 0.4507 | 0.2106 |
-| 0.6 | AlignFormer-corrected | 0.9042 | 0.8742 | 0.7412 |
-| 0.8 | vanilla late fusion (uncorrected) | 0.6207 | 0.3476 | 0.1785 |
-| 0.8 | AlignFormer-corrected | 0.9039 | 0.8747 | 0.7404 |
-| 1 | vanilla late fusion (uncorrected) | 0.5268 | 0.2978 | 0.1690 |
-| 1 | AlignFormer-corrected | 0.8998 | 0.8672 | 0.7386 |
-| 1.5 | vanilla late fusion (uncorrected) | 0.3856 | 0.2484 | 0.1737 |
-| 1.5 | AlignFormer-corrected | 0.8945 | 0.8638 | 0.7326 |
-| 2 | vanilla late fusion (uncorrected) | 0.3365 | 0.2419 | 0.1831 |
-| 2 | AlignFormer-corrected | 0.8850 | 0.8470 | 0.7046 |
+| sigma (m) | Condition | AP@0.3 | AP@0.5 | AP@0.7 | r70 AP@0.7 |
+|---|---|---:|---:|---:|---:|
+| -- | oracle (true pose) | 0.9552 | 0.9502 | 0.8964 | 0.8764 |
+| 0 | vanilla late fusion (uncorrected) | 0.9552 | 0.9502 | 0.8964 | 0.8764 |
+| 0 | AlignFormer-corrected | 0.9357 | 0.9190 | 0.8415 | 0.8068 |
+| 0.2 | vanilla late fusion (uncorrected) | 0.9544 | 0.9234 | 0.5978 | 0.5846 |
+| 0.2 | AlignFormer-corrected | 0.9365 | 0.9158 | 0.7743 | 0.7488 |
+| 0.4 | vanilla late fusion (uncorrected) | 0.9193 | 0.6914 | 0.3158 | 0.3069 |
+| 0.4 | AlignFormer-corrected | 0.9357 | 0.9117 | 0.7717 | 0.7410 |
+| 0.6 | vanilla late fusion (uncorrected) | 0.7816 | 0.4656 | 0.2154 | 0.2106 |
+| 0.6 | AlignFormer-corrected | 0.9337 | 0.9045 | 0.7717 | 0.7412 |
+| 0.8 | vanilla late fusion (uncorrected) | 0.6473 | 0.3613 | 0.1844 | 0.1785 |
+| 0.8 | AlignFormer-corrected | 0.9304 | 0.9064 | 0.7804 | 0.7404 |
+| 1 | vanilla late fusion (uncorrected) | 0.5501 | 0.3117 | 0.1763 | 0.1690 |
+| 1 | AlignFormer-corrected | 0.9301 | 0.9020 | 0.7771 | 0.7386 |
+| 1.5 | vanilla late fusion (uncorrected) | 0.4062 | 0.2608 | 0.1799 | 0.1737 |
+| 1.5 | AlignFormer-corrected | 0.9258 | 0.8970 | 0.7728 | 0.7326 |
+| 2 | vanilla late fusion (uncorrected) | 0.3524 | 0.2533 | 0.1898 | 0.1831 |
+| 2 | AlignFormer-corrected | 0.9157 | 0.8798 | 0.7441 | 0.7046 |
+
+Every AlignFormer row rose (+0.026 to +0.040 AP@0.7), and so did every
+uncorrected and oracle row. The consistency check still holds exactly: at
+sigma = 0 the noisy transform *is* the true transform, so `uncorrected_sigma_0m`
+equals `oracle` to the last digit, at all three IoU thresholds.
 
 ## Gap recovered at AP@0.7
 
-| sigma (m) | Vanilla AP@0.7 | AlignFormer AP@0.7 | Oracle AP@0.7 | Gain over vanilla | Gap recovered |
-|---|---:|---:|---:|---:|---:|
-| 0 | 0.8764 | 0.8068 | 0.8764 | -0.0696 | -- |
-| 0.2 | 0.5846 | 0.7488 | 0.8764 | +0.1641 | 56.3% |
-| 0.4 | 0.3069 | 0.7410 | 0.8764 | +0.4341 | 76.2% |
-| 0.6 | 0.2106 | 0.7412 | 0.8764 | +0.5306 | 79.7% |
-| 0.8 | 0.1785 | 0.7404 | 0.8764 | +0.5619 | 80.5% |
-| 1 | 0.1690 | 0.7386 | 0.8764 | +0.5695 | 80.5% |
-| 1.5 | 0.1737 | 0.7326 | 0.8764 | +0.5588 | 79.5% |
-| 2 | 0.1831 | 0.7046 | 0.8764 | +0.5215 | 75.2% |
+| sigma (m) | Vanilla AP@0.7 | AlignFormer AP@0.7 | Oracle AP@0.7 | Gain over vanilla | Gap recovered | r70 gap recovered |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 0.8964 | 0.8415 | 0.8964 | -0.0549 | -- | -- |
+| 0.2 | 0.5978 | 0.7743 | 0.8964 | +0.1765 | 59.1% | 56.3% |
+| 0.4 | 0.3158 | 0.7717 | 0.8964 | +0.4559 | 78.5% | 76.2% |
+| 0.6 | 0.2154 | 0.7717 | 0.8964 | +0.5564 | 81.7% | 79.7% |
+| 0.8 | 0.1844 | 0.7804 | 0.8964 | +0.5961 | 83.7% | 80.5% |
+| 1 | 0.1763 | 0.7771 | 0.8964 | +0.6008 | 83.4% | 80.5% |
+| 1.5 | 0.1799 | 0.7728 | 0.8964 | +0.5928 | 82.7% | 79.5% |
+| 2 | 0.1898 | 0.7441 | 0.8964 | +0.5542 | 78.4% | 75.2% |
 
 ## Pose error on the test split
 
-| sigma (m) | Pairs | Translation MAE (m) | Predict-zero (m) | Yaw MAE (deg) | Predict-zero (deg) | Unalignable pairs | Fell back |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| 0 | 3445 | 0.1453 | 0.0000 | 0.2692 | 0.0000 | 37 | 0.661 |
-| 0.2 | 3445 | 0.2509 | 0.2797 | 0.3605 | 0.1610 | 37 | 0.194 |
-| 0.4 | 3445 | 0.2539 | 0.5450 | 0.3817 | 0.3241 | 37 | 0.055 |
-| 0.6 | 3445 | 0.2646 | 0.8140 | 0.3945 | 0.4865 | 37 | 0.032 |
-| 0.8 | 3445 | 0.2615 | 1.0904 | 0.3880 | 0.6308 | 37 | 0.023 |
-| 1 | 3445 | 0.2707 | 1.3459 | 0.4084 | 0.7892 | 37 | 0.021 |
-| 1.5 | 3445 | 0.2880 | 2.0195 | 0.4358 | 1.1962 | 37 | 0.019 |
-| 2 | 3445 | 0.3262 | 2.6933 | 0.4447 | 1.6053 | 37 | 0.019 |
+`r140`, with the `r70` columns beside the two the gate criterion reads:
+
+| sigma (m) | Pairs | Translation MAE (m) | Predict-zero (m) | Yaw MAE (deg) | Predict-zero (deg) | Unalignable pairs | Fell back | r70 translation | r70 yaw |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 3445 | 0.1856 | 0.0000 | 0.3440 | 0.0000 | 34 | 0.742 | 0.1453 | 0.2692 |
+| 0.2 | 3445 | 0.3043 | 0.2797 | 0.4308 | 0.1610 | 34 | 0.246 | 0.2509 | 0.3605 |
+| 0.4 | 3445 | 0.3045 | 0.5450 | 0.4550 | 0.3241 | 34 | 0.074 | 0.2539 | 0.3817 |
+| 0.6 | 3445 | 0.3063 | 0.8140 | 0.4550 | 0.4865 | 34 | 0.039 | 0.2646 | 0.3945 |
+| 0.8 | 3445 | 0.3161 | 1.0904 | 0.4777 | 0.6308 | 34 | 0.025 | 0.2615 | 0.3880 |
+| 1 | 3445 | 0.3216 | 1.3459 | 0.4825 | 0.7892 | 34 | 0.021 | 0.2707 | 0.4084 |
+| 1.5 | 3445 | 0.3408 | 2.0195 | 0.5099 | 1.1962 | 34 | 0.017 | 0.2880 | 0.4358 |
+| 2 | 3445 | 0.3628 | 2.6933 | 0.5114 | 1.6053 | 34 | 0.019 | 0.3262 | 0.4447 |
 
 **Read this table against the gate.** The P2 gate is a *validation*
 measurement, and on validation head B's yaw MAE is below predict-zero at all
-seven non-zero sigmas. On the **test** split the same criterion would **fail at
-sigma = 0.2 and 0.4 m** -- 0.3605 against 0.1610 and 0.3817 against 0.3241 --
-and pass from 0.6 m up. Translation passes everywhere (0.2509 against 0.2797 at
-sigma = 0.2). This is the same finding as the validation-vs-test gap in
-[alignformer_pose_floor.md](alignformer_pose_floor.md) section 6, seen through
-the gate: the test split is harder, and `tau`, calibrated on validation, is a
-little small there. It does not change the AP result -- fused AP@0.7 at
-sigma = 0.2 is 0.7488 against the uncorrected 0.5846 -- because IoU is far more
-sensitive to a centre offset than to a few tenths of a degree of heading. But
-the gate should not be read as a claim about the test split, and it is not one.
+seven non-zero sigmas at both ranges. On the **test** split the same criterion
+still **fails at sigma = 0.2 and 0.4 m** -- 0.4308 against 0.1610 and 0.4550
+against 0.3241 -- and passes from 0.6 m up. That qualifier survives the range
+fix unchanged.
+
+What the range fix *did* change here is translation: at +/-70.4 m the
+translation criterion passed everywhere (0.2509 against 0.2797 at sigma = 0.2);
+at +/-140.8 m it **fails at sigma = 0.2** (0.3043 against 0.2797). Every
+test-split pose number is worse at the wider range, by 0.04 to 0.06 m and 0.06
+to 0.09 deg. The mechanism is measured in [Where the AP came from, and what it
+cost](#where-the-ap-came-from-and-what-it-cost): the far-field correspondences
+the wide detector adds disagree across agents by 0.230 m against the near
+field's 0.151 m, and they enter the Procrustes fit unweighted. It compounds the
+validation-vs-test gap already diagnosed in
+[alignformer_pose_floor.md](alignformer_pose_floor.md) section 6 -- the test
+split is harder and `tau`, calibrated on validation, is a little small there.
+
+It does not change the AP result -- fused AP@0.7 at sigma = 0.2 is 0.7743
+against the uncorrected 0.5978, better than the +/-70.4 m pair on both sides --
+because IoU is far more sensitive to a *missing* box than to a few centimetres
+of residual centre error. But the gate should not be read as a claim about the
+test split, and it is not one.
 
 The fallback column is the *exact-identity* rate, which at sigma = 0 is
-shrinkage doing its job: **66.1%** of test pairs receive no correction at all
-there, against 19.4% at sigma = 0.2 and ~2% above 1 m. The 37 structurally
-unalignable pairs (1.07%) are a separate, much smaller population.
+shrinkage doing its job: **74.2%** of test pairs receive no correction at all
+there (66.1% at +/-70.4 m, consistent with the larger recalibrated `tau`),
+against 24.6% at sigma = 0.2 and ~2% above 1 m. The 34 structurally unalignable
+pairs (0.99%, down from 37) are a separate, much smaller population.
 
 ## Training curve: stage2_B_boxes+embeddings
+
+**`r70`.** The `r140` stage-2 run reached its best validation corner loss of
+0.9789 m at epoch 26 of 30 (against `r70`'s 0.9194 m at epoch 28); its stage-1
+warm start reached validation Top-1 **0.9983** at epoch 10 (against 0.9961 at
+epoch 14). Its per-epoch curve is in
+`outputs/alignformer/r140/stage2_B_boxes+embeddings/history.json`.
 
 | Epoch | sigma (m) | Train loss | Train corner (m) | Val corner (m) | Val translation MAE (m) | Val yaw MAE (deg) | Match temperature |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -667,7 +955,9 @@ This is the comparison the project exists to produce, and the claim it tests is
 **robustness per byte**: under one noise sweep, one evaluator and one ground
 truth, AlignFormer's late fusion should retain more AP@0.7 than
 intermediate-fusion methods that transmit dense BEV feature maps. It is
-explicitly **not** a claim about clean AP, and the clean row below is a loss.
+explicitly **not** a claim about clean AP; on the clean row AlignFormer is
+level with the two strongest-clean methods it beats and below the four that
+beat it.
 
 **Everything here was run locally.** Published numbers are not quoted beside
 ours anywhere: different detectors, splits and noise conventions make that
@@ -685,93 +975,114 @@ metre-for-metre displacement AlignFormer saw. The comparison is paired.
 
 ### AP@0.7 under the sweep
 
+AlignFormer is `r140`; the seven baselines are unchanged from task 17 -- they
+already ran at +/-140.8 m, which is the whole point of this re-measurement --
+and they are scored against the same 33,089 ground-truth boxes AlignFormer is.
+
 | sigma (m) | **AlignFormer** | late fusion (uncorrected) | V2X-ViT | CoAlign (fusion only) | CoBEVT | AttFuse | Where2comm | F-Cooper | V2VAM |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 0 | **0.8068** | 0.8764 | 0.8174 | 0.8831 | 0.8773 | 0.8638 | 0.7849 | 0.8402 | 0.8975 |
-| 0.2 | **0.7488** | 0.5846 | 0.7894 | 0.7889 | 0.7824 | 0.7758 | 0.7117 | 0.7117 | 0.8006 |
-| 0.4 | **0.7410** | 0.3069 | 0.7319 | 0.6150 | 0.5377 | 0.5983 | 0.5851 | 0.4445 | 0.5702 |
-| 0.6 | **0.7412** | 0.2106 | 0.6732 | 0.5324 | 0.3807 | 0.5002 | 0.4695 | 0.2858 | 0.4109 |
-| 0.8 | **0.7404** | 0.1785 | 0.6250 | 0.5090 | 0.2983 | 0.4648 | 0.4106 | 0.2037 | 0.3385 |
-| 1 | **0.7386** | 0.1690 | 0.6027 | 0.5028 | 0.2746 | 0.4533 | 0.3894 | 0.1788 | 0.3181 |
-| 1.5 | **0.7326** | 0.1737 | 0.5675 | 0.5023 | 0.2538 | 0.4447 | 0.3851 | 0.1506 | 0.3410 |
-| 2 | **0.7046** | 0.1831 | 0.5515 | 0.5057 | 0.2544 | 0.4481 | 0.4106 | 0.1469 | 0.3741 |
+| 0 | **0.8415** | 0.8964 | 0.8174 | 0.8831 | 0.8773 | 0.8638 | 0.7849 | 0.8402 | 0.8975 |
+| 0.2 | **0.7743** | 0.5978 | 0.7894 | 0.7889 | 0.7824 | 0.7758 | 0.7117 | 0.7117 | 0.8006 |
+| 0.4 | **0.7717** | 0.3158 | 0.7319 | 0.6150 | 0.5377 | 0.5983 | 0.5851 | 0.4445 | 0.5702 |
+| 0.6 | **0.7717** | 0.2154 | 0.6732 | 0.5324 | 0.3807 | 0.5002 | 0.4695 | 0.2858 | 0.4109 |
+| 0.8 | **0.7804** | 0.1844 | 0.6250 | 0.5090 | 0.2983 | 0.4648 | 0.4106 | 0.2037 | 0.3385 |
+| 1 | **0.7771** | 0.1763 | 0.6027 | 0.5028 | 0.2746 | 0.4533 | 0.3894 | 0.1788 | 0.3181 |
+| 1.5 | **0.7728** | 0.1799 | 0.5675 | 0.5023 | 0.2538 | 0.4447 | 0.3851 | 0.1506 | 0.3410 |
+| 2 | **0.7441** | 0.1898 | 0.5515 | 0.5057 | 0.2544 | 0.4481 | 0.4106 | 0.1469 | 0.3741 |
 
-| Baseline | sigma where AlignFormer overtakes it | sigmas where the baseline wins |
-|---|---|---|
-| V2X-ViT | 0.4 m | 0, 0.2 |
-| CoAlign (fusion only) | 0.4 m | 0, 0.2 |
-| CoBEVT | 0.4 m | 0, 0.2 |
-| AttFuse | 0.4 m | 0, 0.2 |
-| Where2comm | 0 m | none |
-| F-Cooper | 0.2 m | 0 |
-| V2VAM | 0.4 m | 0, 0.2 |
+| Baseline | sigma where AlignFormer overtakes it | was, at +/-70.4 m | sigmas where the baseline wins |
+|---|---|---|---|
+| V2X-ViT | **0 m** (not robust; see below) | 0.4 m | 0.2 |
+| CoAlign (fusion only) | 0.4 m | 0.4 m | 0, 0.2 |
+| CoBEVT | 0.4 m | 0.4 m | 0, 0.2 |
+| AttFuse | 0.4 m | 0.4 m | 0, 0.2 |
+| Where2comm | 0 m | 0 m | none |
+| F-Cooper | **0 m** (not robust; see below) | 0.2 m | none |
+| V2VAM | 0.4 m | 0.4 m | 0, 0.2 |
 
 Three things this says, in the order they matter.
 
-**AlignFormer is beaten on the clean and near-clean rows, and by most of the
-field.** At sigma = 0 six of the seven baselines score above it (V2VAM 0.8975,
-CoAlign 0.8831, CoBEVT 0.8773 against AlignFormer's 0.8068), and at sigma =
-0.2 m the same six still do. That is the expected shape -- late fusion does not
-beat intermediate fusion on clean AP, and this work does not claim it does --
-but it is compounded here by AlignFormer's own sigma = 0 regression against
-uncorrected late fusion (0.8068 against 0.8764), which is carried into this
-table rather than hidden from it.
+**AlignFormer is still beaten on the clean and near-clean rows, but by fewer
+methods.** At sigma = 0 four of the seven are above it (V2VAM 0.8975, CoAlign
+0.8831, CoBEVT 0.8773, AttFuse 0.8638 against AlignFormer's 0.8415); V2X-ViT,
+Where2comm and F-Cooper are now below. At sigma = 0.2 m six of seven are still
+ahead. That is the expected shape -- late fusion does not beat intermediate
+fusion on clean AP, and this work does not claim it does -- and it is still
+compounded by AlignFormer's own sigma = 0 regression against uncorrected late
+fusion (0.8415 against 0.8964), which is carried into this table rather than
+hidden from it.
 
-**From sigma = 0.4 m upward AlignFormer leads every baseline, and the lead
-widens.** Against the six weaker baselines the 0.4 m lead is already large
-(+0.126 over CoAlign, +0.297 over F-Cooper) and it grows: at 1.0 m the margin
-over them runs +0.235 (CoAlign) to +0.560 (F-Cooper). Against **V2X-ViT** the
-0.4 m margin is only **+0.009**, which caveat 4 below shows is inside the
-ground-truth-convention band; from 0.6 m the margin is +0.068, then +0.136 at
-1.0 m and +0.153 at 2.0 m, all of which are well outside it. **Read the 0.4 m
-row against V2X-ViT as a tie, and 0.6 m as the first sigma at which AlignFormer
-leads the whole field.**
+**From sigma = 0.4 m upward AlignFormer leads every baseline, and that lead is
+now robust to the ground-truth convention.** Against V2X-ViT the 0.4 m margin
+is **+0.0398** under the late-fusion convention and **+0.0297** under the
+intermediate one -- at +/-70.4 m it was +0.009 and -0.0005, i.e. a tie. The
+0.4 m crossover has therefore changed status: it is no longer a coin flip. From
+0.6 m the margin over V2X-ViT is +0.099, then +0.174 at 1.0 m and +0.193 at
+2.0 m; against the other six the 0.4 m lead runs +0.157 (CoAlign) to +0.327
+(F-Cooper).
+
+**The two thin margins have moved to sigma = 0, and they are the ones to read
+as ties.** Against V2X-ViT at sigma = 0, AlignFormer leads by +0.0241 under the
+late-fusion ground truth but only **+0.0082** under the intermediate one --
+inside the convention band. Against F-Cooper at sigma = 0 the margin is
+**+0.0013** under one convention and **-0.0137** under the other, i.e. it
+**flips**. **The defensible claim is: AlignFormer ties V2X-ViT and F-Cooper on
+the clean row, loses to V2X-ViT at 0.2 m, and leads the entire field from
+0.4 m upward.** Where2comm is the one baseline it beats outright at every
+sigma.
 
 **V2X-ViT is a real robustness baseline and the others are not close to it.**
 It retains 67% of its clean AP@0.7 at sigma = 2 m where CoBEVT retains 29% and
 F-Cooper 17%. That reproduces, locally and under our own convention, the thing
-V2X-ViT is known for. AlignFormer retains 87%.
+V2X-ViT is known for. AlignFormer retains 88%.
 
 ### Retention: AP@0.7 as a fraction of each method's own clean score
 
 | sigma (m) | **AlignFormer** | V2X-ViT | CoAlign (fusion only) | CoBEVT | AttFuse | Where2comm | F-Cooper | V2VAM |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 0.2 | **93%** | 97% | 89% | 89% | 90% | 91% | 85% | 89% |
+| 0.2 | **92%** | 97% | 89% | 89% | 90% | 91% | 85% | 89% |
 | 0.4 | **92%** | 90% | 70% | 61% | 69% | 75% | 53% | 64% |
 | 0.6 | **92%** | 82% | 60% | 43% | 58% | 60% | 34% | 46% |
-| 0.8 | **92%** | 76% | 58% | 34% | 54% | 52% | 24% | 38% |
+| 0.8 | **93%** | 76% | 58% | 34% | 54% | 52% | 24% | 38% |
 | 1 | **92%** | 74% | 57% | 31% | 52% | 50% | 21% | 35% |
-| 1.5 | **91%** | 69% | 57% | 29% | 51% | 49% | 18% | 38% |
-| 2 | **87%** | 67% | 57% | 29% | 52% | 52% | 17% | 42% |
+| 1.5 | **92%** | 69% | 57% | 29% | 51% | 49% | 18% | 38% |
+| 2 | **88%** | 67% | 57% | 29% | 52% | 52% | 17% | 42% |
 
 Retention is the fairer axis for a robustness claim, because it quotients out
-the clean-AP advantage the baselines start with -- including the part of that
-advantage AlignFormer's detector can never recover (see the caveats). On it,
-AlignFormer is ahead of every baseline at every sigma from 0.4 m up, and the
-only method in the same region is V2X-ViT.
+the clean-AP advantage the baselines start with. On it, AlignFormer is ahead of
+every baseline at every sigma from 0.4 m up, and the only method in the same
+region is V2X-ViT. It is computed against each method's own clean score, so
+AlignFormer's column barely moves even though every absolute number rose: the
+denominator rose too.
 
 ### Bytes per frame per agent
 
 Measured, not asserted, on both sides. For each baseline a forward hook on the
 model's own fusion site records the per-agent tensor the fusion stage consumes;
 for AlignFormer the object count is read off the cached detections the sweep
-actually transmits (mean **13.06** objects per agent, never truncated at the
-64-object budget), times the 7-float box plus 128-float embedding. Both at
-float32, which is what the tensors are at runtime; neither side is credited
-with a quantizer that is not in the measured pipeline.
+actually transmits (mean **15.69** objects per agent at +/-140.8 m against
+13.06 at +/-70.4 m, never truncated at the 64-object budget), times the 7-float
+box plus 128-float embedding. Both at float32, which is what the tensors are at
+runtime; neither side is credited with a quantizer that is not in the measured
+pipeline.
 
-| Method | What crosses the wire | Bytes / frame / agent | vs AlignFormer |
-|---|---|---:|---:|
-| **AlignFormer** | 13.06 boxes+embeddings x 540 B (7 box floats + 128 embedding floats, float32) | **7,051** | 1x |
-| AlignFormer, boxes only | 13.06 boxes x 28 B | 366 | 0.05x |
-| V2X-ViT | BEV feature 256x48x176 float32 | 8,650,752 | 1,227x |
-| CoAlign (fusion only) | BEV feature 64x100x352 float32 | 9,011,200 | 1,278x |
-| CoBEVT | BEV feature 256x96x352 float32 | 34,603,008 | 4,908x |
-| AttFuse | BEV feature 64x100x352 float32 | 9,011,200 | 1,278x |
-| Where2comm | BEV feature 64x192x704 float32 | 34,603,008 | 4,908x |
-| Where2comm, after its own communication mask | selected cells only (rate 0.211) | 7,300,874 | 1,035x |
-| F-Cooper | BEV feature 256x100x352 float32 | 36,044,800 | 5,112x |
-| V2VAM | BEV feature 256x50x176 float32 | 9,011,200 | 1,278x |
+**AlignFormer's own side is the part that moved**: the wider detector finds
+more objects, so it transmits 20% more bytes. The baselines' figures reproduce
+the task-17 measurement to the byte, which is also the check that re-running
+the measurement changed nothing on their side.
+
+| Method | What crosses the wire | Bytes / frame / agent | vs AlignFormer | vs AlignFormer at +/-70.4 m |
+|---|---|---:|---:|---:|
+| **AlignFormer** | 15.69 boxes+embeddings x 540 B (7 box floats + 128 embedding floats, float32) | **8,474** | 1x | (7,051) |
+| AlignFormer, boxes only | 15.69 boxes x 28 B | 439 | 0.05x | (366) |
+| V2X-ViT | BEV feature 256x48x176 float32 | 8,650,752 | 1,021x | 1,227x |
+| CoAlign (fusion only) | BEV feature 64x100x352 float32 | 9,011,200 | 1,063x | 1,278x |
+| CoBEVT | BEV feature 256x96x352 float32 | 34,603,008 | 4,083x | 4,908x |
+| AttFuse | BEV feature 64x100x352 float32 | 9,011,200 | 1,063x | 1,278x |
+| Where2comm | BEV feature 64x192x704 float32 | 34,603,008 | 4,083x | 4,908x |
+| Where2comm, after its own communication mask | selected cells only (rate 0.211) | 7,300,874 | 862x | 1,035x |
+| F-Cooper | BEV feature 256x100x352 float32 | 36,044,800 | 4,254x | 5,112x |
+| V2VAM | BEV feature 256x50x176 float32 | 9,011,200 | 1,063x | 1,278x |
 
 The baselines are charged the *smallest* tensor from which the ego could
 reconstruct their contribution -- every one of these models shares one encoder,
@@ -786,21 +1097,24 @@ tensor that must actually be addressed and sent.
 
 **The claim as it stands: three orders of magnitude fewer bytes, and more
 AP@0.7 than any of them at every sigma at or above 0.4 m.** Against the
-robustness SOTA specifically: 1,227x fewer bytes, and ahead from 0.6 m upward
-by a margin larger than any measurement artefact identified below.
+robustness SOTA specifically: 1,021x fewer bytes, level on the clean row, and
+ahead from 0.4 m upward by a margin larger than any measurement artefact
+identified below.
 
 ### All three IoU thresholds
 
+AlignFormer's rows are `r140`; the baselines' are unchanged.
+
 | Method | sigma (m) | AP@0.3 | AP@0.5 | AP@0.7 |
 |---|---:|---:|---:|---:|
-| AlignFormer | 0 | 0.9092 | 0.8882 | 0.8068 |
-| AlignFormer | 0.2 | 0.9087 | 0.8840 | 0.7488 |
-| AlignFormer | 0.4 | 0.9073 | 0.8787 | 0.7410 |
-| AlignFormer | 0.6 | 0.9042 | 0.8742 | 0.7412 |
-| AlignFormer | 0.8 | 0.9039 | 0.8747 | 0.7404 |
-| AlignFormer | 1 | 0.8998 | 0.8672 | 0.7386 |
-| AlignFormer | 1.5 | 0.8945 | 0.8638 | 0.7326 |
-| AlignFormer | 2 | 0.8850 | 0.8470 | 0.7046 |
+| AlignFormer | 0 | 0.9357 | 0.9190 | 0.8415 |
+| AlignFormer | 0.2 | 0.9365 | 0.9158 | 0.7743 |
+| AlignFormer | 0.4 | 0.9357 | 0.9117 | 0.7717 |
+| AlignFormer | 0.6 | 0.9337 | 0.9045 | 0.7717 |
+| AlignFormer | 0.8 | 0.9304 | 0.9064 | 0.7804 |
+| AlignFormer | 1 | 0.9301 | 0.9020 | 0.7771 |
+| AlignFormer | 1.5 | 0.9258 | 0.8970 | 0.7728 |
+| AlignFormer | 2 | 0.9157 | 0.8798 | 0.7441 |
 | V2X-ViT | 0 | 0.9199 | 0.9125 | 0.8174 |
 | V2X-ViT | 0.2 | 0.9162 | 0.9035 | 0.7894 |
 | V2X-ViT | 0.4 | 0.9104 | 0.8883 | 0.7319 |
@@ -860,19 +1174,19 @@ by a margin larger than any measurement artefact identified below.
 
 ### Caveats, in descending order of how much they could matter
 
-**1. AlignFormer's detector is blind where the baselines are not, and this is
-not corrected.** AlignFormer's late-fusion detector runs at
-`cav_lidar_range = [-70.4, -40, -3, 70.4, 40, 1]`; every baseline runs at
-+/-140.8 m in x. The evaluated ground truth is `GT_RANGE = [-140, -40, -3, 140,
-40, 1]` for **both**, because that is the range
-`base_postprocessor.generate_gt_bbx` filters to regardless of fusion type.
-**10.0% of the evaluated ground-truth boxes lie beyond |x| = 70.4 m**
-(416 of 4152, counted over 272 evenly spaced test frames), so AlignFormer's
-recall ceiling on this split is about 90% while the baselines' is 100%. That
-handicap is in every AlignFormer row of this table. It makes the clean-AP
-deficit partly an artefact of detector configuration rather than of late
-fusion, and it makes the robustness lead an *under*-statement rather than an
-over-statement.
+**1. RESOLVED. AlignFormer's detector used to be short-sighted where the
+baselines are not.** Until task 18 AlignFormer's late-fusion detector ran at
+`cav_lidar_range = [-70.4, -40, -3, 70.4, 40, 1]` while every baseline ran at
++/-140.8 m in x, against a shared evaluated `GT_RANGE` of +/-140 m. 9.9% of the
+evaluated ground truth lies beyond |x| = 70.4 m, and no agent could report a box
+past that range in its own frame; measured, clean recall at IoU 0.7 was capped
+at **0.894** against the widened detector's **0.916**. **The detector was retrained at +/-140.8 m and every AlignFormer row
+in this section is from that run**; see [The detector range
+fix](#the-detector-range-fix-704-m---1408-m). The handicap is gone, and the
+clean-AP deficit that remains (0.8415 against CoAlign's 0.8831, CoBEVT's
+0.8773, AttFuse's 0.8638 and V2VAM's 0.8975) is now a property of late fusion
+and of AlignFormer's own sigma = 0 correction cost, not of a configuration
+mismatch.
 
 **2. Every baseline was evaluated under noise it may not have been trained
 under -- which is the standard benchmark protocol, and is still worth saying.**
@@ -918,30 +1232,42 @@ of the thumb this puts on the scale is measured rather than assumed:
 
 Under the intermediate convention every baseline gains 0.008 to 0.019
 AP@0.7 while AlignFormer gains only 0.001 to 0.007, so the choice made here is
-worth about **0.010 in AlignFormer's favour**. That is enough to matter in
-exactly one place -- the sigma = 0.4 m row against V2X-ViT -- and nowhere else.
-The same sweep re-run to emit both:
+worth about **0.010 in AlignFormer's favour**. At +/-70.4 m that was enough to
+decide exactly one crossover -- sigma = 0.4 m against V2X-ViT. At +/-140.8 m it
+decides two different ones, both at sigma = 0. The same sweep, emitted under
+both conventions:
 
-| sigma (m) | AlignFormer (late-fusion GT) | AlignFormer (intermediate GT) | V2X-ViT (late-fusion GT) | V2X-ViT (intermediate GT) |
-|---|---:|---:|---:|---:|
-| 0 | 0.8068 | 0.8077 | 0.8174 | 0.8340 |
-| 0.2 | 0.7488 | 0.7511 | 0.7894 | 0.8054 |
-| 0.4 | 0.7410 | 0.7462 | 0.7319 | 0.7467 |
-| 0.6 | 0.7412 | 0.7467 | 0.6732 | 0.6872 |
-| 0.8 | 0.7404 | 0.7458 | 0.6250 | 0.6378 |
-| 1 | 0.7386 | 0.7439 | 0.6027 | 0.6150 |
-| 1.5 | 0.7326 | 0.7383 | 0.5675 | 0.5788 |
-| 2 | 0.7046 | 0.7111 | 0.5515 | 0.5623 |
+| sigma (m) | AlignFormer (late-fusion GT) | AlignFormer (intermediate GT) | V2X-ViT (late-fusion GT) | V2X-ViT (intermediate GT) | F-Cooper (late-fusion GT) | F-Cooper (intermediate GT) |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 0.8415 | 0.8422 | 0.8174 | 0.8340 | 0.8402 | 0.8559 |
+| 0.2 | 0.7743 | 0.7770 | 0.7894 | 0.8054 | 0.7117 | -- |
+| 0.4 | 0.7717 | 0.7764 | 0.7319 | 0.7467 | 0.4445 | -- |
+| 0.6 | 0.7717 | 0.7770 | 0.6732 | 0.6872 | 0.2858 | -- |
+| 0.8 | 0.7804 | 0.7858 | 0.6250 | 0.6378 | 0.2037 | -- |
+| 1 | 0.7771 | 0.7830 | 0.6027 | 0.6150 | 0.1788 | 0.1816 |
+| 1.5 | 0.7728 | 0.7783 | 0.5675 | 0.5788 | 0.1506 | -- |
+| 2 | 0.7441 | 0.7495 | 0.5515 | 0.5623 | 0.1469 | -- |
 
-At sigma = 0.4 m AlignFormer leads V2X-ViT by +0.009 under the late-fusion
-ground truth and *trails* it by 0.0005 under the intermediate one: a dead heat
-either way. At 0.6 m it leads by +0.068 and +0.060 respectively, and the lead
-only grows. **So the claim that survives both conventions is: AlignFormer ties
-V2X-ViT at sigma = 0.4 m and leads it from 0.6 m upward.** Against the other
-six baselines the 0.4 m lead is between +0.119 (CoAlign, intermediate GT) and
-+0.297 (F-Cooper, late-fusion GT), so no crossover point there is in question. The AlignFormer rows in
-that table reproduce `p2_r70_noisy_ap_result.json` to the last digit, which is
-also the check that adding the second ground truth changed nothing else.
+**What the convention decides, and what it does not.**
+
+- **sigma = 0 against V2X-ViT: not robust.** +0.0241 under the late-fusion
+  ground truth, +0.0082 under the intermediate one. Inside the band. Read it as
+  a tie.
+- **sigma = 0 against F-Cooper: not robust, and it flips.** +0.0013 under the
+  late-fusion ground truth, **-0.0137** under the intermediate one. Read it as
+  a tie.
+- **sigma = 0.4 m against V2X-ViT: now robust.** +0.0398 and +0.0297, both well
+  outside the band -- at +/-70.4 m this was the coin-flip row (+0.009 / -0.0005)
+  and the reason the previous version of this document quoted 0.6 m. It no
+  longer needs that qualifier.
+- Every sigma from 0.6 m up against every baseline: margins of +0.099 upward,
+  never in question.
+
+**So the claim that survives both conventions is: AlignFormer ties V2X-ViT and
+F-Cooper on the clean row, loses to V2X-ViT at sigma = 0.2 m, and leads the
+entire field from sigma = 0.4 m upward.** The earlier "ties V2X-ViT at 0.4 m,
+leads the field from 0.6 m" is superseded, and only by the detector range fix
+-- no model, loss or hyperparameter changed.
 
 **5. Checkpoint provenance cannot be fully verified.** These are third-party
 weights already present on this machine. Several of their stored `config.yaml`
@@ -999,29 +1325,26 @@ for b in v2xvit coalign cobevt attfuse where2comm fcooper v2vam; do
     --output outputs/alignformer/baselines/${b}_result.json
 done
 
-# Bytes per frame per agent, both sides
+# Bytes per frame per agent, at the +/-140.8 m detector. The baselines'
+# figures are structural (tensor shapes) and reproduce task 17's to the byte;
+# AlignFormer's side moves, because the wider detector transmits more objects.
 python -m embedding_aware_belt_fusion.alignformer.bandwidth --frames 100 \
-  --output outputs/alignformer/baselines/bandwidth_result.json
+  --alignformer-cache /media/chenyi/basement2/cache/alignformer_r140/test \
+  --output outputs/alignformer/r140/bandwidth_r140_result.json
 
-# AlignFormer's own sweep, re-run to emit BOTH ground-truth conventions, so
-# caveat 4 is measured rather than argued. Its `ap` block reproduces
-# p2_r70_noisy_ap_result.json exactly.
-O=outputs/alignformer/r70
-python -m embedding_aware_belt_fusion.alignformer.evaluate \
-  --config configs/alignformer_detector.yaml \
-  --split /media/chenyi/Elements1/Dataset/OPV2V/test \
-  --metric noisy_ap --alignformer-config configs/alignformer.yaml \
-  --checkpoint $O/stage2_B_boxes+embeddings/best.pth \
-  --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 \
-  --shrinkage $O/shrinkage_B_calibration_result.json \
-  --output outputs/alignformer/baselines/alignformer_gt_conventions_result.json
+# AlignFormer's own sweep already emits BOTH ground-truth conventions, so
+# caveat 4 is measured rather than argued -- p2_r140_noisy_ap_result.json
+# carries `ap` (late-fusion convention, the headline) and
+# `ap_intermediate_convention_gt` side by side, and is passed to the
+# summarizer for both roles.
+O=outputs/alignformer/r140
 
 # Every table above is rendered from those JSONs
 python scripts/summarize_alignformer_baselines.py \
-  --alignformer $O/p2_r70_noisy_ap_result.json \
+  --alignformer $O/p2_r140_noisy_ap_result.json \
   --baselines outputs/alignformer/baselines/{v2xvit,coalign,cobevt,attfuse,where2comm,fcooper,v2vam}_result.json \
-  --bandwidth outputs/alignformer/baselines/bandwidth_result.json \
-  --alignformer-gt-conventions outputs/alignformer/baselines/alignformer_gt_conventions_result.json
+  --bandwidth $O/bandwidth_r140_result.json \
+  --alignformer-gt-conventions $O/p2_r140_noisy_ap_result.json
 ```
 
 ## What this means for P3-P5
@@ -1039,11 +1362,12 @@ retrained model. **Head B does not do that at all**: 8.0x better than
 predict-zero on yaw and 17x on translation at sigma = 2 m, with an error
 essentially independent of the input noise.
 
-Both of the defects that produced the original failure were in the *data the
-model was shown*, not in the model: a heading channel carrying a direction the
-detector never estimates, and a pair index built at a communication range the
-evaluation protocol does not use. Neither was visible in any loss curve. That is
-the transferable lesson from P2.
+All three of the defects that produced the original failure were in the *data
+the model was shown*, not in the model: a heading channel carrying a direction
+the detector never estimates, a pair index built at a communication range the
+evaluation protocol does not use, and a detector configured for half the range
+the evaluation scores. None was visible in any loss curve. That is the
+transferable lesson from P2.
 
 **The embedding still does not carry the method, but the claim needs its
 numbers.** On association it is worth nothing -- boxes-only is marginally ahead
@@ -1056,22 +1380,31 @@ argument, and the camera-augmentation contingency (spec 8) remains live. The
 worth more than the embedding -- 24% of the corner loss against the embedding's
 17%.
 
-Four things follow, in priority order:
+Five things follow, in priority order:
 
-1. **Close the clean case.** -0.070 AP@0.7 at sigma = 0 is the one stated target
-   still unmet. Gating the correction on an estimate of the localization error,
+1. **Close the clean case.** -0.055 AP@0.7 at sigma = 0 is the one stated target
+   still unmet. Widening the detector shrank it from -0.070 but did not close
+   it. Gating the correction on an estimate of the localization error,
    or training with a loss that pins the identity at sigma = 0, would turn "a
    large win everywhere above 0.2 m and a small loss at 0" into a method that is
    never worse than doing nothing. Both are tuning and neither is done here.
-2. **Attack the detector-limited residual.** What caps AlignFormer at ~0.74
-   AP@0.7 against an oracle 0.8764 is not the injected noise -- the residual is
+2. **Weight the Procrustes fit by object range, or by detection confidence.**
+   This is now measured rather than suspected: correspondences beyond
+   |x| = 70.4 m disagree across agents by 0.230 m against the near field's
+   0.151 m, and 6.65 deg against 3.69 deg, yet they enter the closed-form fit
+   with equal weight. That is why every test-split pose number got worse at the
+   wider range even as every AP number got better. An inverse-variance weight
+   is the obvious first thing to try and is *not* done here.
+3. **Attack the detector-limited residual.** What caps AlignFormer at ~0.77
+   AP@0.7 against an oracle 0.8964 is not the injected noise -- the residual is
    nearly sigma-independent. It is the cross-agent disagreement in the
-   detections themselves: 0.23 m per correspondence per axis, which an average
-   over ~10 objects can only reduce to ~0.09 m. The levers are the detector and
-   the loss, not more pose training.
-3. **Repeat the embedding ablation over seeds.** The pose-level gap that opened
-   post-fix is the one finding here resting on a single run per configuration.
-4. **Raise `MIN_MATCH_MASS` to its documented intent** and recount the
+   detections themselves: 0.162 m per correspondence per axis on average, which
+   an averaging over ~13 objects can only reduce so far. The levers are the
+   detector and the loss, not more pose training.
+4. **Repeat the embedding ablation over seeds, and at the wider range.** The
+   ablation tables in this document are all `r70`; only the deployed
+   configuration was retrained at +/-140.8 m.
+5. **Raise `MIN_MATCH_MASS` to its documented intent** and recount the
    unalignable subset on the 70 m index, which admits more low-overlap pairs
    than the counts in this document were taken on.
 
@@ -1086,14 +1419,21 @@ Four things follow, in priority order:
   [alignformer_pose_floor.md](alignformer_pose_floor.md) section 6; not
   corrected, because correcting it would mean calibrating on test.
 - One noise seed for the AP sweep, three for the pose sweep.
+- The head A / boxes-only / `match_weight 0` ablations, the shrinkage on/off
+  table and the per-epoch training curve are all `r70`. Only the deployed
+  configuration (B / boxes+embeddings) was retrained at +/-140.8 m.
+- Pose estimation is measurably **worse** at the wider range on the test split
+  (translation MAE 0.2509 -> 0.3043 m at sigma = 0.2, yaw 0.3605 -> 0.4308 deg),
+  and the P2 gate's translation criterion now fails at sigma = 0.2 on test where
+  it used to pass. Fused AP rose anyway. Nothing was tuned to recover the pose
+  numbers; weighting the fit by object range is the recommended next step.
 - **Done, and it changed the framing.** V2X-ViT and six other
   intermediate-fusion baselines were re-run locally under this sweep and this
   evaluator; see [Head-to-head against intermediate
   fusion](#head-to-head-against-intermediate-fusion). No published number is
-  quoted anywhere. What is left open from it: AlignFormer's detector runs at
-  half the baselines' x-range and cannot see 10% of the evaluated ground truth
-  (caveat 1 there); CoAlign is represented by its fusion module only, because
-  this OpenCOOD fork does not ship its pose graph (caveat 3); and FreeAlign,
-  the closest competitor in kind, cannot be run as published on this machine --
-  porting its training-free matcher onto our own detections is the recommended
-  P3 item.
+  quoted anywhere. What is left open from it: CoAlign is represented by its
+  fusion module only, because this OpenCOOD fork does not ship its pose graph
+  (caveat 3); and FreeAlign, the closest competitor in kind, cannot be run as
+  published on this machine -- porting its training-free matcher onto our own
+  detections is the recommended P3 item. (Caveat 1, the detector range, is
+  resolved as of task 18.)

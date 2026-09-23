@@ -209,3 +209,24 @@ def test_build_scenario_split_replaces_a_broken_symlink(tmp_path):
 
     assert dangling.is_symlink()
     assert dangling.resolve() == (train_root / train_names[0]).resolve()
+
+
+def test_the_r140_detector_checkpoint_exists_and_has_detection_heads():
+    """The widened checkpoint the re-measurement runs on, asserted not skipped.
+
+    The narrow counterpart is asserted the same way in
+    tests/test_alignformer_detector.py; a test that can skip forever is a test
+    that never runs.
+    """
+    torch_checkpoint = Path(_load(R140_DETECTOR)["detector"]["checkpoint"])
+    assert torch_checkpoint.exists(), (
+        f"detector checkpoint missing: {torch_checkpoint} (see "
+        "scripts/train_late_fusion.py --hypes_yaml configs/alignformer_detector_r140.yaml)"
+    )
+
+    state = torch.load(torch_checkpoint, map_location="cpu")
+    state = state.get("model_state_dict", state)
+    keys = set(state)
+    assert any(key.startswith("cls_head.") for key in keys)
+    assert any(key.startswith("reg_head.") for key in keys)
+    assert any(key.startswith("pillar_vfe.") for key in keys)
