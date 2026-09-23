@@ -219,6 +219,14 @@ outputs/*
 outputs/alignformer/*
 !outputs/alignformer/*_gate.json
 !outputs/alignformer/*_result.json
+# ... and the same two suffixes one level down, where a re-measurement of the
+# whole pipeline keeps its results (outputs/alignformer/r70/ is the 70 m pair
+# index). Re-listed rather than globbed because git cannot descend into a
+# directory it has already excluded.
+!outputs/alignformer/r70/
+outputs/alignformer/r70/*
+!outputs/alignformer/r70/*_gate.json
+!outputs/alignformer/r70/*_result.json
 *.pth
 *.pt
 *.ckpt

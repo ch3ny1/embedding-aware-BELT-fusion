@@ -1,0 +1,636 @@
+{
+  "method": "alignformer_noisy_late_fusion",
+  "metric": "noisy_ap",
+  "config": "configs/alignformer_detector.yaml",
+  "alignformer_config": "configs/alignformer.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+  "detector_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion/net_epoch14.pth",
+  "pose_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_B_boxes+embeddings/best.pth",
+  "pose_checkpoint_provenance": {
+    "head": "B",
+    "message_content": "boxes+embeddings",
+    "match_weight": 1.0,
+    "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage1/best.pth",
+    "epoch": 28
+  },
+  "shrinkage": {
+    "tau_translation_m": 0.15899204290369237,
+    "tau_yaw_rad": 0.004308176146492067,
+    "tau_yaw_deg": 0.24684031059293013,
+    "pairs": 6262,
+    "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+    "sigma_m": 0.0
+  },
+  "cav_lidar_range": [
+    -70.4,
+    -40,
+    -3,
+    70.4,
+    40,
+    1
+  ],
+  "nms_thresh": 0.15,
+  "frames": 2170,
+  "sweep_sigmas_m": [
+    0.0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.5,
+    2.0
+  ],
+  "conditions": {
+    "oracle": "oracle",
+    "uncorrected": "uncorrected",
+    "alignformer": "alignformer",
+    "key_format": "alignformer_sigma_1m"
+  },
+  "ap": {
+    "oracle": {
+      "ap_30": {
+        "global_sorted": 0.9283638313292084,
+        "frame_order": 0.8971254394914772
+      },
+      "ap_50": {
+        "global_sorted": 0.9251036457466263,
+        "frame_order": 0.8923828787499051
+      },
+      "ap_70": {
+        "global_sorted": 0.8763914112510414,
+        "frame_order": 0.81797365624601
+      }
+    },
+    "uncorrected_sigma_0m": {
+      "ap_30": {
+        "global_sorted": 0.9283638313292084,
+        "frame_order": 0.8971254394914772
+      },
+      "ap_50": {
+        "global_sorted": 0.9251036457466263,
+        "frame_order": 0.8923828787499051
+      },
+      "ap_70": {
+        "global_sorted": 0.8763914112510414,
+        "frame_order": 0.81797365624601
+      }
+    },
+    "alignformer_sigma_0m": {
+      "ap_30": {
+        "global_sorted": 0.9092065212996525,
+        "frame_order": 0.8787670114170526
+      },
+      "ap_50": {
+        "global_sorted": 0.888232096547523,
+        "frame_order": 0.8565943513666809
+      },
+      "ap_70": {
+        "global_sorted": 0.8068138954151987,
+        "frame_order": 0.753039892552273
+      }
+    },
+    "uncorrected_sigma_0.2m": {
+      "ap_30": {
+        "global_sorted": 0.9277357924263323,
+        "frame_order": 0.8957366842567189
+      },
+      "ap_50": {
+        "global_sorted": 0.8991304036691619,
+        "frame_order": 0.8630594328899208
+      },
+      "ap_70": {
+        "global_sorted": 0.5846411193315272,
+        "frame_order": 0.5580444137344085
+      }
+    },
+    "alignformer_sigma_0.2m": {
+      "ap_30": {
+        "global_sorted": 0.9086658436196243,
+        "frame_order": 0.8781312715324059
+      },
+      "ap_50": {
+        "global_sorted": 0.8840173197682581,
+        "frame_order": 0.8505040359376493
+      },
+      "ap_70": {
+        "global_sorted": 0.7487812467050352,
+        "frame_order": 0.6956157371681674
+      }
+    },
+    "uncorrected_sigma_0.4m": {
+      "ap_30": {
+        "global_sorted": 0.8928321651881578,
+        "frame_order": 0.8574148256028167
+      },
+      "ap_50": {
+        "global_sorted": 0.6699163884636192,
+        "frame_order": 0.659467763002494
+      },
+      "ap_70": {
+        "global_sorted": 0.30690694769017535,
+        "frame_order": 0.31886974131210455
+      }
+    },
+    "alignformer_sigma_0.4m": {
+      "ap_30": {
+        "global_sorted": 0.9073297532016766,
+        "frame_order": 0.876450346044028
+      },
+      "ap_50": {
+        "global_sorted": 0.8787062029215071,
+        "frame_order": 0.8460173716865007
+      },
+      "ap_70": {
+        "global_sorted": 0.7410172692079315,
+        "frame_order": 0.6886128054582579
+      }
+    },
+    "uncorrected_sigma_0.6m": {
+      "ap_30": {
+        "global_sorted": 0.7595229457551702,
+        "frame_order": 0.7208498452036459
+      },
+      "ap_50": {
+        "global_sorted": 0.450707676433267,
+        "frame_order": 0.4473514507173777
+      },
+      "ap_70": {
+        "global_sorted": 0.21058687771686918,
+        "frame_order": 0.22310809857171043
+      }
+    },
+    "alignformer_sigma_0.6m": {
+      "ap_30": {
+        "global_sorted": 0.904190228055149,
+        "frame_order": 0.8732420021459145
+      },
+      "ap_50": {
+        "global_sorted": 0.8741707907546261,
+        "frame_order": 0.841917423293011
+      },
+      "ap_70": {
+        "global_sorted": 0.7412139800087387,
+        "frame_order": 0.6877502469158924
+      }
+    },
+    "uncorrected_sigma_0.8m": {
+      "ap_30": {
+        "global_sorted": 0.6206849942591097,
+        "frame_order": 0.5935904111502177
+      },
+      "ap_50": {
+        "global_sorted": 0.3476005869244076,
+        "frame_order": 0.352136806728594
+      },
+      "ap_70": {
+        "global_sorted": 0.1785095727716642,
+        "frame_order": 0.19327212922241388
+      }
+    },
+    "alignformer_sigma_0.8m": {
+      "ap_30": {
+        "global_sorted": 0.903932671739164,
+        "frame_order": 0.8743109730556675
+      },
+      "ap_50": {
+        "global_sorted": 0.8746723893489668,
+        "frame_order": 0.8414640769790156
+      },
+      "ap_70": {
+        "global_sorted": 0.7403704683252659,
+        "frame_order": 0.6878984708732891
+      }
+    },
+    "uncorrected_sigma_1m": {
+      "ap_30": {
+        "global_sorted": 0.526783026641801,
+        "frame_order": 0.5136394278504948
+      },
+      "ap_50": {
+        "global_sorted": 0.29779423223385104,
+        "frame_order": 0.31206158543276263
+      },
+      "ap_70": {
+        "global_sorted": 0.16904079778275963,
+        "frame_order": 0.18584765587243599
+      }
+    },
+    "alignformer_sigma_1m": {
+      "ap_30": {
+        "global_sorted": 0.8998223035221486,
+        "frame_order": 0.8703002529451023
+      },
+      "ap_50": {
+        "global_sorted": 0.8671851300323561,
+        "frame_order": 0.8353804702982697
+      },
+      "ap_70": {
+        "global_sorted": 0.7385899083610712,
+        "frame_order": 0.6877169874149902
+      }
+    },
+    "uncorrected_sigma_1.5m": {
+      "ap_30": {
+        "global_sorted": 0.38561646301539476,
+        "frame_order": 0.39709328134157706
+      },
+      "ap_50": {
+        "global_sorted": 0.24838644206513028,
+        "frame_order": 0.27502516504241825
+      },
+      "ap_70": {
+        "global_sorted": 0.17373474151213128,
+        "frame_order": 0.19425008258583865
+      }
+    },
+    "alignformer_sigma_1.5m": {
+      "ap_30": {
+        "global_sorted": 0.894493915358715,
+        "frame_order": 0.8653352712804118
+      },
+      "ap_50": {
+        "global_sorted": 0.8637672740475918,
+        "frame_order": 0.832060641819472
+      },
+      "ap_70": {
+        "global_sorted": 0.7325535583706817,
+        "frame_order": 0.6788056455692599
+      }
+    },
+    "uncorrected_sigma_2m": {
+      "ap_30": {
+        "global_sorted": 0.3364820542311098,
+        "frame_order": 0.35760385552789536
+      },
+      "ap_50": {
+        "global_sorted": 0.2418850185962408,
+        "frame_order": 0.2708288477231866
+      },
+      "ap_70": {
+        "global_sorted": 0.183096504152417,
+        "frame_order": 0.20229886032903258
+      }
+    },
+    "alignformer_sigma_2m": {
+      "ap_30": {
+        "global_sorted": 0.8849846520979574,
+        "frame_order": 0.8543029750790045
+      },
+      "ap_50": {
+        "global_sorted": 0.8470379774272867,
+        "frame_order": 0.8129109673746704
+      },
+      "ap_70": {
+        "global_sorted": 0.7046343113234255,
+        "frame_order": 0.6486118108120666
+      }
+    }
+  },
+  "pose": {
+    "sigma_0m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.14528757951343507,
+      "predict_zero_translation_mae_m": 2.248361184529531e-15,
+      "yaw_mae_deg": 0.2692348660762652,
+      "predict_zero_yaw_mae_deg": 9.12055056409988e-16,
+      "fallback_fraction": 0.6606676342525399,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 0.3350629291423207,
+      "unalignable_predict_zero_translation_mae_m": 2.3309736360603705e-15,
+      "unalignable_yaw_mae_deg": 0.4559230901240071,
+      "unalignable_predict_zero_yaw_mae_deg": 1.1284051950019161e-15,
+      "unalignable_fallback_fraction": 0.8648648648648649,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.14528757951343507,
+      "within_training_range_predict_zero_translation_mae_m": 2.248361184529531e-15,
+      "within_training_range_yaw_mae_deg": 0.2692348660762652,
+      "within_training_range_predict_zero_yaw_mae_deg": 9.12055056409988e-16,
+      "within_training_range_fallback_fraction": 0.6606676342525399,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.10065130524124144,
+      "within_40m_predict_zero_translation_mae_m": 1.5354152644543075e-15,
+      "within_40m_yaw_mae_deg": 0.18735534324240663,
+      "within_40m_predict_zero_yaw_mae_deg": 8.2491560581904825e-16,
+      "within_40m_fallback_fraction": 0.7015775635407537,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.23287139541124022,
+      "beyond_40m_predict_zero_translation_mae_m": 3.6472800062076486e-15,
+      "beyond_40m_yaw_mae_deg": 0.4298961481973878,
+      "beyond_40m_predict_zero_yaw_mae_deg": 1.083037194198952e-15,
+      "beyond_40m_fallback_fraction": 0.5803955288048152
+    },
+    "sigma_0.2m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.2509371232811429,
+      "predict_zero_translation_mae_m": 0.27974683730908523,
+      "yaw_mae_deg": 0.36048103724545616,
+      "predict_zero_yaw_mae_deg": 0.16098998735697162,
+      "fallback_fraction": 0.19361393323657475,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 0.5556063237066807,
+      "unalignable_predict_zero_translation_mae_m": 0.28214812446326115,
+      "unalignable_yaw_mae_deg": 0.4730201107613656,
+      "unalignable_predict_zero_yaw_mae_deg": 0.1475121774495553,
+      "unalignable_fallback_fraction": 0.8918918918918919,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.2509371232811429,
+      "within_training_range_predict_zero_translation_mae_m": 0.27974683730908523,
+      "within_training_range_yaw_mae_deg": 0.36048103724545616,
+      "within_training_range_predict_zero_yaw_mae_deg": 0.16098998735697162,
+      "within_training_range_fallback_fraction": 0.19361393323657475,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.20724291538340225,
+      "within_40m_predict_zero_translation_mae_m": 0.2693534585115226,
+      "within_40m_yaw_mae_deg": 0.28338979848767964,
+      "within_40m_predict_zero_yaw_mae_deg": 0.16040532024018553,
+      "within_40m_fallback_fraction": 0.19631901840490798,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.3366724478062042,
+      "beyond_40m_predict_zero_translation_mae_m": 0.30014038022915224,
+      "beyond_40m_yaw_mae_deg": 0.5117469072757607,
+      "beyond_40m_predict_zero_yaw_mae_deg": 0.1621372017684127,
+      "beyond_40m_fallback_fraction": 0.1883061049011178
+    },
+    "sigma_0.4m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.25391045868011564,
+      "predict_zero_translation_mae_m": 0.5449754277797701,
+      "yaw_mae_deg": 0.3817006114437653,
+      "predict_zero_yaw_mae_deg": 0.32408577278481665,
+      "fallback_fraction": 0.05544267053701016,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 0.8930780227171006,
+      "unalignable_predict_zero_translation_mae_m": 0.6213212385272425,
+      "unalignable_yaw_mae_deg": 0.7457080127306872,
+      "unalignable_predict_zero_yaw_mae_deg": 0.31383945141312036,
+      "unalignable_fallback_fraction": 0.8648648648648649,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.25391045868011564,
+      "within_training_range_predict_zero_translation_mae_m": 0.5449754277797701,
+      "within_training_range_yaw_mae_deg": 0.3817006114437653,
+      "within_training_range_predict_zero_yaw_mae_deg": 0.32408577278481665,
+      "within_training_range_fallback_fraction": 0.05544267053701016,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.20846763139295468,
+      "within_40m_predict_zero_translation_mae_m": 0.5238948177390479,
+      "within_40m_yaw_mae_deg": 0.30184714828018805,
+      "within_40m_predict_zero_yaw_mae_deg": 0.32333435998787724,
+      "within_40m_fallback_fraction": 0.054776511831726556,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.34307686613437305,
+      "beyond_40m_predict_zero_translation_mae_m": 0.5863391011356888,
+      "beyond_40m_yaw_mae_deg": 0.5383864265248305,
+      "beyond_40m_predict_zero_yaw_mae_deg": 0.32556017003556065,
+      "beyond_40m_fallback_fraction": 0.05674978503869303
+    },
+    "sigma_0.6m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.2645980201050381,
+      "predict_zero_translation_mae_m": 0.8139540578980403,
+      "yaw_mae_deg": 0.39450394297680763,
+      "predict_zero_yaw_mae_deg": 0.4864611511104268,
+      "fallback_fraction": 0.03193033381712627,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 1.0438579023546988,
+      "unalignable_predict_zero_translation_mae_m": 0.8293511633482044,
+      "unalignable_yaw_mae_deg": 0.7765450128944696,
+      "unalignable_predict_zero_yaw_mae_deg": 0.4980873270629734,
+      "unalignable_fallback_fraction": 0.8918918918918919,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.2645980201050381,
+      "within_training_range_predict_zero_translation_mae_m": 0.8139540578980403,
+      "within_training_range_yaw_mae_deg": 0.39450394297680763,
+      "within_training_range_predict_zero_yaw_mae_deg": 0.4864611511104268,
+      "within_training_range_fallback_fraction": 0.03193033381712627,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.21064184601057914,
+      "within_40m_predict_zero_translation_mae_m": 0.769094294622478,
+      "within_40m_yaw_mae_deg": 0.3014317901867639,
+      "within_40m_predict_zero_yaw_mae_deg": 0.48141030680047847,
+      "within_40m_fallback_fraction": 0.03067484662576687,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.37046903410637405,
+      "beyond_40m_predict_zero_translation_mae_m": 0.901976396500648,
+      "beyond_40m_yaw_mae_deg": 0.5771270321142835,
+      "beyond_40m_predict_zero_yaw_mae_deg": 0.49637175017775265,
+      "beyond_40m_fallback_fraction": 0.034393809114359415
+    },
+    "sigma_0.8m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.2615454220336463,
+      "predict_zero_translation_mae_m": 1.090367250188446,
+      "yaw_mae_deg": 0.3879636886361557,
+      "predict_zero_yaw_mae_deg": 0.6308236053851561,
+      "fallback_fraction": 0.02293178519593614,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 1.2986376638336579,
+      "unalignable_predict_zero_translation_mae_m": 1.1676430633060426,
+      "unalignable_yaw_mae_deg": 0.8901915269333155,
+      "unalignable_predict_zero_yaw_mae_deg": 0.6210024153857819,
+      "unalignable_fallback_fraction": 0.8918918918918919,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.2615454220336463,
+      "within_training_range_predict_zero_translation_mae_m": 1.090367250188446,
+      "within_training_range_yaw_mae_deg": 0.3879636886361557,
+      "within_training_range_predict_zero_yaw_mae_deg": 0.6308236053851561,
+      "within_training_range_fallback_fraction": 0.02293178519593614,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.21155410779449324,
+      "within_40m_predict_zero_translation_mae_m": 1.0458341770450583,
+      "within_40m_yaw_mae_deg": 0.3071964612902707,
+      "within_40m_predict_zero_yaw_mae_deg": 0.6229084933575909,
+      "within_40m_fallback_fraction": 0.020157756354075372,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.3596367196207032,
+      "beyond_40m_predict_zero_translation_mae_m": 1.1777485682565596,
+      "beyond_40m_yaw_mae_deg": 0.546442461467891,
+      "beyond_40m_predict_zero_yaw_mae_deg": 0.6463543755028741,
+      "beyond_40m_fallback_fraction": 0.028374892519346516
+    },
+    "sigma_1m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.2706980480780996,
+      "predict_zero_translation_mae_m": 1.3459496218651865,
+      "yaw_mae_deg": 0.4083845405840184,
+      "predict_zero_yaw_mae_deg": 0.7891614314830266,
+      "fallback_fraction": 0.020609579100145138,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 1.2831685138781865,
+      "unalignable_predict_zero_translation_mae_m": 1.066502412106181,
+      "unalignable_yaw_mae_deg": 0.9973000834872853,
+      "unalignable_predict_zero_yaw_mae_deg": 0.6569375754933299,
+      "unalignable_fallback_fraction": 0.8648648648648649,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.2706980480780996,
+      "within_training_range_predict_zero_translation_mae_m": 1.3459496218651865,
+      "within_training_range_yaw_mae_deg": 0.4083845405840184,
+      "within_training_range_predict_zero_yaw_mae_deg": 0.7891614314830266,
+      "within_training_range_fallback_fraction": 0.020609579100145138,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.21153099927357613,
+      "within_40m_predict_zero_translation_mae_m": 1.2915801773154945,
+      "within_40m_yaw_mae_deg": 0.3139701804342756,
+      "within_40m_predict_zero_yaw_mae_deg": 0.783533381351851,
+      "within_40m_fallback_fraction": 0.017090271691498685,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.38679366748646093,
+      "beyond_40m_predict_zero_translation_mae_m": 1.452631541437312,
+      "beyond_40m_yaw_mae_deg": 0.5936412644547943,
+      "beyond_40m_predict_zero_yaw_mae_deg": 0.8002046046552909,
+      "beyond_40m_fallback_fraction": 0.027515047291487533
+    },
+    "sigma_1.5m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.2879708401743141,
+      "predict_zero_translation_mae_m": 2.0195437634486373,
+      "yaw_mae_deg": 0.4357718161766062,
+      "predict_zero_yaw_mae_deg": 1.1961508331636643,
+      "fallback_fraction": 0.018867924528301886,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 2.1670087990638898,
+      "unalignable_predict_zero_translation_mae_m": 2.128445829226368,
+      "unalignable_yaw_mae_deg": 1.387043630938754,
+      "unalignable_predict_zero_yaw_mae_deg": 1.068149578123921,
+      "unalignable_fallback_fraction": 0.8918918918918919,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.2879708401743141,
+      "within_training_range_predict_zero_translation_mae_m": 2.0195437634486373,
+      "within_training_range_yaw_mae_deg": 0.4357718161766062,
+      "within_training_range_predict_zero_yaw_mae_deg": 1.1961508331636643,
+      "within_training_range_fallback_fraction": 0.018867924528301886,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.2227645774967627,
+      "within_40m_predict_zero_translation_mae_m": 1.94524141005503,
+      "within_40m_yaw_mae_deg": 0.3165330245174802,
+      "within_40m_predict_zero_yaw_mae_deg": 1.1996152742982171,
+      "within_40m_fallback_fraction": 0.017090271691498685,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.41591640460266627,
+      "beyond_40m_predict_zero_translation_mae_m": 2.1653373751805423,
+      "beyond_40m_yaw_mae_deg": 0.6697382156315765,
+      "beyond_40m_predict_zero_yaw_mae_deg": 1.1893530217543329,
+      "beyond_40m_fallback_fraction": 0.02235597592433362
+    },
+    "sigma_2m": {
+      "pairs": 3445.0,
+      "translation_mae_m": 0.32619288208432934,
+      "predict_zero_translation_mae_m": 2.693257041760589,
+      "yaw_mae_deg": 0.4446628143814302,
+      "predict_zero_yaw_mae_deg": 1.6053025266145338,
+      "fallback_fraction": 0.019448476052249638,
+      "training_comm_range_m": 70.0,
+      "unalignable_fraction": 0.010740203193033381,
+      "beyond_training_range_fraction": 0.0,
+      "diagnostic_range_m": 40.0,
+      "beyond_40m_fraction": 0.33759071117561684,
+      "unalignable_pairs": 37.0,
+      "unalignable_translation_mae_m": 2.375394717072786,
+      "unalignable_predict_zero_translation_mae_m": 2.3134625352593177,
+      "unalignable_yaw_mae_deg": 1.6241398105767526,
+      "unalignable_predict_zero_yaw_mae_deg": 1.428261253694951,
+      "unalignable_fallback_fraction": 0.8918918918918919,
+      "within_training_range_pairs": 3445.0,
+      "within_training_range_translation_mae_m": 0.32619288208432934,
+      "within_training_range_predict_zero_translation_mae_m": 2.693257041760589,
+      "within_training_range_yaw_mae_deg": 0.4446628143814302,
+      "within_training_range_predict_zero_yaw_mae_deg": 1.6053025266145338,
+      "within_training_range_fallback_fraction": 0.019448476052249638,
+      "beyond_training_range_pairs": 0.0,
+      "beyond_training_range_translation_mae_m": null,
+      "beyond_training_range_predict_zero_translation_mae_m": null,
+      "beyond_training_range_yaw_mae_deg": null,
+      "beyond_training_range_predict_zero_yaw_mae_deg": null,
+      "beyond_training_range_fallback_fraction": null,
+      "within_40m_pairs": 2282.0,
+      "within_40m_translation_mae_m": 0.24444620764173147,
+      "within_40m_predict_zero_translation_mae_m": 2.5480828500104433,
+      "within_40m_yaw_mae_deg": 0.3497607277805801,
+      "within_40m_predict_zero_yaw_mae_deg": 1.5991791449953627,
+      "within_40m_fallback_fraction": 0.014460999123575811,
+      "beyond_40m_pairs": 1163.0,
+      "beyond_40m_translation_mae_m": 0.48659349350136166,
+      "beyond_40m_predict_zero_translation_mae_m": 2.978113022477573,
+      "beyond_40m_yaw_mae_deg": 0.6308765389069144,
+      "beyond_40m_predict_zero_yaw_mae_deg": 1.617317622792484,
+      "beyond_40m_fallback_fraction": 0.029234737747205503
+    }
+  }
+}

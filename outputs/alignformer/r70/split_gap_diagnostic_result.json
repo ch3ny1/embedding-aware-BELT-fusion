@@ -1,0 +1,1742 @@
+{
+  "diagnostic": "validation-vs-test pose residual gap",
+  "config": "configs/alignformer.yaml",
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_B_boxes+embeddings/best.pth",
+  "checkpoint_provenance": {
+    "head": "B",
+    "message_content": "boxes+embeddings",
+    "match_weight": 1.0,
+    "epoch": 28
+  },
+  "comm_range_m": 70.0,
+  "sigma_m": 0.0,
+  "shrinkage": null,
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "cached_path": {
+    "validation (held-out train scenarios)": {
+      "all": {
+        "pairs": 6262.0,
+        "translation_mae_m": 0.1264022458432818,
+        "translation_median_m": 0.10463257506489754,
+        "translation_p90_m": 0.2334828704595566,
+        "scenarios": 7.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 158,
+            "translation_mae_m": 0.1124549957605291
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 428,
+            "translation_mae_m": 0.18564656989487915
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 1720,
+            "translation_mae_m": 0.1262786439580702
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 2280,
+            "translation_mae_m": 0.1029944841639678
+          },
+          "2021_08_22_11_29_38": {
+            "pairs": 182,
+            "translation_mae_m": 0.10481158419061902
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 138,
+            "translation_mae_m": 0.1760075275880703
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 1356,
+            "translation_mae_m": 0.1466923330338386
+          }
+        },
+        "yaw_mae_deg": 0.16703454868083212,
+        "matched_objects_per_pair": 9.81954647077611,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 61490.0,
+        "per_axis_centre_disagreement_m": 0.2264155261914485,
+        "mean_centre_disagreement_m": [
+          -0.009957946602126063,
+          -0.010843155244091194
+        ],
+        "averaging_limited_translation_mae_m": 0.09055666674888192
+      },
+      "within_40m": {
+        "pairs": 4176.0,
+        "translation_mae_m": 0.10968445773711259,
+        "translation_median_m": 0.09205473214387894,
+        "translation_p90_m": 0.19854092597961426,
+        "scenarios": 7.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 120,
+            "translation_mae_m": 0.09747645786652963
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 118,
+            "translation_mae_m": 0.17720905871335732
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 904,
+            "translation_mae_m": 0.10330491585412838
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 1764,
+            "translation_mae_m": 0.09509170167132275
+          },
+          "2021_08_22_11_29_38": {
+            "pairs": 182,
+            "translation_mae_m": 0.10481158419061902
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 104,
+            "translation_mae_m": 0.16552569559560373
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 984,
+            "translation_mae_m": 0.13009620456609922
+          }
+        },
+        "yaw_mae_deg": 0.14516838560607612,
+        "matched_objects_per_pair": 10.924808429118775,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 45622.0,
+        "per_axis_centre_disagreement_m": 0.21979457012748257,
+        "mean_centre_disagreement_m": [
+          -0.008103747759100107,
+          -0.007482187257649568
+        ],
+        "averaging_limited_translation_mae_m": 0.08334316379231894
+      },
+      "beyond_40m": {
+        "pairs": 2086.0,
+        "translation_mae_m": 0.15986987917567044,
+        "translation_median_m": 0.13359104841947556,
+        "translation_p90_m": 0.2918090671300888,
+        "scenarios": 6.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 38,
+            "translation_mae_m": 0.15975564174158008
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 310,
+            "translation_mae_m": 0.18885826769945843
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 816,
+            "translation_mae_m": 0.15172993097518223
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 516,
+            "translation_mae_m": 0.13001097315045204
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 34,
+            "translation_mae_m": 0.20806960191796808
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 372,
+            "translation_mae_m": 0.19059176962592347
+          }
+        },
+        "yaw_mae_deg": 0.21080880419386236,
+        "matched_objects_per_pair": 7.606903163950144,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 15868.0,
+        "per_axis_centre_disagreement_m": 0.2444544741304358,
+        "mean_centre_disagreement_m": [
+          -0.015288943553003942,
+          -0.020506255916982536
+        ],
+        "averaging_limited_translation_mae_m": 0.11108463311805958
+      },
+      "opencood_ego_all": {
+        "pairs": 1874.0,
+        "translation_mae_m": 0.13053314456206289,
+        "translation_median_m": 0.10635270178318024,
+        "translation_p90_m": 0.2371641859412194,
+        "scenarios": 7.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 79,
+            "translation_mae_m": 0.10450275968524474
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 214,
+            "translation_mae_m": 0.17121259328500132
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 512,
+            "translation_mae_m": 0.11502128122174327
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 570,
+            "translation_mae_m": 0.1030597953134004
+          },
+          "2021_08_22_11_29_38": {
+            "pairs": 91,
+            "translation_mae_m": 0.11834957166114352
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 69,
+            "translation_mae_m": 0.1896110814658628
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 339,
+            "translation_mae_m": 0.1717874483029553
+          }
+        },
+        "yaw_mae_deg": 0.1717651038670796,
+        "matched_objects_per_pair": 9.740128068303095,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 18253.0,
+        "per_axis_centre_disagreement_m": 0.22856899035408051,
+        "mean_centre_disagreement_m": [
+          0.010447970141921965,
+          -0.006389771425638474
+        ],
+        "averaging_limited_translation_mae_m": 0.09178990382214747
+      },
+      "opencood_ego_within_40m": {
+        "pairs": 1223.0,
+        "translation_mae_m": 0.11236241539119333,
+        "translation_median_m": 0.09369973093271255,
+        "translation_p90_m": 0.20276183784008012,
+        "scenarios": 7.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 60,
+            "translation_mae_m": 0.08731844006106257
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 59,
+            "translation_mae_m": 0.1555560509658466
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 326,
+            "translation_mae_m": 0.09544390506693876
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 381,
+            "translation_mae_m": 0.09445469553663036
+          },
+          "2021_08_22_11_29_38": {
+            "pairs": 91,
+            "translation_mae_m": 0.11834957166114352
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 52,
+            "translation_mae_m": 0.18665200421729913
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 254,
+            "translation_mae_m": 0.1394671390592084
+          }
+        },
+        "yaw_mae_deg": 0.1539444050369166,
+        "matched_objects_per_pair": 10.65903515944399,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 13036.0,
+        "per_axis_centre_disagreement_m": 0.22071702873190632,
+        "mean_centre_disagreement_m": [
+          0.00877752455009131,
+          -0.000336950425951347
+        ],
+        "averaging_limited_translation_mae_m": 0.08472992699751676
+      },
+      "opencood_ego_beyond_40m": {
+        "pairs": 651.0,
+        "translation_mae_m": 0.1646695528200866,
+        "translation_median_m": 0.13355684280395508,
+        "translation_p90_m": 0.2993381917476654,
+        "scenarios": 6.0,
+        "per_scenario": {
+          "2021_08_18_18_33_56": {
+            "pairs": 19,
+            "translation_mae_m": 0.1587690321826621
+          },
+          "2021_08_18_21_38_28": {
+            "pairs": 155,
+            "translation_mae_m": 0.17717218036132473
+          },
+          "2021_08_21_09_09_41": {
+            "pairs": 186,
+            "translation_mae_m": 0.149334316847906
+          },
+          "2021_08_22_07_24_12": {
+            "pairs": 189,
+            "translation_mae_m": 0.12040658375228602
+          },
+          "2021_08_23_19_27_57": {
+            "pairs": 17,
+            "translation_mae_m": 0.19866237657911637
+          },
+          "2021_08_23_22_31_01": {
+            "pairs": 85,
+            "translation_mae_m": 0.2683681371019167
+          }
+        },
+        "yaw_mae_deg": 0.2052439282438682,
+        "matched_objects_per_pair": 8.013824884792626,
+        "pairs_with_no_match_fraction": 0.0,
+        "correspondences": 5217.0,
+        "per_axis_centre_disagreement_m": 0.24710084874051702,
+        "mean_centre_disagreement_m": [
+          0.014622002868604815,
+          -0.0215142825530913
+        ],
+        "averaging_limited_translation_mae_m": 0.10939922654959322
+      }
+    },
+    "train (the fitted scenarios)": {
+      "all": {
+        "pairs": 29036.0,
+        "translation_mae_m": 0.22765267781473553,
+        "translation_median_m": 0.09188229963183403,
+        "translation_p90_m": 0.33707766234874725,
+        "scenarios": 37.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 2198,
+            "translation_mae_m": 0.09878833649303549
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 134,
+            "translation_mae_m": 0.20573443720645423
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 1220,
+            "translation_mae_m": 0.10958033212132325
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 892,
+            "translation_mae_m": 0.11325285096173572
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 198,
+            "translation_mae_m": 0.12909705722892675
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 60,
+            "translation_mae_m": 0.12884267677242559
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 254,
+            "translation_mae_m": 0.09332876437981649
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 640,
+            "translation_mae_m": 0.11368278896406991
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 208,
+            "translation_mae_m": 0.10195437209264267
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 324,
+            "translation_mae_m": 0.11260862857244196
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 388,
+            "translation_mae_m": 0.09721784339797654
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 290,
+            "translation_mae_m": 0.10714360196303961
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 250,
+            "translation_mae_m": 0.1228727108463645
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 804,
+            "translation_mae_m": 0.11412303528107878
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 2172,
+            "translation_mae_m": 0.12078939511549606
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 210,
+            "translation_mae_m": 0.48693212094228894
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 382,
+            "translation_mae_m": 0.6630800761433608
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 568,
+            "translation_mae_m": 0.25408318075703984
+          },
+          "2021_08_22_10_46_58": {
+            "pairs": 762,
+            "translation_mae_m": 0.06494450735098137
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 550,
+            "translation_mae_m": 0.108115984456275
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 246,
+            "translation_mae_m": 0.49150384004735226
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 128,
+            "translation_mae_m": 0.3946938188346395
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 936,
+            "translation_mae_m": 0.10562437379476017
+          },
+          "2021_08_23_12_13_48": {
+            "pairs": 164,
+            "translation_mae_m": 0.13823137945132102
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 136,
+            "translation_mae_m": 0.07797572155044798
+          },
+          "2021_08_23_16_42_39": {
+            "pairs": 182,
+            "translation_mae_m": 0.07874275550276942
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 516,
+            "translation_mae_m": 0.12340122932440051
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 176,
+            "translation_mae_m": 0.19318895530622368
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 500,
+            "translation_mae_m": 0.19518405739776792
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 138,
+            "translation_mae_m": 0.4263111244738645
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 130,
+            "translation_mae_m": 0.40658653940145784
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 736,
+            "translation_mae_m": 0.7222264450822934
+          },
+          "2021_08_24_21_29_28": {
+            "pairs": 786,
+            "translation_mae_m": 0.08610498090718965
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 2446,
+            "translation_mae_m": 0.25932956057612594
+          },
+          "2021_09_09_22_21_11": {
+            "pairs": 1096,
+            "translation_mae_m": 0.46824260064006534
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 6238,
+            "translation_mae_m": 0.3182426474006987
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 1978,
+            "translation_mae_m": 0.2649212472355729
+          }
+        },
+        "yaw_mae_deg": 0.36928031693430496,
+        "matched_objects_per_pair": 7.297079487532718,
+        "pairs_with_no_match_fraction": 0.12983882077421127,
+        "correspondences": 211878.0,
+        "per_axis_centre_disagreement_m": 0.2387323436037882,
+        "mean_centre_disagreement_m": [
+          -0.031728533001535525,
+          -0.008563165120747026
+        ],
+        "averaging_limited_translation_mae_m": 0.11076349769256254
+      },
+      "within_40m": {
+        "pairs": 18496.0,
+        "translation_mae_m": 0.15698594909824248,
+        "translation_median_m": 0.08895028755068779,
+        "translation_p90_m": 0.25374945998191833,
+        "scenarios": 37.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 1178,
+            "translation_mae_m": 0.07241758433376567
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 14,
+            "translation_mae_m": 0.11477043479681015
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 548,
+            "translation_mae_m": 0.0918530170044379
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 482,
+            "translation_mae_m": 0.1090792616422547
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 182,
+            "translation_mae_m": 0.11010373410369668
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 8,
+            "translation_mae_m": 0.1311846231110394
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 252,
+            "translation_mae_m": 0.09248987262669418
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 408,
+            "translation_mae_m": 0.08809222664236657
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 176,
+            "translation_mae_m": 0.09709638358617667
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 294,
+            "translation_mae_m": 0.11393042627269034
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 358,
+            "translation_mae_m": 0.0995005268282283
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 192,
+            "translation_mae_m": 0.10440319603609775
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 190,
+            "translation_mae_m": 0.11355349826381395
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 634,
+            "translation_mae_m": 0.1048450282262932
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 1754,
+            "translation_mae_m": 0.1091806683015023
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 94,
+            "translation_mae_m": 0.17199597370989145
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 108,
+            "translation_mae_m": 0.19826863312024484
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 410,
+            "translation_mae_m": 0.19250414311919906
+          },
+          "2021_08_22_10_46_58": {
+            "pairs": 746,
+            "translation_mae_m": 0.0631090505644754
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 414,
+            "translation_mae_m": 0.10586050927755986
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 164,
+            "translation_mae_m": 0.2343652259172281
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 120,
+            "translation_mae_m": 0.3458222756356311
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 914,
+            "translation_mae_m": 0.10577143646758334
+          },
+          "2021_08_23_12_13_48": {
+            "pairs": 164,
+            "translation_mae_m": 0.13823137945132102
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 134,
+            "translation_mae_m": 0.0785059038855469
+          },
+          "2021_08_23_16_42_39": {
+            "pairs": 182,
+            "translation_mae_m": 0.07874275550276942
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 484,
+            "translation_mae_m": 0.0887199639547655
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 132,
+            "translation_mae_m": 0.15001160123343157
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 276,
+            "translation_mae_m": 0.1051483544693126
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 96,
+            "translation_mae_m": 0.18942438878002577
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 76,
+            "translation_mae_m": 0.18217487814591118
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 278,
+            "translation_mae_m": 0.19115302221273348
+          },
+          "2021_08_24_21_29_28": {
+            "pairs": 786,
+            "translation_mae_m": 0.08610498090718965
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 1064,
+            "translation_mae_m": 0.11288602397399895
+          },
+          "2021_09_09_22_21_11": {
+            "pairs": 308,
+            "translation_mae_m": 0.25065661197098865
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 3764,
+            "translation_mae_m": 0.30418907552828905
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 1112,
+            "translation_mae_m": 0.20612519561910245
+          }
+        },
+        "yaw_mae_deg": 0.2740581342825523,
+        "matched_objects_per_pair": 8.835964532871973,
+        "pairs_with_no_match_fraction": 0.04552335640138405,
+        "correspondences": 163430.0,
+        "per_axis_centre_disagreement_m": 0.23256137010127612,
+        "mean_centre_disagreement_m": [
+          -0.027705774609213075,
+          -0.008633607647040433
+        ],
+        "averaging_limited_translation_mae_m": 0.09805517833534476
+      },
+      "beyond_40m": {
+        "pairs": 10540.0,
+        "translation_mae_m": 0.3516613888527104,
+        "translation_median_m": 0.10090400278568268,
+        "translation_p90_m": 0.6307682693004611,
+        "scenarios": 34.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 1020,
+            "translation_mae_m": 0.1292439698691334
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 120,
+            "translation_mae_m": 0.21634690415424604
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 672,
+            "translation_mae_m": 0.12403653552021188
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 410,
+            "translation_mae_m": 0.11815936328366217
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 16,
+            "translation_mae_m": 0.3451461077784188
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 52,
+            "translation_mae_m": 0.12848237733571574
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 2,
+            "translation_mae_m": 0.1990291252732277
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 232,
+            "translation_mae_m": 0.15868688132292752
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 32,
+            "translation_mae_m": 0.12867330887820572
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 30,
+            "translation_mae_m": 0.09965501111000777
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 30,
+            "translation_mae_m": 0.06997782113030553
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 98,
+            "translation_mae_m": 0.11251256051378286
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 60,
+            "translation_mae_m": 0.1523835506911079
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 170,
+            "translation_mae_m": 0.14872454394422033
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 418,
+            "translation_mae_m": 0.1695016124163215
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 116,
+            "translation_mae_m": 0.7421389988719903
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 274,
+            "translation_mae_m": 0.8462904259480927
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 158,
+            "translation_mae_m": 0.41387688601979106
+          },
+          "2021_08_22_10_46_58": {
+            "pairs": 16,
+            "translation_mae_m": 0.15052268002182245
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 136,
+            "translation_mae_m": 0.11498191625030492
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 82,
+            "translation_mae_m": 1.0057810683076007
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 8,
+            "translation_mae_m": 1.1277669668197645
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 22,
+            "translation_mae_m": 0.0995145882056518
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 2,
+            "translation_mae_m": 0.04245350509881973
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 32,
+            "translation_mae_m": 0.64795536804013
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 44,
+            "translation_mae_m": 0.32272101752460003
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 224,
+            "translation_mae_m": 0.3061209056489004
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 42,
+            "translation_mae_m": 0.9677665203454959
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 54,
+            "translation_mae_m": 0.7224251737611161
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 458,
+            "translation_mae_m": 1.0445810554703667
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 1382,
+            "translation_mae_m": 0.37207624866922506
+          },
+          "2021_09_09_22_21_11": {
+            "pairs": 788,
+            "translation_mae_m": 0.5532889007797552
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 2474,
+            "translation_mae_m": 0.3396240720279217
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 866,
+            "translation_mae_m": 0.3404191795652672
+          }
+        },
+        "yaw_mae_deg": 0.5363798890715741,
+        "matched_objects_per_pair": 4.596584440227704,
+        "pairs_with_no_match_fraction": 0.27779886148007593,
+        "correspondences": 48448.0,
+        "per_axis_centre_disagreement_m": 0.25846442762872224,
+        "mean_centre_disagreement_m": [
+          -0.0452985339109076,
+          -0.008325540821041538
+        ],
+        "averaging_limited_translation_mae_m": 0.1510925660286991
+      },
+      "opencood_ego_all": {
+        "pairs": 8859.0,
+        "translation_mae_m": 0.2099429529280185,
+        "translation_median_m": 0.09682157635688782,
+        "translation_p90_m": 0.3407323896884918,
+        "scenarios": 37.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 680,
+            "translation_mae_m": 0.10791284906119793
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 67,
+            "translation_mae_m": 0.27308728985154807
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 366,
+            "translation_mae_m": 0.11020130575049282
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 378,
+            "translation_mae_m": 0.1238652593129753
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 99,
+            "translation_mae_m": 0.12481352712281725
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 30,
+            "translation_mae_m": 0.1126976557696859
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 127,
+            "translation_mae_m": 0.08944426459355617
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 210,
+            "translation_mae_m": 0.10926796850925755
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 104,
+            "translation_mae_m": 0.10543252550101337
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 162,
+            "translation_mae_m": 0.11658102231974035
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 194,
+            "translation_mae_m": 0.10176267028190963
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 145,
+            "translation_mae_m": 0.11314127678372736
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 125,
+            "translation_mae_m": 0.1362611758261919
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 268,
+            "translation_mae_m": 0.10268513405254222
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 543,
+            "translation_mae_m": 0.13617355547010088
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 105,
+            "translation_mae_m": 0.5639587789596546
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 138,
+            "translation_mae_m": 0.7245207153854603
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 196,
+            "translation_mae_m": 0.20262548953237755
+          },
+          "2021_08_22_10_46_58": {
+            "pairs": 254,
+            "translation_mae_m": 0.062105698761251556
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 179,
+            "translation_mae_m": 0.11050792878972335
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 123,
+            "translation_mae_m": 0.7562337832797967
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 64,
+            "translation_mae_m": 0.2374677828847782
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 312,
+            "translation_mae_m": 0.12738684477890508
+          },
+          "2021_08_23_12_13_48": {
+            "pairs": 82,
+            "translation_mae_m": 0.1259584219490246
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 68,
+            "translation_mae_m": 0.07399287665098467
+          },
+          "2021_08_23_16_42_39": {
+            "pairs": 91,
+            "translation_mae_m": 0.08190094518403594
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 172,
+            "translation_mae_m": 0.11850622088680879
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 88,
+            "translation_mae_m": 0.21722816017096525
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 147,
+            "translation_mae_m": 0.13235342782941095
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 69,
+            "translation_mae_m": 0.5065679838071052
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 65,
+            "translation_mae_m": 0.41727855715614104
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 264,
+            "translation_mae_m": 0.47973786455325157
+          },
+          "2021_08_24_21_29_28": {
+            "pairs": 262,
+            "translation_mae_m": 0.07836119830164034
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 751,
+            "translation_mae_m": 0.24575604826023467
+          },
+          "2021_09_09_22_21_11": {
+            "pairs": 190,
+            "translation_mae_m": 0.40210122462166
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 1258,
+            "translation_mae_m": 0.3654194122583091
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 483,
+            "translation_mae_m": 0.10849113915815534
+          }
+        },
+        "yaw_mae_deg": 0.33170263512122966,
+        "matched_objects_per_pair": 7.871655943108703,
+        "pairs_with_no_match_fraction": 0.08443390901907666,
+        "correspondences": 69735.0,
+        "per_axis_centre_disagreement_m": 0.23847019811375578,
+        "mean_centre_disagreement_m": [
+          -0.02381510170991424,
+          -0.015359376199586747
+        ],
+        "averaging_limited_translation_mae_m": 0.10652731951032807
+      },
+      "opencood_ego_within_40m": {
+        "pairs": 5832.0,
+        "translation_mae_m": 0.14510071987630108,
+        "translation_median_m": 0.0905652865767479,
+        "translation_p90_m": 0.24534979164600393,
+        "scenarios": 36.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 384,
+            "translation_mae_m": 0.07158860936912485
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 7,
+            "translation_mae_m": 0.12781116792133876
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 203,
+            "translation_mae_m": 0.10505965404818064
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 203,
+            "translation_mae_m": 0.12089421757350084
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 91,
+            "translation_mae_m": 0.10472911679196162
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 4,
+            "translation_mae_m": 0.12044392246752977
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 126,
+            "translation_mae_m": 0.08886600729255449
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 125,
+            "translation_mae_m": 0.07808152506127954
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 88,
+            "translation_mae_m": 0.10348259129519151
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 147,
+            "translation_mae_m": 0.11744987625679394
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 179,
+            "translation_mae_m": 0.10422907122696995
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 96,
+            "translation_mae_m": 0.10972240296541713
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 95,
+            "translation_mae_m": 0.12248223100445772
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 191,
+            "translation_mae_m": 0.09862690655568235
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 502,
+            "translation_mae_m": 0.12003783838669455
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 47,
+            "translation_mae_m": 0.2046740417309264
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 27,
+            "translation_mae_m": 0.21327041144724246
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 155,
+            "translation_mae_m": 0.17625212696410955
+          },
+          "2021_08_22_10_46_58": {
+            "pairs": 254,
+            "translation_mae_m": 0.062105698761251556
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 126,
+            "translation_mae_m": 0.10706986410040704
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 82,
+            "translation_mae_m": 0.27060098438410135
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 60,
+            "translation_mae_m": 0.2532989684104299
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 301,
+            "translation_mae_m": 0.12858280455585308
+          },
+          "2021_08_23_12_13_48": {
+            "pairs": 82,
+            "translation_mae_m": 0.1259584219490246
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 67,
+            "translation_mae_m": 0.07449575406568709
+          },
+          "2021_08_23_16_42_39": {
+            "pairs": 91,
+            "translation_mae_m": 0.08190094518403594
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 156,
+            "translation_mae_m": 0.09544250904283945
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 66,
+            "translation_mae_m": 0.16514672674097572
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 73,
+            "translation_mae_m": 0.12970515087961335
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 48,
+            "translation_mae_m": 0.20151485077803954
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 38,
+            "translation_mae_m": 0.18743901944866306
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 139,
+            "translation_mae_m": 0.19175170289633944
+          },
+          "2021_08_24_21_29_28": {
+            "pairs": 262,
+            "translation_mae_m": 0.07836119830164034
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 384,
+            "translation_mae_m": 0.11727575468103178
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 648,
+            "translation_mae_m": 0.3982058387238215
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 285,
+            "translation_mae_m": 0.07570525591359718
+          }
+        },
+        "yaw_mae_deg": 0.22410659655796247,
+        "matched_objects_per_pair": 9.25462962962963,
+        "pairs_with_no_match_fraction": 0.027091906721536385,
+        "correspondences": 53973.0,
+        "per_axis_centre_disagreement_m": 0.2315583879590186,
+        "mean_centre_disagreement_m": [
+          -0.02080861782475699,
+          -0.014708499821325735
+        ],
+        "averaging_limited_translation_mae_m": 0.09539836565108789
+      },
+      "opencood_ego_beyond_40m": {
+        "pairs": 3027.0,
+        "translation_mae_m": 0.33487189351527197,
+        "translation_median_m": 0.12087464332580566,
+        "translation_p90_m": 0.7130439043045047,
+        "scenarios": 33.0,
+        "per_scenario": {
+          "2021_08_16_22_26_54": {
+            "pairs": 296,
+            "translation_mae_m": 0.15503618704010355
+          },
+          "2021_08_18_09_02_56": {
+            "pairs": 60,
+            "translation_mae_m": 0.2900361707434058
+          },
+          "2021_08_18_19_11_02": {
+            "pairs": 163,
+            "translation_mae_m": 0.11660471247177731
+          },
+          "2021_08_18_22_16_12": {
+            "pairs": 175,
+            "translation_mae_m": 0.1273116677307657
+          },
+          "2021_08_18_23_23_19": {
+            "pairs": 8,
+            "translation_mae_m": 0.3532736946363002
+          },
+          "2021_08_19_15_07_39": {
+            "pairs": 26,
+            "translation_mae_m": 0.11150592243155608
+          },
+          "2021_08_20_16_20_46": {
+            "pairs": 1,
+            "translation_mae_m": 0.16230468451976776
+          },
+          "2021_08_20_20_39_00": {
+            "pairs": 85,
+            "translation_mae_m": 0.15513038534451934
+          },
+          "2021_08_20_21_00_19": {
+            "pairs": 16,
+            "translation_mae_m": 0.11615716363303363
+          },
+          "2021_08_21_15_41_04": {
+            "pairs": 15,
+            "translation_mae_m": 0.10806625373661519
+          },
+          "2021_08_21_16_08_42": {
+            "pairs": 15,
+            "translation_mae_m": 0.07233028567085663
+          },
+          "2021_08_21_17_00_32": {
+            "pairs": 49,
+            "translation_mae_m": 0.11983947855021272
+          },
+          "2021_08_21_21_35_56": {
+            "pairs": 30,
+            "translation_mae_m": 0.17989450109501678
+          },
+          "2021_08_21_22_21_37": {
+            "pairs": 77,
+            "translation_mae_m": 0.11275164641488294
+          },
+          "2021_08_22_06_43_37": {
+            "pairs": 41,
+            "translation_mae_m": 0.3337377012230274
+          },
+          "2021_08_22_08_39_02": {
+            "pairs": 58,
+            "translation_mae_m": 0.8551033074036241
+          },
+          "2021_08_22_09_43_53": {
+            "pairs": 111,
+            "translation_mae_m": 0.8488788974244863
+          },
+          "2021_08_22_10_10_40": {
+            "pairs": 41,
+            "translation_mae_m": 0.302329665095342
+          },
+          "2021_08_22_22_30_58": {
+            "pairs": 53,
+            "translation_mae_m": 0.11868144106998477
+          },
+          "2021_08_23_10_47_16": {
+            "pairs": 41,
+            "translation_mae_m": 1.7274993810711876
+          },
+          "2021_08_23_11_06_41": {
+            "pairs": 4,
+            "translation_mae_m": 2.6645352591003757e-15
+          },
+          "2021_08_23_11_22_46": {
+            "pairs": 11,
+            "translation_mae_m": 0.09466103633696382
+          },
+          "2021_08_23_13_10_47": {
+            "pairs": 1,
+            "translation_mae_m": 0.04030008986592293
+          },
+          "2021_08_23_17_07_55": {
+            "pairs": 16,
+            "translation_mae_m": 0.3433774113655099
+          },
+          "2021_08_23_20_47_11": {
+            "pairs": 22,
+            "translation_mae_m": 0.3734724604609338
+          },
+          "2021_08_23_23_08_17": {
+            "pairs": 74,
+            "translation_mae_m": 0.13496591725285995
+          },
+          "2021_08_24_09_25_42": {
+            "pairs": 21,
+            "translation_mae_m": 1.203832287873541
+          },
+          "2021_08_24_09_58_32": {
+            "pairs": 27,
+            "translation_mae_m": 0.7407564250407397
+          },
+          "2021_08_24_12_19_30": {
+            "pairs": 125,
+            "translation_mae_m": 0.7999784763157379
+          },
+          "2021_09_09_13_20_58": {
+            "pairs": 367,
+            "translation_mae_m": 0.3801877450842508
+          },
+          "2021_09_09_22_21_11": {
+            "pairs": 190,
+            "translation_mae_m": 0.40210122462166
+          },
+          "2021_09_09_23_21_21": {
+            "pairs": 610,
+            "translation_mae_m": 0.3305905526687157
+          },
+          "2021_09_10_12_07_11": {
+            "pairs": 198,
+            "translation_mae_m": 0.15568294079804962
+          }
+        },
+        "yaw_mae_deg": 0.5390036251777127,
+        "matched_objects_per_pair": 5.207135777998018,
+        "pairs_with_no_match_fraction": 0.19491245457548723,
+        "correspondences": 15762.0,
+        "per_axis_centre_disagreement_m": 0.2607538227259376,
+        "mean_centre_disagreement_m": [
+          -0.034110048717501625,
+          -0.017588138460967385
+        ],
+        "averaging_limited_translation_mae_m": 0.14321587853079695
+      }
+    },
+    "test (official split)": {
+      "all": {
+        "pairs": 10790.0,
+        "translation_mae_m": 0.22198799917252077,
+        "translation_median_m": 0.11712884530425072,
+        "translation_p90_m": 0.3221759021282196,
+        "scenarios": 16.0,
+        "per_scenario": {
+          "2021_08_18_19_48_05": {
+            "pairs": 118,
+            "translation_mae_m": 0.16327435060767298
+          },
+          "2021_08_20_21_10_24": {
+            "pairs": 588,
+            "translation_mae_m": 0.19105573406373308
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 650,
+            "translation_mae_m": 0.19362431763277319
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 3032,
+            "translation_mae_m": 0.12005693835423956
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 302,
+            "translation_mae_m": 1.9695534795609038
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 426,
+            "translation_mae_m": 0.1013535272806638
+          },
+          "2021_08_23_12_58_19": {
+            "pairs": 208,
+            "translation_mae_m": 0.14309876615488276
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 334,
+            "translation_mae_m": 0.15311334439982732
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 800,
+            "translation_mae_m": 0.17281768811459186
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 612,
+            "translation_mae_m": 0.1738199801022075
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 838,
+            "translation_mae_m": 0.14792171817357366
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 462,
+            "translation_mae_m": 0.1365435637729706
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 1206,
+            "translation_mae_m": 0.2266347433481316
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 426,
+            "translation_mae_m": 0.2775553679017205
+          },
+          "2021_08_24_20_09_18": {
+            "pairs": 440,
+            "translation_mae_m": 0.41920091897349765
+          },
+          "2021_08_24_20_49_54": {
+            "pairs": 348,
+            "translation_mae_m": 0.13565164517568445
+          }
+        },
+        "yaw_mae_deg": 0.3445094990515369,
+        "matched_objects_per_pair": 9.958850787766451,
+        "pairs_with_no_match_fraction": 0.006858202038924954,
+        "correspondences": 107456.0,
+        "per_axis_centre_disagreement_m": 0.2447854316855948,
+        "mean_centre_disagreement_m": [
+          -0.020834327990534765,
+          -0.010580062560334707
+        ],
+        "averaging_limited_translation_mae_m": 0.0972167040756213
+      },
+      "within_40m": {
+        "pairs": 6834.0,
+        "translation_mae_m": 0.15033114748535117,
+        "translation_median_m": 0.10486341267824173,
+        "translation_p90_m": 0.2554813623428344,
+        "scenarios": 15.0,
+        "per_scenario": {
+          "2021_08_20_21_10_24": {
+            "pairs": 514,
+            "translation_mae_m": 0.14803818641375416
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 274,
+            "translation_mae_m": 0.11667023634072393
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 1380,
+            "translation_mae_m": 0.10308213266518736
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 4,
+            "translation_mae_m": 0.17572916252538562
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 406,
+            "translation_mae_m": 0.09710328649096374
+          },
+          "2021_08_23_12_58_19": {
+            "pairs": 208,
+            "translation_mae_m": 0.14309876615488276
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 330,
+            "translation_mae_m": 0.15222799989648841
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 534,
+            "translation_mae_m": 0.16152394315217403
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 422,
+            "translation_mae_m": 0.0972386037933467
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 696,
+            "translation_mae_m": 0.13234775303461557
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 376,
+            "translation_mae_m": 0.13167369539603008
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 544,
+            "translation_mae_m": 0.14733857308558929
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 358,
+            "translation_mae_m": 0.2128620930679417
+          },
+          "2021_08_24_20_09_18": {
+            "pairs": 440,
+            "translation_mae_m": 0.41920091897349765
+          },
+          "2021_08_24_20_49_54": {
+            "pairs": 348,
+            "translation_mae_m": 0.13565164517568445
+          }
+        },
+        "yaw_mae_deg": 0.2347520242945892,
+        "matched_objects_per_pair": 10.605501902253438,
+        "pairs_with_no_match_fraction": 0.007901668129938533,
+        "correspondences": 72478.0,
+        "per_axis_centre_disagreement_m": 0.2308813579054563,
+        "mean_centre_disagreement_m": [
+          -0.01929055414905779,
+          -0.01126116963627734
+        ],
+        "averaging_limited_translation_mae_m": 0.08885527052198905
+      },
+      "beyond_40m": {
+        "pairs": 3956.0,
+        "translation_mae_m": 0.3457753915967162,
+        "translation_median_m": 0.1448865905404091,
+        "translation_p90_m": 0.47561055421829224,
+        "scenarios": 13.0,
+        "per_scenario": {
+          "2021_08_18_19_48_05": {
+            "pairs": 118,
+            "translation_mae_m": 0.16327435060767298
+          },
+          "2021_08_20_21_10_24": {
+            "pairs": 74,
+            "translation_mae_m": 0.4898532947676407
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 376,
+            "translation_mae_m": 0.24970255772325586
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 1652,
+            "translation_mae_m": 0.1342368607821403
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 298,
+            "translation_mae_m": 1.9936316583130587
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 20,
+            "translation_mae_m": 0.18763341531157493
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 4,
+            "translation_mae_m": 0.2261542659252882
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 266,
+            "translation_mae_m": 0.19549009341508486
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 190,
+            "translation_mae_m": 0.3439112474829405
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 142,
+            "translation_mae_m": 0.2242560825166358
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 86,
+            "translation_mae_m": 0.15783508132796648
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 662,
+            "translation_mae_m": 0.29179655093547757
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 68,
+            "translation_mae_m": 0.6181464324677914
+          }
+        },
+        "yaw_mae_deg": 0.5341158141397525,
+        "matched_objects_per_pair": 8.841759352881699,
+        "pairs_with_no_match_fraction": 0.005055611729019249,
+        "correspondences": 34978.0,
+        "per_axis_centre_disagreement_m": 0.271337768014936,
+        "mean_centre_disagreement_m": [
+          -0.024033185571945035,
+          -0.009168738909749478
+        ],
+        "averaging_limited_translation_mae_m": 0.11436702959286715
+      },
+      "opencood_ego_all": {
+        "pairs": 3445.0,
+        "translation_mae_m": 0.23903278504373776,
+        "translation_median_m": 0.12279749661684036,
+        "translation_p90_m": 0.3825598180294036,
+        "scenarios": 16.0,
+        "per_scenario": {
+          "2021_08_18_19_48_05": {
+            "pairs": 59,
+            "translation_mae_m": 0.12920823184994318
+          },
+          "2021_08_20_21_10_24": {
+            "pairs": 196,
+            "translation_mae_m": 0.2818132081848322
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 260,
+            "translation_mae_m": 0.17245765878693559
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 602,
+            "translation_mae_m": 0.11180563712418327
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 151,
+            "translation_mae_m": 1.2253218555687282
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 142,
+            "translation_mae_m": 0.09106475770027495
+          },
+          "2021_08_23_12_58_19": {
+            "pairs": 104,
+            "translation_mae_m": 0.16967120370715677
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 167,
+            "translation_mae_m": 0.16638410824189287
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 266,
+            "translation_mae_m": 0.18112729465119765
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 204,
+            "translation_mae_m": 0.18969334918858996
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 282,
+            "translation_mae_m": 0.1525743370347306
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 154,
+            "translation_mae_m": 0.11613135073975019
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 313,
+            "translation_mae_m": 0.16636372728648183
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 151,
+            "translation_mae_m": 0.371940447282762
+          },
+          "2021_08_24_20_09_18": {
+            "pairs": 220,
+            "translation_mae_m": 0.5614530600205233
+          },
+          "2021_08_24_20_49_54": {
+            "pairs": 174,
+            "translation_mae_m": 0.14675009228963534
+          }
+        },
+        "yaw_mae_deg": 0.3771982755137324,
+        "matched_objects_per_pair": 9.382293178519594,
+        "pairs_with_no_match_fraction": 0.01074020319303337,
+        "correspondences": 32322.0,
+        "per_axis_centre_disagreement_m": 0.24694008744107399,
+        "mean_centre_disagreement_m": [
+          -0.03705979619090137,
+          -0.011078548364732667
+        ],
+        "averaging_limited_translation_mae_m": 0.10104086052194612
+      },
+      "opencood_ego_within_40m": {
+        "pairs": 2282.0,
+        "translation_mae_m": 0.19359480701221385,
+        "translation_median_m": 0.11425675079226494,
+        "translation_p90_m": 0.30432676374912265,
+        "scenarios": 15.0,
+        "per_scenario": {
+          "2021_08_20_21_10_24": {
+            "pairs": 170,
+            "translation_mae_m": 0.18440786181565594
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 137,
+            "translation_mae_m": 0.12766452465566677
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 227,
+            "translation_mae_m": 0.09895158569956207
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 2,
+            "translation_mae_m": 0.2096933275461197
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 141,
+            "translation_mae_m": 0.09093788191544037
+          },
+          "2021_08_23_12_58_19": {
+            "pairs": 104,
+            "translation_mae_m": 0.16967120370715677
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 165,
+            "translation_mae_m": 0.16556387761551322
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 161,
+            "translation_mae_m": 0.17104896295364508
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 109,
+            "translation_mae_m": 0.13244753827126227
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 253,
+            "translation_mae_m": 0.15254586996149874
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 125,
+            "translation_mae_m": 0.10770423543825745
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 158,
+            "translation_mae_m": 0.1393446503266032
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 136,
+            "translation_mae_m": 0.3468606397988937
+          },
+          "2021_08_24_20_09_18": {
+            "pairs": 220,
+            "translation_mae_m": 0.5614530600205233
+          },
+          "2021_08_24_20_49_54": {
+            "pairs": 174,
+            "translation_mae_m": 0.14675009228963534
+          }
+        },
+        "yaw_mae_deg": 0.2987495462857448,
+        "matched_objects_per_pair": 9.757668711656441,
+        "pairs_with_no_match_fraction": 0.0118317265556529,
+        "correspondences": 22267.0,
+        "per_axis_centre_disagreement_m": 0.23183670998535455,
+        "mean_centre_disagreement_m": [
+          -0.032891450193101024,
+          -0.016304024744337363
+        ],
+        "averaging_limited_translation_mae_m": 0.09301845227586858
+      },
+      "opencood_ego_beyond_40m": {
+        "pairs": 1163.0,
+        "translation_mae_m": 0.32818967744953104,
+        "translation_median_m": 0.1406039446592331,
+        "translation_p90_m": 0.6634479880332942,
+        "scenarios": 13.0,
+        "per_scenario": {
+          "2021_08_18_19_48_05": {
+            "pairs": 59,
+            "translation_mae_m": 0.12920823184994318
+          },
+          "2021_08_20_21_10_24": {
+            "pairs": 26,
+            "translation_mae_m": 0.9186943190602156
+          },
+          "2021_08_21_09_28_12": {
+            "pairs": 123,
+            "translation_mae_m": 0.22234919842908052
+          },
+          "2021_08_22_07_52_02": {
+            "pairs": 375,
+            "translation_mae_m": 0.11958662291988731
+          },
+          "2021_08_22_09_08_29": {
+            "pairs": 149,
+            "translation_mae_m": 1.2389544532603067
+          },
+          "2021_08_22_21_41_24": {
+            "pairs": 1,
+            "translation_mae_m": 0.10895424336194992
+          },
+          "2021_08_23_15_19_19": {
+            "pairs": 2,
+            "translation_mae_m": 0.2340531349182129
+          },
+          "2021_08_23_16_06_26": {
+            "pairs": 105,
+            "translation_mae_m": 0.19658073658744493
+          },
+          "2021_08_23_17_22_47": {
+            "pairs": 95,
+            "translation_mae_m": 0.25537538487268174
+          },
+          "2021_08_23_21_07_10": {
+            "pairs": 29,
+            "translation_mae_m": 0.15282268770809831
+          },
+          "2021_08_23_21_47_19": {
+            "pairs": 29,
+            "translation_mae_m": 0.15245512359101196
+          },
+          "2021_08_24_07_45_41": {
+            "pairs": 155,
+            "translation_mae_m": 0.19390575412300326
+          },
+          "2021_08_24_11_37_54": {
+            "pairs": 15,
+            "translation_mae_m": 0.5993307018031679
+          }
+        },
+        "yaw_mae_deg": 0.5311277682895431,
+        "matched_objects_per_pair": 8.645743766122099,
+        "pairs_with_no_match_fraction": 0.008598452278589908,
+        "correspondences": 10055.0,
+        "per_axis_centre_disagreement_m": 0.2774759931183317,
+        "mean_centre_disagreement_m": [
+          -0.046290682350326566,
+          0.0004933743149946128
+        ],
+        "averaging_limited_translation_mae_m": 0.11827260784636064
+      }
+    }
+  },
+  "live_path_reference": {}
+}

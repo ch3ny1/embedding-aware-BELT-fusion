@@ -1,0 +1,1496 @@
+{
+  "method": "alignformer_stage2",
+  "metric": "pose",
+  "config": "configs/alignformer.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "checkpoints": {
+    "B / boxes+embeddings": {
+      "path": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_B_boxes+embeddings/best.pth",
+      "head": "B",
+      "message_content": "boxes+embeddings",
+      "match_weight": 1.0,
+      "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage1/best.pth",
+      "epoch": 28
+    },
+    "B / boxes_only": {
+      "path": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_B_boxes_only/best.pth",
+      "head": "B",
+      "message_content": "boxes_only",
+      "match_weight": 1.0,
+      "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage1_zero_embeddings/best.pth",
+      "epoch": 29
+    },
+    "A / boxes+embeddings (match_weight 0)": {
+      "path": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_A_boxes+embeddings/best.pth",
+      "head": "A",
+      "message_content": "boxes+embeddings",
+      "match_weight": 0.0,
+      "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage1/best.pth",
+      "epoch": 30
+    },
+    "B / boxes+embeddings (match_weight 0)": {
+      "path": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage2_B_boxes+embeddings_nomatch/best.pth",
+      "head": "B",
+      "message_content": "boxes+embeddings",
+      "match_weight": 0.0,
+      "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r70/stage1/best.pth",
+      "epoch": 28
+    }
+  },
+  "cache_root": "/media/chenyi/basement2/cache/alignformer",
+  "comm_range_m": 70.0,
+  "train_scenarios": 37,
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "val_pairs": 6262,
+  "sweep_sigmas_m": [
+    0.0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.5,
+    2.0
+  ],
+  "noise_seeds": [
+    1000,
+    1001,
+    1002
+  ],
+  "shrinkage": null,
+  "gate": {
+    "name": "P2",
+    "definition": "head B (boxes+embeddings) yaw MAE strictly below the predict-zero yaw MAE at every non-zero sigma. sigma = 0 is excluded because the predict-zero baseline is exactly 0 there and nothing can be below it; it is reported in `results` as a clean-case diagnostic.",
+    "configuration": "B / boxes+embeddings",
+    "cells": [
+      {
+        "sigma": "sigma_0.2m",
+        "yaw_mae_deg": 0.1673702550216134,
+        "predict_zero_yaw_mae_deg": 0.15995218702288058,
+        "analytic_predict_zero_yaw_mae_deg": 0.1595769121605731,
+        "below": false
+      },
+      {
+        "sigma": "sigma_0.4m",
+        "yaw_mae_deg": 0.1680409096305926,
+        "predict_zero_yaw_mae_deg": 0.3199043741472915,
+        "analytic_predict_zero_yaw_mae_deg": 0.3191538243211462,
+        "below": true
+      },
+      {
+        "sigma": "sigma_0.6m",
+        "yaw_mae_deg": 0.1687526310973816,
+        "predict_zero_yaw_mae_deg": 0.47985656124631987,
+        "analytic_predict_zero_yaw_mae_deg": 0.4787307364817192,
+        "below": true
+      },
+      {
+        "sigma": "sigma_0.8m",
+        "yaw_mae_deg": 0.16988490839348705,
+        "predict_zero_yaw_mae_deg": 0.6398087474823404,
+        "analytic_predict_zero_yaw_mae_deg": 0.6383076486422924,
+        "below": true
+      },
+      {
+        "sigma": "sigma_1m",
+        "yaw_mae_deg": 0.17166901754137429,
+        "predict_zero_yaw_mae_deg": 0.799760937474983,
+        "analytic_predict_zero_yaw_mae_deg": 0.7978845608028654,
+        "below": true
+      },
+      {
+        "sigma": "sigma_1.5m",
+        "yaw_mae_deg": 0.18058672842730175,
+        "predict_zero_yaw_mae_deg": 1.1996414063140048,
+        "analytic_predict_zero_yaw_mae_deg": 1.1968268412042982,
+        "below": true
+      },
+      {
+        "sigma": "sigma_2m",
+        "yaw_mae_deg": 0.20553265731707557,
+        "predict_zero_yaw_mae_deg": 1.5995218729193594,
+        "analytic_predict_zero_yaw_mae_deg": 1.5957691216057308,
+        "below": true
+      }
+    ],
+    "passed": false
+  },
+  "results": {
+    "sigma_0m": {
+      "sigma_xy_m": 0.0,
+      "sigma_yaw_deg": 0.0,
+      "analytic_predict_zero_yaw_mae_deg": 0.0,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.12640224604209138,
+            "yaw_mae_deg": 0.16703456013928356,
+            "predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "corner_loss_m": 0.7616077310563871,
+            "predict_zero_corner_loss_m": 0.0,
+            "mean_confidence": 9.934892516134646,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.12640224604209138,
+            "shared_yaw_mae_deg": 0.16703456013928356,
+            "shared_predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "shared_predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "shared_corner_loss_m": 0.7616077310563871,
+            "shared_predict_zero_corner_loss_m": 0.0,
+            "shared_mean_confidence": 9.934892516134646,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.16703456013928356,
+            0.16703456013928356,
+            0.16703456013928356
+          ],
+          "per_seed_translation_mae_m": [
+            0.12640224604209138,
+            0.12640224604209138,
+            0.12640224604209138
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14180569266481013,
+            "yaw_mae_deg": 0.19277408975109586,
+            "predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "corner_loss_m": 0.8527912255220728,
+            "predict_zero_corner_loss_m": 0.0,
+            "mean_confidence": 10.202339900944873,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14180569266481013,
+            "shared_yaw_mae_deg": 0.19277408975109586,
+            "shared_predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "shared_predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "shared_corner_loss_m": 0.8527912255220728,
+            "shared_predict_zero_corner_loss_m": 0.0,
+            "shared_mean_confidence": 10.202339900944873,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.19277408975109586,
+            0.19277408975109586,
+            0.19277408975109586
+          ],
+          "per_seed_translation_mae_m": [
+            0.14180569266481013,
+            0.14180569266481013,
+            0.14180569266481013
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.13553049144787516,
+            "yaw_mae_deg": 0.3362041051225592,
+            "predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "corner_loss_m": 1.270731772336634,
+            "predict_zero_corner_loss_m": 0.0,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.13553049144787516,
+            "shared_yaw_mae_deg": 0.3362041051225592,
+            "shared_predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "shared_predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "shared_corner_loss_m": 1.270731772336634,
+            "shared_predict_zero_corner_loss_m": 0.0,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.3362041051225592,
+            0.3362041051225592,
+            0.3362041051225592
+          ],
+          "per_seed_translation_mae_m": [
+            0.13553049144787516,
+            0.13553049144787516,
+            0.13553049144787516
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.1383838528682157,
+            "yaw_mae_deg": 0.1892007941523515,
+            "predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "corner_loss_m": 0.8204353091796487,
+            "predict_zero_corner_loss_m": 0.0,
+            "mean_confidence": 7.790189208789438,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1383838528682157,
+            "shared_yaw_mae_deg": 0.1892007941523515,
+            "shared_predict_zero_translation_mae_m": 2.3043040467561764e-15,
+            "shared_predict_zero_yaw_mae_deg": 7.5382690032389695e-16,
+            "shared_corner_loss_m": 0.8204353091796487,
+            "shared_predict_zero_corner_loss_m": 0.0,
+            "shared_mean_confidence": 7.790189208789438,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.1892007941523515,
+            0.1892007941523515,
+            0.1892007941523515
+          ],
+          "per_seed_translation_mae_m": [
+            0.1383838528682157,
+            0.1383838528682157,
+            0.1383838528682157
+          ]
+        }
+      }
+    },
+    "sigma_0.2m": {
+      "sigma_xy_m": 0.2,
+      "sigma_yaw_deg": 0.2,
+      "analytic_predict_zero_yaw_mae_deg": 0.1595769121605731,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.1265057623227742,
+            "yaw_mae_deg": 0.1673702550216134,
+            "predict_zero_translation_mae_m": 0.27337687522931237,
+            "predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "corner_loss_m": 0.7628147195458358,
+            "predict_zero_corner_loss_m": 1.3877764792294167,
+            "mean_confidence": 9.931914414103568,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1265057623227742,
+            "shared_yaw_mae_deg": 0.1673702550216134,
+            "shared_predict_zero_translation_mae_m": 0.27337687522931237,
+            "shared_predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "shared_corner_loss_m": 0.7628147195458358,
+            "shared_predict_zero_corner_loss_m": 1.3877764792294167,
+            "shared_mean_confidence": 9.931914414103568,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.16738370553025494,
+            0.16767989245134204,
+            0.16704716708324313
+          ],
+          "per_seed_translation_mae_m": [
+            0.12659594419473888,
+            0.1263997640826001,
+            0.12652157869098363
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14180587975981138,
+            "yaw_mae_deg": 0.19307459668586216,
+            "predict_zero_translation_mae_m": 0.27337687522931237,
+            "predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "corner_loss_m": 0.8533665976479529,
+            "predict_zero_corner_loss_m": 1.3877764792294167,
+            "mean_confidence": 10.20142690617348,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14180587975981138,
+            "shared_yaw_mae_deg": 0.19307459668586216,
+            "shared_predict_zero_translation_mae_m": 0.27337687522931237,
+            "shared_predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "shared_corner_loss_m": 0.8533665976479529,
+            "shared_predict_zero_corner_loss_m": 1.3877764792294167,
+            "shared_mean_confidence": 10.20142690617348,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.193179510836021,
+            0.19307630003469511,
+            0.1929679791868704
+          ],
+          "per_seed_translation_mae_m": [
+            0.14180026302623963,
+            0.1417470447402608,
+            0.14187033151293366
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.30231641761083694,
+            "yaw_mae_deg": 0.3751237824183233,
+            "predict_zero_translation_mae_m": 0.27337687522931237,
+            "predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "corner_loss_m": 1.9802688685398568,
+            "predict_zero_corner_loss_m": 1.3877764792294167,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.30231641761083694,
+            "shared_yaw_mae_deg": 0.3751237824183233,
+            "shared_predict_zero_translation_mae_m": 0.27337687522931237,
+            "shared_predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "shared_corner_loss_m": 1.9802688685398568,
+            "shared_predict_zero_corner_loss_m": 1.3877764792294167,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.37511951053001674,
+            0.3729151552456783,
+            0.3773366814792746
+          ],
+          "per_seed_translation_mae_m": [
+            0.30210448590683425,
+            0.3028882467415492,
+            0.30195652018412733
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.13878109949307485,
+            "yaw_mae_deg": 0.18948100951613167,
+            "predict_zero_translation_mae_m": 0.27337687522931237,
+            "predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "corner_loss_m": 0.8204216957441824,
+            "predict_zero_corner_loss_m": 1.3877764792294167,
+            "mean_confidence": 7.7914887173138,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.13878109949307485,
+            "shared_yaw_mae_deg": 0.18948100951613167,
+            "shared_predict_zero_translation_mae_m": 0.27337687522931237,
+            "shared_predict_zero_yaw_mae_deg": 0.15995218702288058,
+            "shared_corner_loss_m": 0.8204216957441824,
+            "shared_predict_zero_corner_loss_m": 1.3877764792294167,
+            "shared_mean_confidence": 7.7914887173138,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.1881790238803509,
+            0.19080710456760422,
+            0.18945690010043997
+          ],
+          "per_seed_translation_mae_m": [
+            0.1382181603319917,
+            0.139524384148012,
+            0.13860075399922092
+          ]
+        }
+      }
+    },
+    "sigma_0.4m": {
+      "sigma_xy_m": 0.4,
+      "sigma_yaw_deg": 0.4,
+      "analytic_predict_zero_yaw_mae_deg": 0.3191538243211462,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.1268408386569986,
+            "yaw_mae_deg": 0.1680409096305926,
+            "predict_zero_translation_mae_m": 0.5467552604175764,
+            "predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "corner_loss_m": 0.7655519643245897,
+            "predict_zero_corner_loss_m": 2.7755491575966844,
+            "mean_confidence": 9.925442799889318,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1268408386569986,
+            "shared_yaw_mae_deg": 0.1680409096305926,
+            "shared_predict_zero_translation_mae_m": 0.5467552604175764,
+            "shared_predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "shared_corner_loss_m": 0.7655519643245897,
+            "shared_predict_zero_corner_loss_m": 2.7755491575966844,
+            "shared_mean_confidence": 9.925442799889318,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.16824044963491874,
+            0.16871757546921046,
+            0.1671647037876486
+          ],
+          "per_seed_translation_mae_m": [
+            0.1270722114632435,
+            0.1268278038642613,
+            0.12662250064349106
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14192678397117833,
+            "yaw_mae_deg": 0.19351902330923065,
+            "predict_zero_translation_mae_m": 0.5467552604175764,
+            "predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "corner_loss_m": 0.854478197919796,
+            "predict_zero_corner_loss_m": 2.7755491575966844,
+            "mean_confidence": 10.195519176748352,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14192678397117833,
+            "shared_yaw_mae_deg": 0.19351902330923065,
+            "shared_predict_zero_translation_mae_m": 0.5467552604175764,
+            "shared_predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "shared_corner_loss_m": 0.854478197919796,
+            "shared_predict_zero_corner_loss_m": 2.7755491575966844,
+            "shared_mean_confidence": 10.195519176748352,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.19356111001374432,
+            0.19336294092259365,
+            0.193633018991354
+          ],
+          "per_seed_translation_mae_m": [
+            0.14186346412885306,
+            0.14189212918471925,
+            0.1420247585999627
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.5511821025757824,
+            "yaw_mae_deg": 0.4687023327320919,
+            "predict_zero_translation_mae_m": 0.5467552604175764,
+            "predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "corner_loss_m": 3.121933268835941,
+            "predict_zero_corner_loss_m": 2.7755491575966844,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.5511821025757824,
+            "shared_yaw_mae_deg": 0.4687023327320919,
+            "shared_predict_zero_translation_mae_m": 0.5467552604175764,
+            "shared_predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "shared_corner_loss_m": 3.121933268835941,
+            "shared_predict_zero_corner_loss_m": 2.7755491575966844,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.46768487645809886,
+            0.46621655945730683,
+            0.47220556228086996
+          ],
+          "per_seed_translation_mae_m": [
+            0.5488137138875975,
+            0.5537446149048124,
+            0.5509879789349371
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.13912625019890196,
+            "yaw_mae_deg": 0.19011080761274615,
+            "predict_zero_translation_mae_m": 0.5467552604175764,
+            "predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "corner_loss_m": 0.820758614689853,
+            "predict_zero_corner_loss_m": 2.7755491575966844,
+            "mean_confidence": 7.783942969147674,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.13912625019890196,
+            "shared_yaw_mae_deg": 0.19011080761274615,
+            "shared_predict_zero_translation_mae_m": 0.5467552604175764,
+            "shared_predict_zero_yaw_mae_deg": 0.3199043741472915,
+            "shared_corner_loss_m": 0.820758614689853,
+            "shared_predict_zero_corner_loss_m": 2.7755491575966844,
+            "shared_mean_confidence": 7.783942969147674,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.18868190006340171,
+            0.1915783404694773,
+            0.19007218230535944
+          ],
+          "per_seed_translation_mae_m": [
+            0.13853756165359774,
+            0.1399259523095052,
+            0.13891523663360295
+          ]
+        }
+      }
+    },
+    "sigma_0.6m": {
+      "sigma_xy_m": 0.6,
+      "sigma_yaw_deg": 0.6,
+      "analytic_predict_zero_yaw_mae_deg": 0.4787307364817192,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.1271323349787305,
+            "yaw_mae_deg": 0.1687526310973816,
+            "predict_zero_translation_mae_m": 0.8201347985841793,
+            "predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "corner_loss_m": 0.7678562501049924,
+            "predict_zero_corner_loss_m": 4.163317188429933,
+            "mean_confidence": 9.915852401605065,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1271323349787305,
+            "shared_yaw_mae_deg": 0.1687526310973816,
+            "shared_predict_zero_translation_mae_m": 0.8201347985841793,
+            "shared_predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "shared_corner_loss_m": 0.7678562501049924,
+            "shared_predict_zero_corner_loss_m": 4.163317188429933,
+            "shared_mean_confidence": 9.915852401605065,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.1686774030427741,
+            0.16943504093783002,
+            0.1681454493115406
+          ],
+          "per_seed_translation_mae_m": [
+            0.12718356870226646,
+            0.1271697260327554,
+            0.1270437102011696
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14276034951552688,
+            "yaw_mae_deg": 0.19522321816895905,
+            "predict_zero_translation_mae_m": 0.8201347985841793,
+            "predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "corner_loss_m": 0.8597672482280618,
+            "predict_zero_corner_loss_m": 4.163317188429933,
+            "mean_confidence": 10.185806488846104,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14276034951552688,
+            "shared_yaw_mae_deg": 0.19522321816895905,
+            "shared_predict_zero_translation_mae_m": 0.8201347985841793,
+            "shared_predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "shared_corner_loss_m": 0.8597672482280618,
+            "shared_predict_zero_corner_loss_m": 4.163317188429933,
+            "shared_mean_confidence": 10.185806488846104,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.195924253366276,
+            0.19468238330123447,
+            0.19506301783936658
+          ],
+          "per_seed_translation_mae_m": [
+            0.14294694140862824,
+            0.14255003333662844,
+            0.1427840738013239
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.8114110391690531,
+            "yaw_mae_deg": 0.5928419142196851,
+            "predict_zero_translation_mae_m": 0.8201347985841793,
+            "predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "corner_loss_m": 4.36295117580199,
+            "predict_zero_corner_loss_m": 4.163317188429933,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.8114110391690531,
+            "shared_yaw_mae_deg": 0.5928419142196851,
+            "shared_predict_zero_translation_mae_m": 0.8201347985841793,
+            "shared_predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "shared_corner_loss_m": 4.36295117580199,
+            "shared_predict_zero_corner_loss_m": 4.163317188429933,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.5919351873212026,
+            0.5886186165993909,
+            0.597971938738462
+          ],
+          "per_seed_translation_mae_m": [
+            0.8068752562950229,
+            0.8161938696842687,
+            0.8111639915278681
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.13948779624960084,
+            "yaw_mae_deg": 0.190886767847424,
+            "predict_zero_translation_mae_m": 0.8201347985841793,
+            "predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "corner_loss_m": 0.8227553739708151,
+            "predict_zero_corner_loss_m": 4.163317188429933,
+            "mean_confidence": 7.766963915285256,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.13948779624960084,
+            "shared_yaw_mae_deg": 0.190886767847424,
+            "shared_predict_zero_translation_mae_m": 0.8201347985841793,
+            "shared_predict_zero_yaw_mae_deg": 0.47985656124631987,
+            "shared_corner_loss_m": 0.8227553739708151,
+            "shared_predict_zero_corner_loss_m": 4.163317188429933,
+            "shared_mean_confidence": 7.766963915285256,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.18926357568090849,
+            0.19225969515605235,
+            0.19113703270531127
+          ],
+          "per_seed_translation_mae_m": [
+            0.13882203933645154,
+            0.1398756794943211,
+            0.13976566991802986
+          ]
+        }
+      }
+    },
+    "sigma_0.8m": {
+      "sigma_xy_m": 0.8,
+      "sigma_yaw_deg": 0.8,
+      "analytic_predict_zero_yaw_mae_deg": 0.6383076486422924,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.1279496208720094,
+            "yaw_mae_deg": 0.16988490839348705,
+            "predict_zero_translation_mae_m": 1.093515132342387,
+            "predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "corner_loss_m": 0.772985447847883,
+            "predict_zero_corner_loss_m": 5.551079575068111,
+            "mean_confidence": 9.901180797322267,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1279496208720094,
+            "shared_yaw_mae_deg": 0.16988490839348705,
+            "shared_predict_zero_translation_mae_m": 1.093515132342387,
+            "shared_predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "shared_corner_loss_m": 0.772985447847883,
+            "shared_predict_zero_corner_loss_m": 5.551079575068111,
+            "shared_mean_confidence": 9.901180797322267,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.17021081113312733,
+            0.1697485896963085,
+            0.16969532435102533
+          ],
+          "per_seed_translation_mae_m": [
+            0.1279791894715954,
+            0.1277844162651313,
+            0.1280852568793015
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14437077878750793,
+            "yaw_mae_deg": 0.19807857735068427,
+            "predict_zero_translation_mae_m": 1.093515132342387,
+            "predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "corner_loss_m": 0.8685552612299148,
+            "predict_zero_corner_loss_m": 5.551079575068111,
+            "mean_confidence": 10.171568154248009,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14437077878750793,
+            "shared_yaw_mae_deg": 0.19807857735068427,
+            "shared_predict_zero_translation_mae_m": 1.093515132342387,
+            "shared_predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "shared_corner_loss_m": 0.8685552612299148,
+            "shared_predict_zero_corner_loss_m": 5.551079575068111,
+            "shared_mean_confidence": 10.171568154248009,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.19922201582434382,
+            0.1962298772769856,
+            0.1987838389507234
+          ],
+          "per_seed_translation_mae_m": [
+            0.14495079481575063,
+            0.14354452733527506,
+            0.1446170142114981
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 1.0757960213216795,
+            "yaw_mae_deg": 0.7316039779957118,
+            "predict_zero_translation_mae_m": 1.093515132342387,
+            "predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "corner_loss_m": 5.6485376885104905,
+            "predict_zero_corner_loss_m": 5.551079575068111,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 1.0757960213216795,
+            "shared_yaw_mae_deg": 0.7316039779957118,
+            "shared_predict_zero_translation_mae_m": 1.093515132342387,
+            "shared_predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "shared_corner_loss_m": 5.6485376885104905,
+            "shared_predict_zero_corner_loss_m": 5.551079575068111,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.7318311470151138,
+            0.7282125978034284,
+            0.7347681891685932
+          ],
+          "per_seed_translation_mae_m": [
+            1.06858664737727,
+            1.0826153476487255,
+            1.0761860689390432
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.14036828113873903,
+            "yaw_mae_deg": 0.1923231044973566,
+            "predict_zero_translation_mae_m": 1.093515132342387,
+            "predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "corner_loss_m": 0.8270023421807382,
+            "predict_zero_corner_loss_m": 5.551079575068111,
+            "mean_confidence": 7.735427133549418,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14036828113873903,
+            "shared_yaw_mae_deg": 0.1923231044973566,
+            "shared_predict_zero_translation_mae_m": 1.093515132342387,
+            "shared_predict_zero_yaw_mae_deg": 0.6398087474823404,
+            "shared_corner_loss_m": 0.8270023421807382,
+            "shared_predict_zero_corner_loss_m": 5.551079575068111,
+            "shared_mean_confidence": 7.735427133549418,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.19030220536750103,
+            0.19344590738991585,
+            0.19322120073465293
+          ],
+          "per_seed_translation_mae_m": [
+            0.1392130573044871,
+            0.1406188472624748,
+            0.14127293884925513
+          ]
+        }
+      }
+    },
+    "sigma_1m": {
+      "sigma_xy_m": 1.0,
+      "sigma_yaw_deg": 1.0,
+      "analytic_predict_zero_yaw_mae_deg": 0.7978845608028654,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.12882997049737585,
+            "yaw_mae_deg": 0.17166901754137429,
+            "predict_zero_translation_mae_m": 1.3668959162860432,
+            "predict_zero_yaw_mae_deg": 0.799760937474983,
+            "corner_loss_m": 0.7795378679827699,
+            "predict_zero_corner_loss_m": 6.9388356809094205,
+            "mean_confidence": 9.880285662075691,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.12882997049737585,
+            "shared_yaw_mae_deg": 0.17166901754137429,
+            "shared_predict_zero_translation_mae_m": 1.3668959162860432,
+            "shared_predict_zero_yaw_mae_deg": 0.799760937474983,
+            "shared_corner_loss_m": 0.7795378679827699,
+            "shared_predict_zero_corner_loss_m": 6.9388356809094205,
+            "shared_mean_confidence": 9.880285662075691,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.17157757613499755,
+            0.17151379166453534,
+            0.1719156848245899
+          ],
+          "per_seed_translation_mae_m": [
+            0.12861417315326837,
+            0.12862464598062054,
+            0.1292510923582386
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.14592432724481497,
+            "yaw_mae_deg": 0.20115212897681764,
+            "predict_zero_translation_mae_m": 1.3668959162860432,
+            "predict_zero_yaw_mae_deg": 0.799760937474983,
+            "corner_loss_m": 0.8787807844779035,
+            "predict_zero_corner_loss_m": 6.9388356809094205,
+            "mean_confidence": 10.151038032693375,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14592432724481497,
+            "shared_yaw_mae_deg": 0.20115212897681764,
+            "shared_predict_zero_translation_mae_m": 1.3668959162860432,
+            "shared_predict_zero_yaw_mae_deg": 0.799760937474983,
+            "shared_corner_loss_m": 0.8787807844779035,
+            "shared_predict_zero_corner_loss_m": 6.9388356809094205,
+            "shared_mean_confidence": 10.151038032693375,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.20220151963381675,
+            0.19843505343397902,
+            0.20281981386265713
+          ],
+          "per_seed_translation_mae_m": [
+            0.1462940466895114,
+            0.14483133857907368,
+            0.14664759646585976
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 1.3421636264849355,
+            "yaw_mae_deg": 0.8770422611096459,
+            "predict_zero_translation_mae_m": 1.3668959162860432,
+            "predict_zero_yaw_mae_deg": 0.799760937474983,
+            "corner_loss_m": 6.959093931868697,
+            "predict_zero_corner_loss_m": 6.9388356809094205,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 1.3421636264849355,
+            "shared_yaw_mae_deg": 0.8770422611096459,
+            "shared_predict_zero_translation_mae_m": 1.3668959162860432,
+            "shared_predict_zero_yaw_mae_deg": 0.799760937474983,
+            "shared_corner_loss_m": 6.959093931868697,
+            "shared_predict_zero_corner_loss_m": 6.9388356809094205,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.8766453906546307,
+            0.8746955601105253,
+            0.8797858325637822
+          ],
+          "per_seed_translation_mae_m": [
+            1.3326641522593028,
+            1.3507159344878146,
+            1.3431107927076886
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.14220111352065037,
+            "yaw_mae_deg": 0.19592107889383958,
+            "predict_zero_translation_mae_m": 1.3668959162860432,
+            "predict_zero_yaw_mae_deg": 0.799760937474983,
+            "corner_loss_m": 0.8377004444735014,
+            "predict_zero_corner_loss_m": 6.9388356809094205,
+            "mean_confidence": 7.6861101830968925,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.14220111352065037,
+            "shared_yaw_mae_deg": 0.19592107889383958,
+            "shared_predict_zero_translation_mae_m": 1.3668959162860432,
+            "shared_predict_zero_yaw_mae_deg": 0.799760937474983,
+            "shared_corner_loss_m": 0.8377004444735014,
+            "shared_predict_zero_corner_loss_m": 6.9388356809094205,
+            "shared_mean_confidence": 7.6861101830968925,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.19282530413310545,
+            0.19810980282359822,
+            0.1968281297248151
+          ],
+          "per_seed_translation_mae_m": [
+            0.14134048166765417,
+            0.14267854567192417,
+            0.1425843132223728
+          ]
+        }
+      }
+    },
+    "sigma_1.5m": {
+      "sigma_xy_m": 1.5,
+      "sigma_yaw_deg": 1.5,
+      "analytic_predict_zero_yaw_mae_deg": 1.1968268412042982,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.1344837443104925,
+            "yaw_mae_deg": 0.18058672842730175,
+            "predict_zero_translation_mae_m": 2.0503474941881117,
+            "predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "corner_loss_m": 0.8131383726943118,
+            "predict_zero_corner_loss_m": 10.408196078917433,
+            "mean_confidence": 9.792666092170741,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1344837443104925,
+            "shared_yaw_mae_deg": 0.18058672842730175,
+            "shared_predict_zero_translation_mae_m": 2.0503474941881117,
+            "shared_predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "shared_corner_loss_m": 0.8131383726943118,
+            "shared_predict_zero_corner_loss_m": 10.408196078917433,
+            "shared_mean_confidence": 9.792666092170741,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.18127404398447558,
+            0.17918026550095595,
+            0.1813058757964737
+          ],
+          "per_seed_translation_mae_m": [
+            0.1344430395605769,
+            0.1335395102072965,
+            0.1354686831636042
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.15364219763402573,
+            "yaw_mae_deg": 0.2136093693191754,
+            "predict_zero_translation_mae_m": 2.0503474941881117,
+            "predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "corner_loss_m": 0.9248030925866567,
+            "predict_zero_corner_loss_m": 10.408196078917433,
+            "mean_confidence": 10.05649647468527,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.15364219763402573,
+            "shared_yaw_mae_deg": 0.2136093693191754,
+            "shared_predict_zero_translation_mae_m": 2.0503474941881117,
+            "shared_predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "shared_corner_loss_m": 0.9248030925866567,
+            "shared_predict_zero_corner_loss_m": 10.408196078917433,
+            "shared_mean_confidence": 10.05649647468527,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.21354751417866075,
+            0.212277729493747,
+            0.21500286428511847
+          ],
+          "per_seed_translation_mae_m": [
+            0.15446791379301741,
+            0.1527439265615146,
+            0.15371475254754524
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 2.012824875344157,
+            "yaw_mae_deg": 1.2539760598128156,
+            "predict_zero_translation_mae_m": 2.0503474941881117,
+            "predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "corner_loss_m": 10.29223976679737,
+            "predict_zero_corner_loss_m": 10.408196078917433,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 2.012824875344157,
+            "shared_yaw_mae_deg": 1.2539760598128156,
+            "shared_predict_zero_translation_mae_m": 2.0503474941881117,
+            "shared_predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "shared_corner_loss_m": 10.29223976679737,
+            "shared_predict_zero_corner_loss_m": 10.408196078917433,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            1.2552816524402055,
+            1.2480814204890673,
+            1.2585651065091743
+          ],
+          "per_seed_translation_mae_m": [
+            1.9983245900780657,
+            2.0265262424660277,
+            2.013623793488377
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.1540368028714052,
+            "yaw_mae_deg": 0.21487467611075894,
+            "predict_zero_translation_mae_m": 2.0503474941881117,
+            "predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "corner_loss_m": 0.9018341022162142,
+            "predict_zero_corner_loss_m": 10.408196078917433,
+            "mean_confidence": 7.492956063420732,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1540368028714052,
+            "shared_yaw_mae_deg": 0.21487467611075894,
+            "shared_predict_zero_translation_mae_m": 2.0503474941881117,
+            "shared_predict_zero_yaw_mae_deg": 1.1996414063140048,
+            "shared_corner_loss_m": 0.9018341022162142,
+            "shared_predict_zero_corner_loss_m": 10.408196078917433,
+            "shared_mean_confidence": 7.492956063420732,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.21008222965872808,
+            0.218740549303784,
+            0.21580124936976475
+          ],
+          "per_seed_translation_mae_m": [
+            0.15210364330161383,
+            0.15564656371851007,
+            0.1543602015940917
+          ]
+        }
+      }
+    },
+    "sigma_2m": {
+      "sigma_xy_m": 2.0,
+      "sigma_yaw_deg": 2.0,
+      "analytic_predict_zero_yaw_mae_deg": 1.5957691216057308,
+      "configurations": {
+        "B / boxes+embeddings": {
+          "mean": {
+            "translation_mae_m": 0.15744110107117285,
+            "yaw_mae_deg": 0.20553265731707557,
+            "predict_zero_translation_mae_m": 2.733794123908398,
+            "predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "corner_loss_m": 0.9289931062408193,
+            "predict_zero_corner_loss_m": 13.877508200862891,
+            "mean_confidence": 9.628846975785658,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.15744110107117285,
+            "shared_yaw_mae_deg": 0.20553265731707557,
+            "shared_predict_zero_translation_mae_m": 2.733794123908398,
+            "shared_predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "shared_corner_loss_m": 0.9289931062408193,
+            "shared_predict_zero_corner_loss_m": 13.877508200862891,
+            "shared_mean_confidence": 9.628846975785658,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.20531813826510717,
+            0.2074407112556538,
+            0.20383912243046573
+          ],
+          "per_seed_translation_mae_m": [
+            0.15826266332009242,
+            0.15851348255892145,
+            0.15554715733450467
+          ]
+        },
+        "B / boxes_only": {
+          "mean": {
+            "translation_mae_m": 0.18043248843527393,
+            "yaw_mae_deg": 0.24535380571804577,
+            "predict_zero_translation_mae_m": 2.733794123908398,
+            "predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "corner_loss_m": 1.0674486693609426,
+            "predict_zero_corner_loss_m": 13.877508200862891,
+            "mean_confidence": 9.867463794059676,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.18043248843527393,
+            "shared_yaw_mae_deg": 0.24535380571804577,
+            "shared_predict_zero_translation_mae_m": 2.733794123908398,
+            "shared_predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "shared_corner_loss_m": 1.0674486693609426,
+            "shared_predict_zero_corner_loss_m": 13.877508200862891,
+            "shared_mean_confidence": 9.867463794059676,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.24365069103941525,
+            0.2451834992378598,
+            0.24722722687686224
+          ],
+          "per_seed_translation_mae_m": [
+            0.1781454609438696,
+            0.18096197622342447,
+            0.18219002813852775
+          ]
+        },
+        "A / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 2.6876151118303375,
+            "yaw_mae_deg": 1.642830056249683,
+            "predict_zero_translation_mae_m": 2.733794123908398,
+            "predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "corner_loss_m": 13.671513372680678,
+            "predict_zero_corner_loss_m": 13.877508200862891,
+            "mean_confidence": 1.0,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 2.6876151118303375,
+            "shared_yaw_mae_deg": 1.642830056249683,
+            "shared_predict_zero_translation_mae_m": 2.733794123908398,
+            "shared_predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "shared_corner_loss_m": 13.671513372680678,
+            "shared_predict_zero_corner_loss_m": 13.877508200862891,
+            "shared_mean_confidence": 1.0,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            1.6424732896627539,
+            1.6375286951494537,
+            1.6484881839368413
+          ],
+          "per_seed_translation_mae_m": [
+            2.667734997145325,
+            2.7060620512912084,
+            2.6890482870544803
+          ]
+        },
+        "B / boxes+embeddings (match_weight 0)": {
+          "mean": {
+            "translation_mae_m": 0.1975412016464196,
+            "yaw_mae_deg": 0.27205231277805336,
+            "predict_zero_translation_mae_m": 2.733794123908398,
+            "predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "corner_loss_m": 1.139840830579941,
+            "predict_zero_corner_loss_m": 13.877508200862891,
+            "mean_confidence": 7.202023883349699,
+            "fallback_fraction": 0.0,
+            "samples": 6262.0,
+            "shared_translation_mae_m": 0.1975412016464196,
+            "shared_yaw_mae_deg": 0.27205231277805336,
+            "shared_predict_zero_translation_mae_m": 2.733794123908398,
+            "shared_predict_zero_yaw_mae_deg": 1.5995218729193594,
+            "shared_corner_loss_m": 1.139840830579941,
+            "shared_predict_zero_corner_loss_m": 13.877508200862891,
+            "shared_mean_confidence": 7.202023883349699,
+            "shared_fallback_fraction": 0.0,
+            "shared_samples": 6262.0,
+            "unalignable_translation_mae_m": null,
+            "unalignable_yaw_mae_deg": null,
+            "unalignable_predict_zero_translation_mae_m": null,
+            "unalignable_predict_zero_yaw_mae_deg": null,
+            "unalignable_corner_loss_m": null,
+            "unalignable_predict_zero_corner_loss_m": null,
+            "unalignable_mean_confidence": null,
+            "unalignable_fallback_fraction": null,
+            "unalignable_samples": 0.0
+          },
+          "per_seed_yaw_mae_deg": [
+            0.2670155552316116,
+            0.2757318818656753,
+            0.27340950123687324
+          ],
+          "per_seed_translation_mae_m": [
+            0.1949423752970225,
+            0.20208810671036026,
+            0.19559312293187608
+          ]
+        }
+      }
+    }
+  }
+}

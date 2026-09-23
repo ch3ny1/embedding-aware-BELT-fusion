@@ -1,5 +1,14 @@
 # AlignFormer's pose error floor: diagnosis and fix
 
+> **Head B's numbers here are superseded by
+> [alignformer_p2.md](alignformer_p2.md).** This document diagnoses and fixes
+> the *heading* defect; section 6 then identified a second, independent one --
+> the pair index was built at a communication range the evaluation protocol
+> does not use -- which was fixed afterwards. Everything about the heading fold
+> and the shrinkage rule below still stands and is still how the model works;
+> the tables in sections 4, 5 and 6 were measured before the range fix, on the
+> narrower 40 m population. Section 6 records how it came out.
+
 [P2](alignformer_p2.md) measured a **constant pose error floor** that did not
 depend on the injected localization noise. It capped corrected fusion at ~61%
 of oracle at every sigma and, because it applies at sigma = 0 too, made
@@ -243,6 +252,14 @@ to be re-run locally before it can stand beside these numbers.
 
 ## 6. What is left, and where it comes from
 
+> **Resolved.** The range mismatch diagnosed below was fixed: the pair index is
+> now built at 70 m and every stage retrained on it. AP@0.7 at sigma = 0 went
+> 0.7665 -> **0.8068** and the gap recovered went 68-75% -> **75-81%**; the
+> 1.85x remainder was traced to genuine held-out scenario difficulty, not to a
+> code path. [alignformer_p2.md](alignformer_p2.md) carries the post-fix
+> numbers; the rest of this section is the diagnosis as it was written, and the
+> numbers in it are pre-range-fix.
+
 AlignFormer still costs 0.110 AP@0.7 at sigma = 0, so it is not yet
 unconditionally safe to leave on. The sweep now splits its pose error by
 whether the pair is inside the communication range the model was trained on,
@@ -287,6 +304,66 @@ the pair index at 70 m to match the evaluation protocol, extend the detection
 cache to the agent-frames that brings in, and retrain. Until then a deployment
 would be entitled to leave the correction off for pairs beyond 40 m, but that
 is a workaround for a mismatch that should not exist.
+
+### How it came out
+
+The rebuild needed no cache work at all: `alignformer/cache.py` walks **every**
+agent-frame of a split through `scan_split`, independent of the pair index, so
+all 19,291 train and 5,699 test agent-frames the 70 m index needs were already
+there -- verified, zero missing. Only the pair index itself was rebuilt
+(22,672 -> 35,298 train pairs, 6,834 -> 10,790 test pairs), and every stage was
+retrained on it. The scenario split is byte-identical at both ranges, so the
+same seven validation scenarios are held out either way.
+
+Retraining on the wider index improved the far pairs **and** the near ones --
+there was no trade:
+
+| Translation MAE at sigma = 0, no shrinkage, cached path | 40 m-trained | 70 m-trained |
+|---|---:|---:|
+| Validation, within 40 m | 0.1192 m | **0.1097 m** |
+| Validation, beyond 40 m | 0.2019 m | **0.1599 m** |
+| Test, within 40 m | 0.1698 m | **0.1503 m** |
+| Test, beyond 40 m | 0.4024 m | **0.3458 m** |
+
+**The 1.85x is not a code path.** `scripts/diagnose_split_gap.py` runs the
+cached reader over the same population OpenCOOD's sweep evaluates -- narrowing
+the ordered pair index to the ego `BaseDataset` selects -- and reproduces the
+live path's pair counts **exactly** (3445 / 2282 / 1163) and its value to 0.1%:
+0.2210 m cached against 0.2208 m live at sigma = 0, within 40 m. Whatever the
+gap is, the two paths agree.
+
+What it is instead, measured on the same 40 m in-range, OpenCOOD-ego population:
+
+| | 40 m-trained | 70 m-trained |
+|---|---:|---:|
+| Validation (7 held-out scenarios) | 0.1212 m | 0.1124 m |
+| The whole train split (43 scenarios) | 0.1450 m | 0.1394 m |
+| Test (15 scenarios) | 0.2210 m | 0.1936 m |
+| test / validation | 1.82x | **1.72x** |
+
+Two effects, and the *detector* is not the main one:
+
+1. **The validation slice is an easy draw.** It is 1.24x better than the whole
+   train split it was carved from -- 7 scenarios out of 43, and by chance none
+   of the hard tail. Per-scenario translation MAE runs 0.090-0.209 m on the
+   validation scenarios against 0.060-0.463 m across the train split.
+2. **The test split is genuinely harder**, and significantly so: per-scenario
+   MAE median 0.118 m over the 43 train-split scenarios against 0.153 m over
+   the 15 test scenarios, Mann-Whitney one-sided **p = 0.014**. Three test
+   scenarios sit at 0.33, 0.35 and 0.67 m.
+3. **Correspondence quality accounts for only 1.10x of it.** The
+   averaging-limited floor
+   (`metrics.averaging_limited_translation_mae_m`, `s/sqrt(n) * sqrt(pi/2)`)
+   is 0.0847 m on validation and 0.0930 m on test: per-correspondence
+   disagreement 0.2207 vs 0.2318 m over 10.66 vs 9.76 matched objects. So the
+   estimator sits 1.33x above its floor on validation and 2.08x above it on
+   test, and that excess is scene geometry and occlusion rather than
+   per-box detector noise.
+
+So the remainder is **held-out scenario difficulty plus an easy validation
+draw, not a bug** -- which also means the validation-calibrated `tau` is fitted
+on an easier population than the test split it is applied to, and is therefore
+a little small there. That is the honest reading and it is not tuned away.
 
 ## Reproducing
 
