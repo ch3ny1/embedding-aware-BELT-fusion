@@ -132,11 +132,12 @@ def test_the_object_set_batch_marks_every_real_object_valid():
 
 
 def test_the_pose_stats_split_pairs_by_the_training_communication_range():
-    # OpenCOOD's LateFusionDataset admits CAVs out to COM_RANGE = 70 m while
-    # configs/alignformer.yaml builds its pair index at comm_range_m = 40, so a
-    # large slice of the test population is out of distribution by
-    # construction. The sweep has to report that slice separately or an
-    # out-of-domain input is indistinguishable from a bad estimator.
+    # The guard against a train/test range mismatch: whatever range the pair
+    # index was built at, the pairs outside it are out of distribution by
+    # construction and an aggregate hides them. configs/alignformer.yaml now
+    # matches OpenCOOD's COM_RANGE, so this subset should be empty in practice
+    # -- which is the point. It stays measured so a future divergence shows up
+    # as a number rather than as a mystery.
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import _PoseStats
 
     stats = _PoseStats(40.0)
@@ -154,3 +155,35 @@ def test_the_pose_stats_split_pairs_by_the_training_communication_range():
     assert metrics["beyond_training_range_translation_mae_m"] == pytest.approx(3.0)
     # A subset with no members reports None, not a zero it never measured.
     assert metrics["unalignable_translation_mae_m"] is None
+
+
+def test_the_pose_stats_also_split_at_the_fixed_40m_diagnostic_boundary():
+    # Separate from the training-range split above, which moves with the
+    # config. Every earlier measurement in docs/alignformer_pose_floor.md is
+    # reported either side of 40 m, and once the pair index is built at 70 m
+    # the training-range split collapses to "everything" and that comparison
+    # would silently vanish. A FIXED boundary keeps the before/after readable.
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        DIAGNOSTIC_RANGE_M,
+        _PoseStats,
+    )
+
+    # Arrange: a training range that no longer coincides with the boundary
+    stats = _PoseStats(70.0)
+    stats.update(0.0, (0.0, 0.0), 0.0, (1.0, 0.0),
+                 fell_back=False, alignable=True, distance_m=12.0)
+    stats.update(0.0, (0.0, 0.0), 0.0, (3.0, 0.0),
+                 fell_back=False, alignable=True, distance_m=55.0)
+
+    # Act
+    metrics = stats.compute()
+
+    # Assert
+    assert DIAGNOSTIC_RANGE_M == 40.0
+    # Both pairs are inside the training range now, so that split says nothing.
+    assert metrics["within_training_range_pairs"] == 2.0
+    assert metrics["beyond_training_range_pairs"] == 0.0
+    # The fixed boundary still separates them.
+    assert metrics["within_40m_translation_mae_m"] == pytest.approx(1.0)
+    assert metrics["beyond_40m_translation_mae_m"] == pytest.approx(3.0)
+    assert metrics["beyond_40m_fraction"] == 0.5

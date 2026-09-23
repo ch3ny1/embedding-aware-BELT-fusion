@@ -8,6 +8,8 @@ import pytest
 from embedding_aware_belt_fusion.coloca.index import (
     build_pairs,
     load_or_build_pairs,
+    opencood_ego_id,
+    pair_cache_path,
     parse_lidar_pose,
     scan_split,
 )
@@ -218,3 +220,42 @@ def test_different_samples_get_different_noise():
 
     # Assert
     assert not np.allclose(a, b)
+
+
+def test_pair_cache_path_keys_the_filename_on_the_communication_range():
+    # Two ranges over the same split are two different indexes, and the cache
+    # signature only tells you the file on disk is stale -- it cannot keep both.
+    # Keying the NAME on the range lets the 40 m index (which the CoLoca-QuA
+    # baseline still uses) and the 70 m one coexist instead of evicting each
+    # other on every alternating run.
+    # Arrange
+    directory = Path("outputs/coloca/cache")
+
+    # Act
+    forty = pair_cache_path(directory, "train", 40.0)
+    seventy = pair_cache_path(directory, "train", 70.0)
+
+    # Assert
+    assert forty == directory / "train_pairs_40.npz"
+    assert seventy == directory / "train_pairs_70.npz"
+    assert pair_cache_path(directory, "test", 70.0) == directory / "test_pairs_70.npz"
+
+
+def test_the_opencood_ego_is_the_lowest_string_sorted_agent():
+    # OpenCOOD's BaseDataset picks sorted(os.listdir(scenario))[0] as ego, and
+    # its sort is over the directory names, i.e. lexicographic, not numeric.
+    # A diagnostic that wants the same population the fused-AP sweep evaluates
+    # has to reproduce that choice exactly rather than guess at it.
+    assert opencood_ego_id(["650", "641", "1045"]) == "1045"
+    assert opencood_ego_id(["641", "650"]) == "641"
+
+
+def test_a_roadside_unit_is_never_the_opencood_ego():
+    # Negative ids are roadside units; BaseDataset rotates one off the front of
+    # the list precisely so it cannot become the ego.
+    assert opencood_ego_id(["-1", "641", "650"]) == "641"
+
+
+def test_the_opencood_ego_needs_at_least_one_agent():
+    with pytest.raises(ValueError, match="at least one agent"):
+        opencood_ego_id([])

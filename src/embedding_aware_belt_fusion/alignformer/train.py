@@ -62,7 +62,11 @@ from embedding_aware_belt_fusion.alignformer.metrics import (
 )
 from embedding_aware_belt_fusion.alignformer.model import AlignFormerB
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
-from embedding_aware_belt_fusion.coloca.index import AgentPair, load_or_build_pairs
+from embedding_aware_belt_fusion.coloca.index import (
+    AgentPair,
+    load_or_build_pairs,
+    pair_cache_path,
+)
 from embedding_aware_belt_fusion.coloca.train import split_scenarios
 
 # Where stage 1 writes best.pth / latest.pth / history.json unless overridden.
@@ -93,10 +97,11 @@ def build_pair_split(
     """
     data = config["data"]
     root = Path(data["train_root"])
+    comm_range_m = float(data["comm_range_m"])
     pairs = load_or_build_pairs(
         root,
-        Path(data["pair_cache_dir"]) / f"{_split_name(root)}_pairs.npz",
-        float(data["comm_range_m"]),
+        pair_cache_path(data["pair_cache_dir"], _split_name(root), comm_range_m),
+        comm_range_m,
     )
     train_scenarios, val_scenarios = split_scenarios(
         sorted({pair.scenario for pair in pairs}),

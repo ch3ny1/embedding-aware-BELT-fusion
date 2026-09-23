@@ -13,6 +13,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -132,6 +133,44 @@ def build_pairs(
             f"no agent pairs within {comm_range_m} m; check the split or widen comm_range_m"
         )
     return pairs
+
+
+def opencood_ego_id(cav_ids: Sequence[str]) -> str:
+    """Which agent OpenCOOD's ``BaseDataset`` makes the ego of a scenario.
+
+    Reproduces ``basedataset.py``'s own rule, because a measurement that wants
+    the population the fused-AP sweep actually evaluates has to pick the same
+    ego it does: the agents are sorted as **strings**, a roadside unit (a
+    negative id) is rotated off the front so it can never be the ego, and the
+    first of what remains is it.
+
+    The pair index itself does not use this -- it enumerates every ordered
+    pair, which is the right training population. It is the *diagnostics* that
+    need to narrow to OpenCOOD's ego before comparing themselves against the
+    live evaluation path.
+    """
+    ordered = sorted(cav_ids)
+    if not ordered:
+        raise ValueError("a scenario needs at least one agent to have an ego")
+    if int(ordered[0]) < 0:
+        ordered = ordered[1:] + [ordered[0]]
+    return ordered[0]
+
+
+def pair_cache_path(
+    cache_dir: str | Path, split_name: str, comm_range_m: float
+) -> Path:
+    """Where the pair index for one (split, communication range) is cached.
+
+    The range is part of the FILENAME, not only of the signature inside the
+    file. A signature can tell a reader that the cached index was built for a
+    different range; it cannot hold both. Two consumers that disagree about the
+    range -- AlignFormer at 70 m, matching OpenCOOD's ``COM_RANGE``, and the
+    CoLoca-QuA baseline at the 40 m its paper specifies -- would otherwise
+    evict each other's index on every alternating run and pay a full split
+    rescan each time.
+    """
+    return Path(cache_dir) / f"{split_name}_pairs_{comm_range_m:g}.npz"
 
 
 def load_or_build_pairs(

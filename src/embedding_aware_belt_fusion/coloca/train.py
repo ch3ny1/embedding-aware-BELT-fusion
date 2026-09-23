@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 
 from embedding_aware_belt_fusion.coloca.backbone import PointPillarsBEVEncoder, bev_feature_size
 from embedding_aware_belt_fusion.coloca.dataset import OPV2VPoseErrorDataset
+from embedding_aware_belt_fusion.coloca.index import pair_cache_path
 from embedding_aware_belt_fusion.coloca.metrics import (
     MetricAccumulator,
     format_metrics,
@@ -59,7 +60,7 @@ def build_datasets(config: Mapping[str, Any]) -> tuple[OPV2VPoseErrorDataset, OP
     common = {
         "root_dir": data_cfg["train_root"],
         "preprocess_params": config["preprocess"],
-        "cache_path": cache_dir / "train_pairs.npz",
+        "cache_path": pair_cache_path(cache_dir, "train", data_cfg["comm_range_m"]),
         "yaw_std_deg": noise_cfg["yaw_std_deg"],
         "comm_range_m": data_cfg["comm_range_m"],
         "pcd_cache_root": data_cfg.get("train_pcd_cache"),

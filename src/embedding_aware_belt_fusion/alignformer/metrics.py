@@ -262,3 +262,30 @@ def yaw_mae_deg(psi_pred: Tensor, psi_true: Tensor) -> float:
     residual = psi_pred - psi_true
     wrapped = torch.atan2(torch.sin(residual), torch.cos(residual))
     return float(torch.rad2deg(wrapped.abs()).mean().item())
+
+
+def averaging_limited_translation_mae_m(
+    per_axis_disagreement_m: float, matched_objects: float
+) -> float:
+    """Translation MAE predicted by averaging the correspondences alone.
+
+    At sigma = 0 the fitted translation is essentially the mean, over the
+    matched objects, of the two agents' disagreement about where each object
+    is. If that disagreement is zero-mean and isotropic with per-axis standard
+    deviation ``s``, the mean over ``n`` correspondences is a 2-D Gaussian with
+    per-axis std ``s / sqrt(n)``, whose norm has the Rayleigh mean
+    ``s / sqrt(n) * sqrt(pi / 2)``.
+
+    This is the floor any estimator built on those correspondences is subject
+    to. Comparing it split-by-split is what separates *the detector disagrees
+    more here* (and the split is genuinely harder) from *the estimator is worse
+    here* -- see ``docs/alignformer_pose_floor.md`` section 1, whose 0.2198 m
+    over 10.92 objects predicts 0.083 m.
+    """
+    if per_axis_disagreement_m < 0:
+        raise ValueError(
+            f"per_axis_disagreement_m must be non-negative, got {per_axis_disagreement_m}"
+        )
+    if matched_objects <= 0:
+        raise ValueError(f"need at least one of the matched objects, got {matched_objects}")
+    return per_axis_disagreement_m / math.sqrt(matched_objects) * math.sqrt(math.pi / 2.0)

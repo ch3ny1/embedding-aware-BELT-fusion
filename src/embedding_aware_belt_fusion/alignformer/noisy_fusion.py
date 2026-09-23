@@ -54,6 +54,13 @@ from embedding_aware_belt_fusion.alignformer.train import embed_batch
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
 from embedding_aware_belt_fusion.coloca.geometry import perturb_pose_2d, relative_pose_error
 
+# A FIXED reporting boundary, independent of whatever range the pair index was
+# built at. Every measurement in docs/alignformer_pose_floor.md is reported
+# either side of 40 m, and now that the index matches OpenCOOD's COM_RANGE the
+# training-range split collapses to "everything"; without this constant the
+# before/after comparison would quietly disappear.
+DIAGNOSTIC_RANGE_M = 40.0
+
 ORACLE = "oracle"
 UNCORRECTED = "uncorrected"
 ALIGNFORMER = "alignformer"
@@ -167,7 +174,7 @@ class _PoseStats:
     """Per-sigma pose error of the estimated correction, on the test split.
 
     Reported next to the predict-zero baseline on the same pairs, and split
-    three ways, because an aggregate hides two different ways of being wrong.
+    several ways, because an aggregate hides distinct ways of being wrong.
 
     - ``unalignable``: the two agents detected no object in common, so no pose
       is recoverable and the only safe answer is the identity correction.
@@ -175,12 +182,17 @@ class _PoseStats:
       (``stage2.is_fallback``), not inferred from a threshold.
     - ``beyond_training_range``: the pair is farther apart than the
       ``comm_range_m`` the pair index was built with, so the model was never
-      trained or validated on anything like it. OpenCOOD's own
-      ``LateFusionDataset`` filters at ``COM_RANGE = 70`` m while
-      ``configs/alignformer.yaml`` builds pairs at 40 m, so a large slice of
-      the test population is out of distribution by construction. Measuring
-      that slice separately is the only way to tell an out-of-domain input
-      apart from a bad estimator.
+      trained or validated on anything like it. This is the guard against a
+      train/test range mismatch -- ``configs/alignformer.yaml`` once built
+      pairs at 40 m while OpenCOOD's ``LateFusionDataset`` admitted every CAV
+      within ``COM_RANGE = 70`` m, which put a third of the evaluated
+      population out of distribution by construction. The two now agree, so
+      this subset should be empty; it stays measured because a future
+      divergence should show up as a number rather than as a mystery.
+    - ``within_40m`` / ``beyond_40m``: the same split at a FIXED boundary
+      (:data:`DIAGNOSTIC_RANGE_M`), which does not move with the config, so the
+      far-pair numbers stay comparable with everything measured before the
+      range was widened.
     """
 
     def __init__(self, training_range_m: float) -> None:
@@ -189,6 +201,8 @@ class _PoseStats:
         self.unalignable = _PoseSubset()
         self.within_training_range = _PoseSubset()
         self.beyond_training_range = _PoseSubset()
+        self.within_40m = _PoseSubset()
+        self.beyond_40m = _PoseSubset()
 
     def update(
         self,
@@ -216,6 +230,10 @@ class _PoseStats:
             self.within_training_range.add(*terms)
         else:
             self.beyond_training_range.add(*terms)
+        if distance_m <= DIAGNOSTIC_RANGE_M:
+            self.within_40m.add(*terms)
+        else:
+            self.beyond_40m.add(*terms)
 
     def compute(self) -> Dict[str, Optional[float]]:
         metrics: Dict[str, Optional[float]] = dict(self.all.compute())
@@ -226,10 +244,16 @@ class _PoseStats:
         metrics["beyond_training_range_fraction"] = (
             self.beyond_training_range.pairs / self.all.pairs if self.all.pairs else None
         )
+        metrics["diagnostic_range_m"] = DIAGNOSTIC_RANGE_M
+        metrics["beyond_40m_fraction"] = (
+            self.beyond_40m.pairs / self.all.pairs if self.all.pairs else None
+        )
         for name, subset in (
             ("unalignable", self.unalignable),
             ("within_training_range", self.within_training_range),
             ("beyond_training_range", self.beyond_training_range),
+            ("within_40m", self.within_40m),
+            ("beyond_40m", self.beyond_40m),
         ):
             for key, value in subset.compute().items():
                 metrics[f"{name}_{key}"] = value

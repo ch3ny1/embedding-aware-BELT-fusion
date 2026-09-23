@@ -43,9 +43,9 @@ data:
   # Built by `python -m embedding_aware_belt_fusion.alignformer.cache`; holds
   # one npz per agent-frame with decoded boxes, scores, gt ids and ROI features.
   cache_root: /media/chenyi/basement2/cache/alignformer
-  # Pair index cache (coloca/index.py). Shared with the CoLoca-QuA baseline:
-  # it is keyed by (root_dir, comm_range_m), which match, so the two agree by
-  # construction rather than by coincidence.
+  # Pair index cache (coloca/index.py), keyed by (root_dir, comm_range_m) in
+  # both the filename and the signature, so this 70 m index and the
+  # CoLoca-QuA baseline's 40 m one coexist instead of evicting each other.
   pair_cache_dir: outputs/coloca/cache
   # OPV2V ships no usable `validate` split on this machine (broken symlink), so
   # a held-out slice of the train scenarios is used instead. Split is by
@@ -54,4 +54,10 @@ data:
   # so the validation scenarios below were never seen by the detector either.
   val_scenario_fraction: 0.15
   split_seed: 0
-  comm_range_m: 40.0
+  # MUST equal opencood.data_utils.datasets.COM_RANGE, which is what
+  # LateFusionDataset admits and therefore what the fused-AP evaluation
+  # actually contains. Built at 40 m (CoLoca-QuA's paper value) this index hid
+  # 35.8% of the training pairs while 33.8% of the evaluated pairs were out of
+  # distribution by construction; see docs/alignformer_pose_floor.md section 6.
+  # tests/test_alignformer_train.py pins the two together.
+  comm_range_m: 70.0

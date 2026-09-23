@@ -156,6 +156,39 @@ def test_the_scenario_split_is_disjoint_and_never_splits_a_scenario_by_frame():
     assert {pair.scenario for pair in val_pairs} == set(val_scenarios)
 
 
+def test_the_pair_index_range_matches_the_evaluation_protocols_communication_range():
+    # The pair index defines the training distribution; OpenCOOD's
+    # LateFusionDataset defines the evaluated one. While the two disagreed,
+    # a third of the evaluated pairs were out of distribution BY CONSTRUCTION
+    # and the same filter hid a third of the training pairs -- a train/test
+    # mismatch that no amount of modelling can answer. They must be equal.
+    import opencood.data_utils.datasets as opencood_datasets
+
+    config = _config()
+
+    assert float(config["data"]["comm_range_m"]) == float(opencood_datasets.COM_RANGE)
+
+
+def test_every_indexed_pair_is_inside_the_configured_communication_range():
+    # Arrange
+    config = _config()
+    limit = float(config["data"]["comm_range_m"])
+    train_pairs, val_pairs, _, _ = build_pair_split(config)
+
+    # Act
+    distances = [
+        math.hypot(pair.cav_pose[0] - pair.ego_pose[0], pair.cav_pose[1] - pair.ego_pose[1])
+        for pair in list(train_pairs) + list(val_pairs)
+    ]
+
+    # Assert
+    assert distances
+    assert max(distances) <= limit
+    # ... and the widened range really did bring in the far pairs, rather than
+    # merely relabelling the same 40 m population.
+    assert max(distances) > 40.0
+
+
 # --- Stage 2: the boxes-only ablation and the pose objective (task 14) -------
 
 

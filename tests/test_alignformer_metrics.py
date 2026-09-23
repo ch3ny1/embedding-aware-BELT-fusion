@@ -205,3 +205,41 @@ def test_nearest_centre_never_picks_a_padded_cav_object():
         torch.ones(1, 1, dtype=torch.bool),
         torch.tensor([[False, True]]),
     ) == (1, 1)
+
+
+def test_the_averaging_limited_prediction_reproduces_the_pose_floor_decomposition():
+    # docs/alignformer_pose_floor.md section 1: a per-axis cross-agent centre
+    # disagreement of 0.2198 m over 10.92 matched objects predicts a 0.083 m
+    # translation MAE from averaging alone. That prediction is what separates
+    # "the detector disagrees more on this split" from "the estimator is worse
+    # on this split", so it has to be one function, not a number re-derived by
+    # hand in each diagnostic.
+    from embedding_aware_belt_fusion.alignformer.metrics import (
+        averaging_limited_translation_mae_m,
+    )
+
+    # Act
+    predicted = averaging_limited_translation_mae_m(0.2198, 10.92)
+
+    # Assert
+    assert predicted == pytest.approx(0.083, abs=5e-4)
+
+
+def test_the_averaging_limited_prediction_falls_as_more_objects_are_matched():
+    from embedding_aware_belt_fusion.alignformer.metrics import (
+        averaging_limited_translation_mae_m,
+    )
+
+    # Four times the objects halves the prediction: it is a 1/sqrt(n) law.
+    assert averaging_limited_translation_mae_m(0.2, 4.0) == pytest.approx(
+        averaging_limited_translation_mae_m(0.2, 16.0) * 2.0
+    )
+
+
+def test_the_averaging_limited_prediction_rejects_an_empty_correspondence_set():
+    from embedding_aware_belt_fusion.alignformer.metrics import (
+        averaging_limited_translation_mae_m,
+    )
+
+    with pytest.raises(ValueError, match="matched objects"):
+        averaging_limited_translation_mae_m(0.2, 0.0)
