@@ -1,0 +1,41 @@
+{
+  "method": "alignformer_stage2",
+  "metric": "shrinkage",
+  "config": "configs/alignformer.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/stage2_B_heading_fold/best.pth",
+  "checkpoint_provenance": {
+    "head": "B",
+    "message_content": "boxes+embeddings",
+    "match_weight": 1.0,
+    "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/stage1/best.pth",
+    "epoch": 30
+  },
+  "calibration": {
+    "tau_translation_m": 0.16569328869575325,
+    "tau_yaw_rad": 0.005046012117928922,
+    "tau_yaw_deg": 0.2891151977291971,
+    "pairs": 4176,
+    "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+    "sigma_m": 0.0
+  },
+  "residual_diagnostics": {
+    "signed_mean_dx_m": 0.00715705007314682,
+    "signed_mean_dy_m": -0.003763458225876093,
+    "signed_mean_dpsi_deg": 0.0077757579274475574,
+    "sem_dx_m": 0.0019153158646076918,
+    "sem_dy_m": 0.0017005219124257565,
+    "sem_dpsi_deg": 0.004472862463444471,
+    "translation_mae_m": 0.11921380460262299,
+    "yaw_mae_deg": 0.16482481360435486
+  }
+}

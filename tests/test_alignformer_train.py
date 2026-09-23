@@ -323,3 +323,46 @@ def test_only_head_b_gets_the_nomatch_suffix():
     )
     assert stage2_output_dir("A", "boxes+embeddings", 0.0).name == "stage2_A_boxes+embeddings"
     assert stage2_output_dir("A", "boxes_only", 0.0).name == "stage2_A_boxes_only"
+
+
+def test_evaluate_pose_scores_the_shrunk_estimate_not_the_raw_one():
+    # The P2 gate and the fused-AP sweep must both see the correction the
+    # method would actually deploy. With tau set far above anything the solver
+    # can emit, every correction is suppressed, so the reported error has to
+    # collapse onto the predict-zero baseline exactly.
+    from embedding_aware_belt_fusion.alignformer.shrinkage import ShrinkageCalibration
+    from embedding_aware_belt_fusion.alignformer.stage2 import (
+        build_stage2_modules,
+        evaluate_pose,
+    )
+
+    torch.manual_seed(0)
+    config = _config()
+    channels, grid = 8, int(config["model"]["output_size"])
+    device = torch.device("cpu")
+    modules = build_stage2_modules(config, channels, device, head="B")
+
+    batch = _batch(2, 5, 6, channels, grid)
+    batch["psi_true"] = torch.tensor([0.03, -0.02])
+    batch["t_true"] = torch.tensor([[0.4, -0.3], [0.1, 0.2]])
+    loader = [batch]
+
+    raw = evaluate_pose(modules, loader, device)
+    suppressed = evaluate_pose(
+        modules, loader, device,
+        shrinkage=ShrinkageCalibration(
+            tau_translation_m=1e6, tau_yaw_rad=1e6,
+            pairs=2, split="synthetic", sigma_m=0.0,
+        ),
+    )
+
+    assert suppressed["yaw_mae_deg"] == pytest.approx(
+        suppressed["predict_zero_yaw_mae_deg"], abs=1e-9
+    )
+    assert suppressed["translation_mae_m"] == pytest.approx(
+        suppressed["predict_zero_translation_mae_m"], abs=1e-9
+    )
+    # And the raw estimate genuinely was something else, or this proves nothing.
+    assert raw["translation_mae_m"] != pytest.approx(
+        suppressed["translation_mae_m"], abs=1e-6
+    )

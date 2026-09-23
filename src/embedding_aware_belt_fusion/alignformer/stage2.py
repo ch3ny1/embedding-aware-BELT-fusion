@@ -65,6 +65,11 @@ from embedding_aware_belt_fusion.alignformer.losses import (
     match_nll,
 )
 from embedding_aware_belt_fusion.alignformer.model import AlignFormerA, AlignFormerB
+from embedding_aware_belt_fusion.alignformer.shrinkage import (
+    ShrinkageCalibration,
+    calibrate_shrinkage,
+    shrink,
+)
 from embedding_aware_belt_fusion.alignformer.train import (
     DEFAULT_NUM_WORKERS,
     GRAD_CLIP,
@@ -327,15 +332,96 @@ def evaluate_pose(
     device: torch.device,
     *,
     ablate_embeddings: bool = False,
+    shrinkage: Optional[ShrinkageCalibration] = None,
 ) -> Dict[str, float]:
-    """Measure pose error, and its predict-zero baseline, over a whole loader."""
+    """Measure pose error, and its predict-zero baseline, over a whole loader.
+
+    ``shrinkage``, when given, is applied to every estimate before it is
+    scored, so the numbers reported are the numbers the fusion stage would
+    actually receive. It is an inference-time step calibrated on validation at
+    sigma = 0, never trained (see ``alignformer.shrinkage``).
+    """
     modules.eval()
     tally = _PoseTally()
     for batch in loader:
         batch = _to_device(batch, device)
         enriched = embed_batch(modules["embedding"], batch, ablate=ablate_embeddings)
-        tally.update(batch, modules["pose"](enriched))
+        estimate = modules["pose"](enriched)
+        if shrinkage is not None:
+            estimate = shrink(estimate, shrinkage)
+        tally.update(batch, estimate)
     return tally.compute()
+
+
+@torch.no_grad()
+def collect_pose_residuals(
+    modules: nn.ModuleDict,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    ablate_embeddings: bool = False,
+) -> Tuple[Tensor, Tensor]:
+    """Signed ``(N, 2)`` translation and ``(N,)`` yaw residuals over a loader.
+
+    Signed, not absolute: the whole point of measuring them is to separate a
+    bias (a non-zero mean) from noise (a zero mean with spread), and an
+    absolute value destroys exactly that distinction. Yaw is wrapped onto
+    ``(-pi, pi]`` so a residual either side of the branch cut is not counted as
+    a full turn.
+    """
+    modules.eval()
+    translations: List[Tensor] = []
+    yaws: List[Tensor] = []
+    for batch in loader:
+        batch = _to_device(batch, device)
+        enriched = embed_batch(modules["embedding"], batch, ablate=ablate_embeddings)
+        estimate = modules["pose"](enriched)
+        residual = estimate.psi - batch["psi_true"]
+        yaws.append(torch.atan2(torch.sin(residual), torch.cos(residual)).cpu())
+        translations.append((estimate.t - batch["t_true"]).cpu())
+    return torch.cat(translations, dim=0), torch.cat(yaws, dim=0)
+
+
+def calibrate_from_loader(
+    modules: nn.ModuleDict,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    ablate_embeddings: bool = False,
+    split: str,
+    sigma_m: float = 0.0,
+) -> Tuple[ShrinkageCalibration, Dict[str, float]]:
+    """Calibrate shrinkage on a loader, and report the residual's signed mean beside it.
+
+    The signed mean is returned rather than discarded because it is the
+    evidence for treating the floor as noise at all: shrinkage is the right
+    treatment for an unbiased-but-imprecise estimator, and a calibration whose
+    own diagnostic says the residual is biased should not be trusted.
+    """
+    residual_t, residual_psi = collect_pose_residuals(
+        modules, loader, device, ablate_embeddings=ablate_embeddings
+    )
+    calibration = calibrate_shrinkage(
+        residual_t,
+        residual_psi,
+        pairs=int(residual_psi.shape[0]),
+        split=split,
+        sigma_m=sigma_m,
+    )
+    count = residual_psi.shape[0]
+    diagnostics = {
+        "signed_mean_dx_m": float(residual_t[:, 0].mean()),
+        "signed_mean_dy_m": float(residual_t[:, 1].mean()),
+        "signed_mean_dpsi_deg": float(torch.rad2deg(residual_psi).mean()),
+        "sem_dx_m": float(residual_t[:, 0].std(unbiased=True) / math.sqrt(count)),
+        "sem_dy_m": float(residual_t[:, 1].std(unbiased=True) / math.sqrt(count)),
+        "sem_dpsi_deg": float(
+            torch.rad2deg(residual_psi).std(unbiased=True) / math.sqrt(count)
+        ),
+        "translation_mae_m": float(torch.linalg.norm(residual_t, dim=-1).mean()),
+        "yaw_mae_deg": float(torch.rad2deg(residual_psi).abs().mean()),
+    }
+    return calibration, diagnostics
 
 
 def _format_pose(metrics: Mapping[str, float]) -> str:

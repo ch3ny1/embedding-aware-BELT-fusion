@@ -7,6 +7,7 @@ from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
 from embedding_aware_belt_fusion.alignformer.procrustes import (
     MIN_MATCH_MASS,
     augment_with_heading,
+    heading_orientation,
     weighted_se2_kabsch,
 )
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
@@ -164,3 +165,55 @@ def test_is_fallback_reads_the_emitted_correction_not_the_confidence():
     )
 
     assert is_fallback(estimate).tolist() == [True, False, False]
+
+
+def test_heading_orientation_folds_a_flipped_candidate_onto_the_reference():
+    # A vehicle box's orientation is only defined modulo pi -- the detector
+    # (configs/alignformer_detector.yaml) has no direction classifier at all,
+    # its anchors are r: [0, 90] -- so a candidate heading pointing the other
+    # way along the same axis describes the SAME box and must be folded back
+    # before it is turned into a heading virtual point.
+    reference = torch.tensor([[0.0, math.pi / 2]])            # (B, M)
+    candidate = torch.tensor([[0.0, math.pi, math.pi / 2, -math.pi / 2]])  # (B, N)
+
+    orientation = heading_orientation(reference, candidate)
+
+    assert orientation.shape == (1, 2, 4)
+    # Row 0 (reference 0 rad): the pi candidate is flipped, the rest are kept
+    # apart from the two perpendicular ones, which are on the boundary.
+    assert orientation[0, 0, 0].item() == 1.0
+    assert orientation[0, 0, 1].item() == -1.0
+    # Row 1 (reference pi/2 rad): -pi/2 is the flipped one.
+    assert orientation[0, 1, 2].item() == 1.0
+    assert orientation[0, 1, 3].item() == -1.0
+
+
+def test_a_flipped_heading_leaves_the_recovered_pose_unchanged():
+    # The whole point of folding: flipping a box's heading by pi describes the
+    # same physical box, so it must not move the recovered SE(2) at all.
+    centres = torch.tensor([[[0.0, 0.0], [10.0, 4.0], [-6.0, 8.0], [15.0, -3.0]]])
+    yaws = torch.tensor([[0.2, 1.1, -2.4, 0.7]])
+    true_psi, true_t = 0.05, (0.8, -0.4)
+
+    target_centres = _apply(true_psi, true_t, centres[0]).unsqueeze(0)
+    target_yaws = yaws + true_psi
+    weights = torch.ones(1, 8)
+
+    def solve(source_yaws):
+        orientation = heading_orientation(target_yaws, source_yaws)
+        direction = torch.stack(
+            [torch.cos(source_yaws), torch.sin(source_yaws)], dim=-1
+        )
+        # One candidate per target row, so the fold is read off the diagonal.
+        folded = torch.diagonal(orientation, dim1=1, dim2=2).unsqueeze(-1) * direction
+        source = torch.cat([centres, centres + 2.0 * folded], dim=1)
+        target = augment_with_heading(target_centres, target_yaws, 2.0)
+        return weighted_se2_kabsch(target, source, weights)
+
+    psi_clean, t_clean = solve(yaws)
+    psi_flipped, t_flipped = solve(yaws + math.pi)
+
+    assert psi_clean.item() == pytest.approx(true_psi, abs=1e-5)
+    assert psi_flipped.item() == pytest.approx(psi_clean.item(), abs=1e-6)
+    assert t_flipped[0, 0].item() == pytest.approx(t_clean[0, 0].item(), abs=1e-5)
+    assert t_flipped[0, 1].item() == pytest.approx(t_clean[0, 1].item(), abs=1e-5)

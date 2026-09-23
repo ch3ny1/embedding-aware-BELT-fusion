@@ -9,6 +9,18 @@ Augmenting each object with a second virtual point at ``centre + lam * heading``
 folds box headings into the same least-squares problem as centres. A useful
 consequence is that a *single* matched object then determines the full SE(2),
 removing the collinearity degeneracy of centre-only Procrustes.
+
+That augmentation is only sound once the heading's pi ambiguity is resolved.
+A vehicle bounding box is symmetric under a 180 degree rotation and the
+detector this project uses estimates no direction at all -- its anchors are
+``r: [0, 90]`` and ``configs/alignformer_detector.yaml`` declares no
+``dir_args`` head -- so the reported yaw fixes the box's *axis*, not which way
+it points. Measured on the validation cache, 20.3% of cross-agent detections
+of the same physical object disagree by ~180 degrees. Left unresolved, each
+such pair displaces a heading virtual point by ``2 * lam``, which was the
+dominant term in AlignFormer's pose-error floor: on oracle correspondences at
+sigma = 0 it cost 0.434 m / 0.244 deg against 0.104 m / 0.138 deg once folded.
+:func:`heading_orientation` is the fold.
 """
 
 from __future__ import annotations
@@ -45,6 +57,37 @@ def augment_with_heading(centres: Tensor, yaws: Tensor, lam: float) -> Tensor:
         )
     direction = torch.stack([torch.cos(yaws), torch.sin(yaws)], dim=-1)
     return torch.cat([centres, centres + lam * direction], dim=1)
+
+
+def heading_orientation(reference_yaws: Tensor, candidate_yaws: Tensor) -> Tensor:
+    """``(B, M, N)`` of +1/-1 folding each candidate heading onto its reference's half-plane.
+
+    ``-1`` marks a candidate pointing the other way along the same axis as the
+    reference it is being compared against, i.e. one the detector reported
+    back-to-front. Multiplying a candidate's unit heading vector by this sign
+    before it is averaged or turned into a virtual point makes the whole
+    heading channel invariant to the ambiguity, which is what the module
+    docstring's 20.3% of flipped detections requires.
+
+    The threshold is exactly perpendicular, so nothing within 90 degrees of the
+    reference is ever moved. The sign is piecewise constant and carries no
+    gradient of its own; gradients still flow through the heading vector it
+    multiplies.
+
+    Parameters
+    ----------
+    reference_yaws: ``(B, M)`` headings to fold onto, in radians.
+    candidate_yaws: ``(B, N)`` headings to fold, in radians.
+    """
+    if reference_yaws.dim() != 2 or candidate_yaws.dim() != 2:
+        raise ValueError(
+            f"expected (B, M) and (B, N) yaws, got {tuple(reference_yaws.shape)} "
+            f"and {tuple(candidate_yaws.shape)}"
+        )
+    alignment = torch.cos(candidate_yaws.unsqueeze(1) - reference_yaws.unsqueeze(2))
+    return torch.where(
+        alignment < 0, -torch.ones_like(alignment), torch.ones_like(alignment)
+    )
 
 
 def weighted_se2_kabsch(

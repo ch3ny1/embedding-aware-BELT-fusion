@@ -48,6 +48,7 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     correct_detections,
     late_fuse,
 )
+from embedding_aware_belt_fusion.alignformer.shrinkage import ShrinkageCalibration, shrink
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 from embedding_aware_belt_fusion.alignformer.train import embed_batch
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
@@ -231,12 +232,19 @@ def run_noise_sweep(
     sigmas: Sequence[float],
     seed: int,
     max_frames: Optional[int] = None,
+    shrinkage: Optional[ShrinkageCalibration] = None,
 ) -> Tuple[Dict[str, List[Tuple[Tensor, Tensor]]], List[Tensor], Dict[str, Dict[str, float]]]:
     """Fuse every frame under every condition; return predictions, truth and pose stats.
 
     Returns ``(predictions_by_condition, ground_truth, pose_stats_by_sigma)``.
     ``ground_truth`` is shared by every condition -- the frames and their labels
     do not change, only the correction applied to the CAV boxes does.
+
+    ``shrinkage``, when given, is applied to every estimate before the boxes
+    are moved, so the ``alignformer`` condition measures what the method would
+    actually deploy. The calibration is fitted on the validation split at
+    sigma = 0 and is the same one at every sigma here -- a per-sigma factor
+    would be fitting the sweep it is being scored on.
     """
     from opencood.utils import box_utils
     from opencood.utils.transformation_utils import x1_to_x2
@@ -307,6 +315,8 @@ def run_noise_sweep(
                 cav_pack["boxes"] = correct_boxes(packs[key]["boxes"], psi_noisy, t_noisy)
 
                 estimate = _estimate(modules, ego_pack, cav_pack, ablate_embeddings)
+                if shrinkage is not None:
+                    estimate = shrink(estimate, shrinkage)
                 aligned.append(
                     correct_detections(noisy_detections, estimate.psi[0], estimate.t[0])
                 )

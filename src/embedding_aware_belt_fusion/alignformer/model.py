@@ -30,6 +30,7 @@ from embedding_aware_belt_fusion.alignformer.head_match import (
 )
 from embedding_aware_belt_fusion.alignformer.procrustes import (
     augment_with_heading,
+    heading_orientation,
     weighted_se2_kabsch,
 )
 from embedding_aware_belt_fusion.alignformer.trunk import AlignFormerTrunk, tokenize
@@ -193,10 +194,18 @@ class AlignFormerB(_Base):
         cav_yaws = batch["cav_boxes"][..., BOX_YAW]
 
         virtual_centres = weights @ cav_centres / safe_mass
-        virtual_direction = (
-            weights @ torch.stack([torch.cos(cav_yaws), torch.sin(cav_yaws)], dim=-1)
-            / safe_mass
-        )
+        # Fold each CAV heading onto the half-plane of the ego object it is
+        # being matched to BEFORE averaging. The detector reports no direction
+        # (procrustes.heading_orientation), so 20.3% of cross-agent detections
+        # of the same object point the opposite way along the same axis;
+        # averaging those raw would cancel real heading evidence and push the
+        # heading virtual point up to 2 * heading_lambda off. The fold has to
+        # happen per (ego row, CAV object) rather than once per CAV object,
+        # because a single row can soft-match CAV boxes that are flipped
+        # differently from one another.
+        orientation = heading_orientation(batch["ego_boxes"][..., BOX_YAW], cav_yaws)
+        cav_direction = torch.stack([torch.cos(cav_yaws), torch.sin(cav_yaws)], dim=-1)
+        virtual_direction = (weights * orientation) @ cav_direction / safe_mass
         # R27 / review MEDIUM-1: atan2's gradient is undefined at exactly
         # (0, 0) -- a mathematical singularity -- and any row with zero
         # soft-match weight (an ordinary padded ego position in a collated

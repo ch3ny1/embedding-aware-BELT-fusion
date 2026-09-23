@@ -307,3 +307,48 @@ def test_fully_empty_row_is_the_identity_correction_with_zero_confidence(model_c
     assert estimate.psi[1].item() == pytest.approx(0.0)
     assert torch.allclose(estimate.t[1], torch.zeros(2))
     assert estimate.confidence[1].item() == pytest.approx(0.0)
+
+
+def test_head_b_is_unmoved_by_flipped_cav_box_headings():
+    # The detector has no direction classifier, so the heading it reports is
+    # only determined modulo pi: measured on the validation cache, 20.3% of
+    # cross-agent detections of the SAME physical object disagree by ~180 deg.
+    # Each such flip displaces a heading virtual point by 2 * heading_lambda,
+    # which is the dominant term in AlignFormer's pose error floor. Flipping a
+    # heading describes the same box, so it must not move the estimate.
+    torch.manual_seed(0)
+    count = 6
+    identity = torch.eye(count).unsqueeze(0)
+
+    centres = torch.tensor([[[0.0, 0.0], [12.0, 3.0], [-8.0, 5.0],
+                             [20.0, -7.0], [4.0, 9.0], [-15.0, -2.0]]])
+    yaws = torch.rand(1, count) * 2 * math.pi
+    cav_boxes = _boxes_from_centres(centres, yaws)
+
+    true_psi, true_t = 0.03, torch.tensor([[0.6, -0.4]])
+    cos, sin = math.cos(true_psi), math.sin(true_psi)
+    rotation = torch.tensor([[cos, -sin], [sin, cos]])
+    ego_boxes = cav_boxes.clone()
+    ego_boxes[..., :2] = centres @ rotation.T + true_t
+    ego_boxes[..., 6] = yaws + true_psi
+
+    # Flip the heading of half the CAV boxes: the same boxes, reported the
+    # other way round along their own axis.
+    flipped = cav_boxes.clone()
+    flipped[0, ::2, 6] = flipped[0, ::2, 6] + math.pi
+
+    model = AlignFormerB(embed_dim=count).eval()
+    model.use_raw_embedding_scores = True
+
+    with torch.no_grad():
+        clean = model(_batch(ego_boxes, cav_boxes,
+                             ego_embeddings=identity.clone(),
+                             cav_embeddings=identity.clone()))
+        halved = model(_batch(ego_boxes, flipped,
+                              ego_embeddings=identity.clone(),
+                              cav_embeddings=identity.clone()))
+
+    assert clean.psi.item() == pytest.approx(true_psi, abs=1e-3)
+    assert halved.psi.item() == pytest.approx(clean.psi.item(), abs=1e-4)
+    assert halved.t[0, 0].item() == pytest.approx(clean.t[0, 0].item(), abs=1e-3)
+    assert halved.t[0, 1].item() == pytest.approx(clean.t[0, 1].item(), abs=1e-3)

@@ -1,7 +1,7 @@
 """AlignFormer evaluation CLI: ``--method`` selects the fusion pipeline,
 ``--metric`` selects what to report (ruling R1).
 
-Two metrics are wired up:
+Five metrics are wired up:
 
 - ``--metric ap`` needs ``--config`` (an OpenCOOD detector hypes yaml) and
   ``--split``, runs the full detect/correct/fuse pipeline over an OPV2V split
@@ -21,6 +21,12 @@ Two metrics are wired up:
   localization error for three conditions at each sigma: plain late fusion on
   the noisy pose, AlignFormer-corrected, and the true-pose oracle. This is the
   number the method exists for; see ``alignformer.noisy_fusion``.
+- ``--metric shrinkage`` needs ``configs/alignformer.yaml`` and one stage-2
+  checkpoint, and writes the calibration ``--metric pose`` and
+  ``--metric noisy_ap`` then consume via ``--shrinkage``. It is measured on the
+  validation split at sigma = 0 only -- the one noise level where the true
+  correction is exactly the identity, so the emitted correction *is* the
+  estimator's residual. See ``alignformer.shrinkage``.
 
 ``ransac`` is a later task's work; the dispatch tables below exist so it slots
 in as a new entry without reshaping the CLI.
@@ -111,8 +117,15 @@ def parse_args() -> argparse.Namespace:
              "fusion step: it scores the correspondence, not fused boxes.",
     )
     parser.add_argument(
-        "--metric", choices=("ap", "top1", "pose", "noisy_ap"), default="ap",
+        "--metric", choices=("ap", "top1", "pose", "noisy_ap", "shrinkage"), default="ap",
         help="What to report.",
+    )
+    parser.add_argument(
+        "--shrinkage", type=Path, default=None,
+        help="calibration JSON from --metric shrinkage. Given, --metric pose and "
+             "--metric noisy_ap shrink every estimated correction by "
+             "max(0, 1 - tau^2 / |x|^2) before scoring or fusing it. Calibrate on "
+             "the validation split only.",
     )
     parser.add_argument(
         "--sweep", type=float, nargs="+", default=list(_DEFAULT_POSE_SWEEP),
@@ -142,11 +155,12 @@ def parse_args() -> argparse.Namespace:
         "top1": ("checkpoint",),
         "pose": ("checkpoint",),
         "noisy_ap": ("split", "checkpoint"),
+        "shrinkage": ("checkpoint",),
     }[args.metric]
     for name in required:
         if getattr(args, name) is None:
             parser.error(f"--metric {args.metric} requires --{name}")
-    if args.metric in ("top1", "noisy_ap") and len(args.checkpoint) != 1:
+    if args.metric in ("top1", "noisy_ap", "shrinkage") and len(args.checkpoint) != 1:
         parser.error(f"--metric {args.metric} takes exactly one --checkpoint")
     return args
 
@@ -449,6 +463,7 @@ def run_pose(args: argparse.Namespace, device) -> Dict:
 
     config = yaml.safe_load(args.config.read_text())
     _, val_pairs, train_scenarios, val_scenarios = build_pair_split(config)
+    shrinkage = _load_shrinkage(args)
 
     loaded = []
     for path in args.checkpoint:
@@ -472,6 +487,7 @@ def run_pose(args: argparse.Namespace, device) -> Dict:
                 metrics = evaluate_pose(
                     modules, loader, device,
                     ablate_embeddings=checkpoint["message_content"] == "boxes_only",
+                    shrinkage=shrinkage,
                 )
                 per_configuration[_configuration_name(checkpoint)].append(metrics)
 
@@ -525,6 +541,7 @@ def run_pose(args: argparse.Namespace, device) -> Dict:
         "val_pairs": len(val_pairs),
         "sweep_sigmas_m": list(args.sweep),
         "noise_seeds": seeds,
+        "shrinkage": None if shrinkage is None else shrinkage.to_dict(),
         "gate": _p2_gate(results),
         "results": results,
     }
@@ -579,6 +596,93 @@ def _p2_gate(results: Dict[str, Dict]) -> Dict:
     }
 
 
+def _load_shrinkage(args: argparse.Namespace):
+    """Read the calibration named by ``--shrinkage``, or ``None`` if it was omitted."""
+    from embedding_aware_belt_fusion.alignformer.shrinkage import ShrinkageCalibration
+
+    if args.shrinkage is None:
+        return None
+    payload = json.loads(args.shrinkage.read_text())
+    return ShrinkageCalibration.from_dict(payload["calibration"])
+
+
+def run_shrinkage(args: argparse.Namespace, device) -> Dict:
+    """Calibrate the shrinkage constant on validation at sigma = 0.
+
+    Sigma = 0 is the only noise level at which the true correction is exactly
+    the identity, so the emitted correction IS the estimator's residual and
+    ``tau`` can be read off it without having to subtract a label. The signed
+    mean of that residual is reported beside ``tau``: shrinkage is the correct
+    treatment for an unbiased-but-imprecise estimator, and if the residual
+    turned out to be biased instead, the right response would be to find the
+    bias, not to shrink it.
+
+    The split is the scenario-disjoint validation slice, never the test split.
+    """
+    import yaml
+    from torch.utils.data import DataLoader
+
+    from embedding_aware_belt_fusion.alignformer.dataset import collate
+    from embedding_aware_belt_fusion.alignformer.stage2 import (
+        calibrate_from_loader,
+        load_stage2,
+    )
+    from embedding_aware_belt_fusion.alignformer.train import (
+        build_eval_dataset,
+        build_pair_split,
+    )
+
+    config = yaml.safe_load(args.config.read_text())
+    _, val_pairs, _, val_scenarios = build_pair_split(config)
+    checkpoint_path = args.checkpoint[0]
+    modules, checkpoint = load_stage2(checkpoint_path, device)
+
+    split = (
+        f"{config['data']['train_root']} :: validation scenarios "
+        f"(scenario-disjoint, val_scenario_fraction="
+        f"{config['data']['val_scenario_fraction']}, split_seed="
+        f"{config['data']['split_seed']})"
+    )
+    dataset = build_eval_dataset(config, val_pairs, 0.0)
+    loader = DataLoader(
+        dataset, batch_size=_TOP1_BATCH_SIZE, num_workers=args.num_workers,
+        collate_fn=collate, pin_memory=True,
+    )
+    calibration, diagnostics = calibrate_from_loader(
+        modules, loader, device,
+        ablate_embeddings=checkpoint["message_content"] == "boxes_only",
+        split=split,
+        sigma_m=0.0,
+    )
+
+    for name in ("dx_m", "dy_m", "dpsi_deg"):
+        mean, sem = diagnostics[f"signed_mean_{name}"], diagnostics[f"sem_{name}"]
+        print(
+            f"  signed mean {name:<9} {mean:+.5f}  95% CI "
+            f"[{mean - 1.96 * sem:+.5f}, {mean + 1.96 * sem:+.5f}]",
+            flush=True,
+        )
+    print(
+        f"  tau_translation={calibration.tau_translation_m:.4f} m  "
+        f"tau_yaw={calibration.tau_yaw_deg:.4f} deg  "
+        f"(translation MAE {diagnostics['translation_mae_m']:.4f} m, "
+        f"yaw MAE {diagnostics['yaw_mae_deg']:.4f} deg)",
+        flush=True,
+    )
+
+    return {
+        "method": "alignformer_stage2",
+        "metric": "shrinkage",
+        "config": str(args.config),
+        "split": split,
+        "val_scenarios": val_scenarios,
+        "checkpoint": str(checkpoint_path.resolve()),
+        "checkpoint_provenance": _pose_provenance(checkpoint),
+        "calibration": calibration.to_dict(),
+        "residual_diagnostics": diagnostics,
+    }
+
+
 def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     """Fused AP under localization error: uncorrected vs AlignFormer vs oracle."""
     import yaml
@@ -602,6 +706,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     model_config = yaml.safe_load(args.alignformer_config.read_text())
     checkpoint_path = args.checkpoint[0]
     modules, checkpoint = load_stage2(checkpoint_path, device)
+    shrinkage = _load_shrinkage(args)
 
     predictions, ground_truth, pose_stats = run_noise_sweep(
         dataset, detector, dataset.post_processor, device,
@@ -612,6 +717,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         sigmas=list(args.sweep),
         seed=int(model_config["train"]["seed"]),
         max_frames=args.max_frames,
+        shrinkage=shrinkage,
     )
 
     ap = {}
@@ -633,6 +739,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         "detector_checkpoint": hypes["detector"]["checkpoint"],
         "pose_checkpoint": str(checkpoint_path.resolve()),
         "pose_checkpoint_provenance": _pose_provenance(checkpoint),
+        "shrinkage": None if shrinkage is None else shrinkage.to_dict(),
         "cav_lidar_range": hypes["preprocess"]["cav_lidar_range"],
         "nms_thresh": dataset.post_processor.params["nms_thresh"],
         "frames": len(ground_truth),
@@ -683,6 +790,7 @@ _METRIC_RUNNERS = {
     "top1": run_top1,
     "pose": run_pose,
     "noisy_ap": _run_noisy_ap,
+    "shrinkage": run_shrinkage,
 }
 
 
