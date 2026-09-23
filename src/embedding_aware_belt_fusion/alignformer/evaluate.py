@@ -716,6 +716,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         output_size=int(model_config["model"]["output_size"]),
         sigmas=list(args.sweep),
         seed=int(model_config["train"]["seed"]),
+        training_comm_range_m=float(model_config["data"]["comm_range_m"]),
         max_frames=args.max_frames,
         shrinkage=shrinkage,
     )

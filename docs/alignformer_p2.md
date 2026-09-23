@@ -1,5 +1,16 @@
 # AlignFormer P2: stage-2 pose training, the boxes-only ablation, and fused AP under localization error
 
+> **Superseded for head B.** The sigma-independent error floor this document
+> reports was diagnosed and fixed in
+> [alignformer_pose_floor.md](alignformer_pose_floor.md): it was noise, not
+> bias, and most of it came from the heading virtual point taking a direction
+> the detector never estimates (20.3% of cross-agent detections of the same
+> object disagree by ~180 deg). With that folded and the remaining noise
+> shrunk, the **P2 gate passes at all seven non-zero sigmas** and AP@0.7 at
+> sigma = 0.2 m is 0.7096 rather than the 0.5419 below. Every head-B number
+> here is the pre-fix value. The head A comparison, the boxes-only ablation and
+> the `match_weight 0` control have not been re-measured and remain as written.
+
 Stage 1 established that the two agents' object sets can be put into
 correspondence (P1: cross-agent Top-1 0.9965). It also established, through the
 association diagnostic, that the *embedding* contributes nothing to that

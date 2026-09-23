@@ -15,6 +15,7 @@ are the four places a bug would be invisible in that output:
 """
 
 import numpy as np
+import pytest
 import torch
 
 from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections
@@ -128,3 +129,28 @@ def test_the_object_set_batch_marks_every_real_object_valid():
     assert batch["cav_roi"].shape == (1, 5, 2, 4, 4)
     assert bool(batch["ego_mask"].all()) and batch["ego_mask"].shape == (1, 3)
     assert bool(batch["cav_mask"].all()) and batch["cav_mask"].shape == (1, 5)
+
+
+def test_the_pose_stats_split_pairs_by_the_training_communication_range():
+    # OpenCOOD's LateFusionDataset admits CAVs out to COM_RANGE = 70 m while
+    # configs/alignformer.yaml builds its pair index at comm_range_m = 40, so a
+    # large slice of the test population is out of distribution by
+    # construction. The sweep has to report that slice separately or an
+    # out-of-domain input is indistinguishable from a bad estimator.
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import _PoseStats
+
+    stats = _PoseStats(40.0)
+    stats.update(0.0, (0.0, 0.0), 0.0, (1.0, 0.0),
+                 fell_back=True, alignable=True, distance_m=12.0)
+    stats.update(0.0, (0.0, 0.0), 0.0, (3.0, 0.0),
+                 fell_back=True, alignable=True, distance_m=55.0)
+
+    metrics = stats.compute()
+
+    assert metrics["pairs"] == 2.0
+    assert metrics["training_comm_range_m"] == 40.0
+    assert metrics["beyond_training_range_fraction"] == 0.5
+    assert metrics["within_training_range_translation_mae_m"] == pytest.approx(1.0)
+    assert metrics["beyond_training_range_translation_mae_m"] == pytest.approx(3.0)
+    # A subset with no members reports None, not a zero it never measured.
+    assert metrics["unalignable_translation_mae_m"] is None

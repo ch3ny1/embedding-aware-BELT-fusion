@@ -126,28 +126,69 @@ def _object_set(
     return batch
 
 
-class _PoseStats:
-    """Per-sigma pose error of the estimated correction, on the test split.
+class _PoseSubset:
+    """Per-pair sums for one subset of the test split.
 
-    Reported next to the predict-zero baseline on the same pairs, and split by
-    whether the two agents detected any object in common -- a pair that shares
-    nothing has no recoverable pose, and the only safe answer on it is the
-    identity correction. Whether it got one is read off the emitted
-    ``(psi, t)`` (``stage2.is_fallback``), not inferred from a threshold.
+    Sums rather than running means, so a subset with a handful of members is
+    weighted by its size and not by how the frames happened to batch.
     """
 
     def __init__(self) -> None:
         self.translation = 0.0
-        self.yaw = 0.0
         self.zero_translation = 0.0
+        self.yaw = 0.0
         self.zero_yaw = 0.0
         self.fallbacks = 0
         self.pairs = 0
-        self.unalignable = 0
-        self.unalignable_translation = 0.0
-        self.unalignable_yaw = 0.0
-        self.unalignable_zero_translation = 0.0
-        self.unalignable_zero_yaw = 0.0
+
+    def add(self, translation, zero_translation, yaw, zero_yaw, fell_back) -> None:
+        self.translation += translation
+        self.zero_translation += zero_translation
+        self.yaw += yaw
+        self.zero_yaw += zero_yaw
+        self.fallbacks += int(fell_back)
+        self.pairs += 1
+
+    def compute(self) -> Dict[str, Optional[float]]:
+        def mean(total: float) -> Optional[float]:
+            return total / self.pairs if self.pairs else None
+
+        return {
+            "pairs": float(self.pairs),
+            "translation_mae_m": mean(self.translation),
+            "predict_zero_translation_mae_m": mean(self.zero_translation),
+            "yaw_mae_deg": mean(self.yaw),
+            "predict_zero_yaw_mae_deg": mean(self.zero_yaw),
+            "fallback_fraction": mean(float(self.fallbacks)),
+        }
+
+
+class _PoseStats:
+    """Per-sigma pose error of the estimated correction, on the test split.
+
+    Reported next to the predict-zero baseline on the same pairs, and split
+    three ways, because an aggregate hides two different ways of being wrong.
+
+    - ``unalignable``: the two agents detected no object in common, so no pose
+      is recoverable and the only safe answer is the identity correction.
+      Whether it got one is read off the emitted ``(psi, t)``
+      (``stage2.is_fallback``), not inferred from a threshold.
+    - ``beyond_training_range``: the pair is farther apart than the
+      ``comm_range_m`` the pair index was built with, so the model was never
+      trained or validated on anything like it. OpenCOOD's own
+      ``LateFusionDataset`` filters at ``COM_RANGE = 70`` m while
+      ``configs/alignformer.yaml`` builds pairs at 40 m, so a large slice of
+      the test population is out of distribution by construction. Measuring
+      that slice separately is the only way to tell an out-of-domain input
+      apart from a bad estimator.
+    """
+
+    def __init__(self, training_range_m: float) -> None:
+        self.training_range_m = training_range_m
+        self.all = _PoseSubset()
+        self.unalignable = _PoseSubset()
+        self.within_training_range = _PoseSubset()
+        self.beyond_training_range = _PoseSubset()
 
     def update(
         self,
@@ -158,6 +199,7 @@ class _PoseStats:
         *,
         fell_back: bool,
         alignable: bool,
+        distance_m: float,
     ) -> None:
         translation = float(np.hypot(t_hat[0] - t_true[0], t_hat[1] - t_true[1]))
         zero_translation = float(np.hypot(t_true[0], t_true[1]))
@@ -166,43 +208,32 @@ class _PoseStats:
         ))))
         zero_yaw = abs(float(np.degrees(np.arctan2(np.sin(psi_true), np.cos(psi_true)))))
 
-        self.translation += translation
-        self.zero_translation += zero_translation
-        self.yaw += yaw
-        self.zero_yaw += zero_yaw
-        self.fallbacks += int(fell_back)
-        self.pairs += 1
+        terms = (translation, zero_translation, yaw, zero_yaw, fell_back)
+        self.all.add(*terms)
         if not alignable:
-            self.unalignable += 1
-            self.unalignable_translation += translation
-            self.unalignable_yaw += yaw
-            self.unalignable_zero_translation += zero_translation
-            self.unalignable_zero_yaw += zero_yaw
+            self.unalignable.add(*terms)
+        if distance_m <= self.training_range_m:
+            self.within_training_range.add(*terms)
+        else:
+            self.beyond_training_range.add(*terms)
 
-    def compute(self) -> Dict[str, float]:
-        def mean(total: float, count: int) -> Optional[float]:
-            return total / count if count else None
-
-        return {
-            "pairs": float(self.pairs),
-            "translation_mae_m": mean(self.translation, self.pairs),
-            "predict_zero_translation_mae_m": mean(self.zero_translation, self.pairs),
-            "yaw_mae_deg": mean(self.yaw, self.pairs),
-            "predict_zero_yaw_mae_deg": mean(self.zero_yaw, self.pairs),
-            "fallback_fraction": mean(float(self.fallbacks), self.pairs),
-            "unalignable_pairs": float(self.unalignable),
-            "unalignable_fraction": mean(float(self.unalignable), self.pairs),
-            "unalignable_translation_mae_m": mean(
-                self.unalignable_translation, self.unalignable
-            ),
-            "unalignable_predict_zero_translation_mae_m": mean(
-                self.unalignable_zero_translation, self.unalignable
-            ),
-            "unalignable_yaw_mae_deg": mean(self.unalignable_yaw, self.unalignable),
-            "unalignable_predict_zero_yaw_mae_deg": mean(
-                self.unalignable_zero_yaw, self.unalignable
-            ),
-        }
+    def compute(self) -> Dict[str, Optional[float]]:
+        metrics: Dict[str, Optional[float]] = dict(self.all.compute())
+        metrics["training_comm_range_m"] = self.training_range_m
+        metrics["unalignable_fraction"] = (
+            self.unalignable.pairs / self.all.pairs if self.all.pairs else None
+        )
+        metrics["beyond_training_range_fraction"] = (
+            self.beyond_training_range.pairs / self.all.pairs if self.all.pairs else None
+        )
+        for name, subset in (
+            ("unalignable", self.unalignable),
+            ("within_training_range", self.within_training_range),
+            ("beyond_training_range", self.beyond_training_range),
+        ):
+            for key, value in subset.compute().items():
+                metrics[f"{name}_{key}"] = value
+        return metrics
 
 
 def _shares_an_object(left: Sequence[Optional[str]], right: Sequence[Optional[str]]) -> bool:
@@ -231,6 +262,7 @@ def run_noise_sweep(
     output_size: int,
     sigmas: Sequence[float],
     seed: int,
+    training_comm_range_m: float,
     max_frames: Optional[int] = None,
     shrinkage: Optional[ShrinkageCalibration] = None,
 ) -> Tuple[Dict[str, List[Tuple[Tensor, Tensor]]], List[Tensor], Dict[str, Dict[str, float]]]:
@@ -263,7 +295,7 @@ def run_noise_sweep(
     ]
     predictions: Dict[str, List[Tuple[Tensor, Tensor]]] = {key: [] for key in conditions}
     ground_truth: List[Tensor] = []
-    stats = {sigma: _PoseStats() for sigma in sigmas}
+    stats = {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
     nms_threshold = postprocessor.params["nms_thresh"]
 
     frame_count = len(dataset) if max_frames is None else min(max_frames, len(dataset))
@@ -331,6 +363,9 @@ def run_noise_sweep(
                     alignable=_shares_an_object(
                         packs["ego"]["gt_ids"], packs[key]["gt_ids"]
                     ),
+                    distance_m=float(np.hypot(
+                        poses[key][0] - ego_pose[0], poses[key][1] - ego_pose[1]
+                    )),
                 )
 
             predictions[condition_key(UNCORRECTED, sigma)].append(
