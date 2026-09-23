@@ -227,6 +227,14 @@ outputs/alignformer/*
 outputs/alignformer/r70/*
 !outputs/alignformer/r70/*_gate.json
 !outputs/alignformer/r70/*_result.json
+# ... and for outputs/alignformer/r140/, the same pipeline re-measured with the
+# per-agent detector widened to the +/-140.8 m range the evaluation and every
+# intermediate-fusion baseline already used. r70/ is KEPT: the difference
+# between the two ranges is itself a result.
+!outputs/alignformer/r140/
+outputs/alignformer/r140/*
+!outputs/alignformer/r140/*_gate.json
+!outputs/alignformer/r140/*_result.json
 # ... and once more for the head-to-head baseline runs, which keep one
 # `*_result.json` per intermediate-fusion method plus the bandwidth
 # measurement. Their logs and any weights stay ignored.

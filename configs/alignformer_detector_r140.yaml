@@ -1,0 +1,146 @@
+# AlignFormer per-agent late-fusion detector, at the FULL +/-140.8 m range.
+#
+# Why this file exists. configs/alignformer_detector.yaml runs at OpenCOOD's
+# stock point_pillar_late_fusion.yaml range of +/-70.4 m in x, but every
+# intermediate-fusion baseline AlignFormer is compared against runs at
+# +/-140.8 m, and the evaluated GT_RANGE
+# (opencood.data_utils.datasets.GT_RANGE) is +/-140 m for all of them. Task 17
+# measured the consequence: 416 of 4152 sampled ground-truth boxes (10.0%) lie
+# beyond |x| = 70.4 m and are invisible to the narrow detector, capping its
+# recall near 90% in every published row. This config is the same detector at
+# the range the evaluation actually uses.
+#
+# The +/-70.4 m config is KEPT, not replaced: the comparison between the two
+# ranges is itself a finding (see
+# .superpowers/sdd/2026-09-17-alignformer-p0-p2/task-18-report.md).
+#
+# Only cav_lidar_range and the output paths differ from the narrow config --
+# pinned by tests/test_alignformer_range.py. In particular the voxel budget is
+# UNCHANGED: 400 randomly sampled OPV2V train agent-frames occupy at most
+# 11,885 pillars at +/-140.8 m (mean 7,481) against 11,535 at +/-70.4 m (mean
+# 7,235), so max_voxel_train = 16000 truncates neither range. OPV2V's LiDAR
+# simply returns few points past 70 m; the extra cost of this range is the BEV
+# grid (704 x 200 cells against 352 x 200), not the pillar count.
+#
+# Trained from scratch by:
+#   python -u scripts/train_late_fusion.py \
+#     --hypes_yaml configs/alignformer_detector_r140.yaml \
+#     --output-dir outputs/alignformer/point_pillar_late_fusion_r140
+name: point_pillar_late_fusion_r140
+
+# Scenario-level 85/15 train/val split of OPV2V train/, materialized as
+# symlink directories by scripts/train_late_fusion.py:build_scenario_split
+# (OPV2V/train/validate on this machine: validate/ is a broken symlink, so
+# validation is a held-out slice of train/, split by scenario -- never by
+# frame, to avoid near-duplicate leakage -- with the same seed as the
+# CoLoca-QuA baseline's split_scenarios(..., val_fraction=0.15, seed=0)).
+# Materialized on the ext4 disk rather than under outputs/: this repository is
+# on an NTFS (ntfs-3g) volume that no longer round-trips symlinks -- the
+# +/-70.4 m run's links now read back as "unsupported reparse tag". Same
+# scenarios either way; scripts/train_late_fusion.py --split-root put them
+# here, and tests/test_alignformer_range.py asserts the two agree name for name.
+root_dir: "/media/chenyi/basement2/cache/opv2v_splits/train"
+validate_dir: "/media/chenyi/basement2/cache/opv2v_splits/val"
+
+yaml_parser: "load_point_pillar_params"
+train_params:
+  batch_size: &batch_size 2
+  epoches: 15
+  eval_freq: 1
+  save_freq: 1
+
+fusion:
+  core_method: 'LateFusionDataset' # LateFusionDataset, EarlyFusionDataset, IntermediateFusionDataset supported
+  args: []
+
+# preprocess-related
+preprocess:
+  # options: BasePreprocessor, VoxelPreprocessor, BevPreprocessor
+  core_method: 'SpVoxelPreprocessor'
+  args:
+    voxel_size: &voxel_size [0.4, 0.4, 4]
+    max_points_per_voxel: 32
+    max_voxel_train: 16000
+    max_voxel_test: 40000
+  # lidar range for each individual cav.
+  cav_lidar_range: &cav_lidar [-140.8, -40, -3, 140.8, 40, 1]
+
+data_augment:
+  - NAME: random_world_flip
+    ALONG_AXIS_LIST: [ 'x' ]
+
+  - NAME: random_world_rotation
+    WORLD_ROT_ANGLE: [ -0.78539816, 0.78539816 ]
+
+  - NAME: random_world_scaling
+    WORLD_SCALE_RANGE: [ 0.95, 1.05 ]
+
+# anchor box related
+postprocess:
+  core_method: 'VoxelPostprocessor' # VoxelPostprocessor, BevPostprocessor supported
+  anchor_args:
+    cav_lidar_range: *cav_lidar
+    l: 3.9
+    w: 1.6
+    h: 1.56
+    r: [0, 90]
+    num: &achor_num 2
+  target_args:
+    pos_threshold: 0.6
+    neg_threshold: 0.45
+    score_threshold: 0.20
+  order: 'hwl' # hwl or lwh
+  max_num: 100 # maximum number of objects in a single frame. use this number to make sure different frames has the same dimension in the same batch
+  nms_thresh: 0.15
+
+# model related
+model:
+  core_method: point_pillar
+  args:
+    voxel_size: *voxel_size
+    lidar_range: *cav_lidar
+    anchor_number: *achor_num
+    pillar_vfe:
+      use_norm: true
+      with_distance: false
+      use_absolute_xyz: true
+      num_filters: [64]
+    point_pillar_scatter:
+      num_features: 64
+
+    base_bev_backbone:
+      layer_nums: [3, 5, 8]
+      layer_strides: [2, 2, 2]
+      num_filters: [64, 128, 256]
+      upsample_strides: [1, 2, 4]
+      num_upsample_filter: [128, 128, 128]
+
+    anchor_num: *achor_num
+
+loss:
+  core_method: point_pillar_loss
+  args:
+    cls_weight: 1.0
+    reg: 2.0
+
+optimizer:
+  core_method: Adam
+  lr: 0.002
+  args:
+    eps: 1e-10
+    weight_decay: 1e-4
+
+lr_scheduler:
+  core_method: multistep #step, multistep and Exponential support
+  gamma: 0.1
+  step_size: [10, 15]
+
+# --- AlignFormer-specific (not part of OpenCOOD's hypes schema) ---
+# Task 18 loads the widened per-agent detector from this path. Trained by
+# scripts/train_late_fusion.py --output-dir
+# outputs/alignformer/point_pillar_late_fusion_r140, 15 epochs, same schedule
+# and same scenario-disjoint split (seed 0) as the +/-70.4 m run, so the two
+# differ only in cav_lidar_range. The epoch below is the lowest-validation-loss
+# checkpoint of the 15; see the task-18 report for the full curve.
+detector:
+  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/point_pillar_late_fusion_r140/net_epoch15.pth"

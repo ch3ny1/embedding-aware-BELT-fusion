@@ -83,6 +83,9 @@ SPLIT_SEED = 0
 
 # Fixed (non-timestamped) output directory so the checkpoint path can be
 # recorded in configs/alignformer_detector.yaml before training finishes.
+# Overridable with --output-dir: the +/-70.4 m and +/-140.8 m detectors have
+# to coexist, since the comparison between the two ranges is itself a result
+# (see .superpowers/sdd/2026-09-17-alignformer-p0-p2/task-18-report.md).
 OUTPUT_DIR = Path("outputs/alignformer/point_pillar_late_fusion")
 
 
@@ -128,6 +131,16 @@ def build_scenario_split(train_root: Path, train_dir: Path, val_dir: Path) -> No
     Idempotent: safe to call every run. Rebuilds from scratch if the set of
     scenarios on disk has ever changed, so it never silently trains on a
     stale split.
+
+    Every link is checked for where it actually points, not merely for whether
+    a name is present. ``Path.exists()`` follows symlinks, so a dangling link
+    reads as absent and the naive ``if not link.exists(): symlink_to(...)``
+    raises ``FileExistsError`` instead of repairing it -- and the name-set
+    fast path this used to take would not even look. That is not theoretical:
+    this repository lives on an NTFS volume that has stopped round-tripping
+    symlinks (they read back as ``unsupported reparse tag``), which is why the
+    wide-range run materializes its split on the ext4 disk via
+    ``--split-root``.
     """
     scenarios = sorted(p.name for p in train_root.iterdir() if p.is_dir())
     if not scenarios:
@@ -136,16 +149,17 @@ def build_scenario_split(train_root: Path, train_dir: Path, val_dir: Path) -> No
     train_scenarios, val_scenarios = split_scenarios(scenarios, VAL_FRACTION, SPLIT_SEED)
 
     for split_dir, names in ((train_dir, train_scenarios), (val_dir, val_scenarios)):
-        existing = {p.name for p in split_dir.iterdir()} if split_dir.exists() else set()
-        if existing == set(names):
-            continue
         split_dir.mkdir(parents=True, exist_ok=True)
+        existing = {p.name for p in split_dir.iterdir()}
         for stale in existing - set(names):
             (split_dir / stale).unlink()
         for name in names:
-            link = split_dir / name
-            if not link.exists():
-                link.symlink_to(train_root / name)
+            link, target = split_dir / name, train_root / name
+            if link.is_symlink() or link.exists():
+                if link.is_symlink() and link.resolve() == target.resolve():
+                    continue
+                link.unlink()
+            link.symlink_to(target)
 
     print(
         f"scenario split: {len(train_scenarios)} train, {len(val_scenarios)} val "
@@ -300,7 +314,7 @@ def install_pcd_cache_shim(
     return stats
 
 
-def install_fixed_output_dir() -> None:
+def install_fixed_output_dir(output_dir: Path = OUTPUT_DIR) -> None:
     """Make OpenCOOD's trainer save to a fixed, predictable directory.
 
     Stock ``train_utils.setup_train`` names the output folder after a
@@ -309,14 +323,17 @@ def install_fixed_output_dir() -> None:
     directory, dump ``hypes`` as ``config.yaml`` inside it) but at a path we
     choose, so ``configs/alignformer_detector.yaml`` can point at
     ``detector.checkpoint`` before training finishes.
+
+    ``output_dir`` is a parameter rather than the module constant so two
+    ranges' detectors can be trained without one overwriting the other.
     """
     from opencood.tools import train_utils
 
     def fixed_setup_train(hypes: dict) -> str:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        with open(OUTPUT_DIR / "config.yaml", "w") as handle:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "config.yaml", "w") as handle:
             yaml.dump(hypes, handle)
-        return str(OUTPUT_DIR)
+        return str(output_dir)
 
     train_utils.setup_train = fixed_setup_train
 
@@ -371,6 +388,22 @@ def parse_args() -> argparse.Namespace:
         help="OpenCOOD-format hypes yaml (a machine-local copy of point_pillar_late_fusion.yaml).",
     )
     parser.add_argument(
+        "--split-root",
+        type=Path,
+        default=SPLIT_ROOT,
+        help="Where the train/val split symlink directories are materialized. The "
+        "default lives in the repository, which is on an NTFS volume that no longer "
+        "round-trips symlinks -- point this at a POSIX filesystem when that bites.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=OUTPUT_DIR,
+        help="Where checkpoints and config.yaml are written. Give each cav_lidar_range "
+        "its own directory: the narrow and wide detectors are separate results and "
+        "neither may overwrite the other.",
+    )
+    parser.add_argument(
         "--verify-shim-iters",
         type=int,
         default=0,
@@ -400,9 +433,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    build_scenario_split(OPV2V_TRAIN_ROOT, TRAIN_SPLIT_DIR, VAL_SPLIT_DIR)
+    train_split_dir = args.split_root / "train"
+    val_split_dir = args.split_root / "val"
+    build_scenario_split(OPV2V_TRAIN_ROOT, train_split_dir, val_split_dir)
     stats = install_pcd_cache_shim(
         cache_root=args.pcd_cache_root,
+        split_dir=train_split_dir,
         skip_preflight=args.skip_shim_preflight,
     )
 
@@ -410,7 +446,7 @@ def main() -> None:
         run_shim_verification(args.hypes_yaml, args.verify_shim_iters, stats)
         return
 
-    install_fixed_output_dir()
+    install_fixed_output_dir(args.output_dir)
 
     # Import after the shims are installed but before any dataset is built,
     # so DataLoader worker processes (forked from this one) inherit the
