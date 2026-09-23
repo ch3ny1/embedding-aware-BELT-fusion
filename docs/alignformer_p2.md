@@ -607,6 +607,24 @@ No shrinkage in this table: it is calibrated per estimator, so applying one conf
 | 1.5 | 3445 | 0.2880 | 2.0195 | 0.4358 | 1.1962 | 37 | 0.019 |
 | 2 | 3445 | 0.3262 | 2.6933 | 0.4447 | 1.6053 | 37 | 0.019 |
 
+**Read this table against the gate.** The P2 gate is a *validation*
+measurement, and on validation head B's yaw MAE is below predict-zero at all
+seven non-zero sigmas. On the **test** split the same criterion would **fail at
+sigma = 0.2 and 0.4 m** -- 0.3605 against 0.1610 and 0.3817 against 0.3241 --
+and pass from 0.6 m up. Translation passes everywhere (0.2509 against 0.2797 at
+sigma = 0.2). This is the same finding as the validation-vs-test gap in
+[alignformer_pose_floor.md](alignformer_pose_floor.md) section 6, seen through
+the gate: the test split is harder, and `tau`, calibrated on validation, is a
+little small there. It does not change the AP result -- fused AP@0.7 at
+sigma = 0.2 is 0.7488 against the uncorrected 0.5846 -- because IoU is far more
+sensitive to a centre offset than to a few tenths of a degree of heading. But
+the gate should not be read as a claim about the test split, and it is not one.
+
+The fallback column is the *exact-identity* rate, which at sigma = 0 is
+shrinkage doing its job: **66.1%** of test pairs receive no correction at all
+there, against 19.4% at sigma = 0.2 and ~2% above 1 m. The 37 structurally
+unalignable pairs (1.07%) are a separate, much smaller population.
+
 ## Training curve: stage2_B_boxes+embeddings
 
 | Epoch | sigma (m) | Train loss | Train corner (m) | Val corner (m) | Val translation MAE (m) | Val yaw MAE (deg) | Match temperature |
