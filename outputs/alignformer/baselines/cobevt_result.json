@@ -1,0 +1,287 @@
+{
+  "method": "cobevt",
+  "label": "CoBEVT",
+  "metric": "baseline_noisy_ap",
+  "notes": "OpenCOOD point_pillar_cobevt, no-compression variant.",
+  "config": "/media/chenyi/Elements1/models/opv2v/pointpillar_cobevt/no_compression/config.yaml",
+  "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_cobevt/no_compression/net_epoch19.pth",
+  "model_core_method": "point_pillar_cobevt",
+  "fusion_core_method": "IntermediateFusionDataset",
+  "disabled_wild_setting": {
+    "async": false,
+    "async_overhead": 100,
+    "backbone_delay": 10,
+    "data_size": 1.06,
+    "loc_err": false,
+    "ryp_std": 0.2,
+    "seed": 20,
+    "transmission_speed": 27,
+    "xyz_std": 0.2
+  },
+  "cav_lidar_range": [
+    -140.8,
+    -38.4,
+    -3,
+    140.8,
+    38.4,
+    1
+  ],
+  "score_threshold": 0.25,
+  "nms_thresh": 0.15,
+  "max_cav": 5,
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+  "sweep_sigmas_m": [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.5,
+    2.0
+  ],
+  "seed": 0,
+  "run": {
+    "frames": 2170,
+    "native_gt_boxes": 32604,
+    "late_fusion_gt_boxes": 33089,
+    "frames_where_gt_conventions_differ": 363,
+    "empty_prediction_cells": 7,
+    "ground_truth_invariance_checks": 15190,
+    "seconds": 9175.21165728569
+  },
+  "ground_truth_conventions": {
+    "native": "OpenCOOD IntermediateFusionDataset: every CAV's objects range-filtered in the EGO frame.",
+    "late_fusion": "OpenCOOD LateFusionDataset: every CAV's objects range-filtered in that CAV's OWN frame, then projected to ego. This is the convention AlignFormer's AP is measured under."
+  },
+  "ap": {
+    "native": {
+      "sigma_0m": {
+        "ap_30": {
+          "global_sorted": 0.9308699843616223,
+          "frame_order": 0.9181640114449096
+        },
+        "ap_50": {
+          "global_sorted": 0.9286994032664476,
+          "frame_order": 0.913794370841545
+        },
+        "ap_70": {
+          "global_sorted": 0.8960258230901696,
+          "frame_order": 0.8618434831539863
+        }
+      },
+      "sigma_0.2m": {
+        "ap_30": {
+          "global_sorted": 0.926690847921251,
+          "frame_order": 0.9154003295894135
+        },
+        "ap_50": {
+          "global_sorted": 0.9193224683691448,
+          "frame_order": 0.903089529002721
+        },
+        "ap_70": {
+          "global_sorted": 0.7994266949764156,
+          "frame_order": 0.7556718091439136
+        }
+      },
+      "sigma_0.4m": {
+        "ap_30": {
+          "global_sorted": 0.8983586894776205,
+          "frame_order": 0.8850843830598936
+        },
+        "ap_50": {
+          "global_sorted": 0.837667176755181,
+          "frame_order": 0.8149919064685227
+        },
+        "ap_70": {
+          "global_sorted": 0.5490695626491688,
+          "frame_order": 0.5079875020045707
+        }
+      },
+      "sigma_0.6m": {
+        "ap_30": {
+          "global_sorted": 0.8093241090408565,
+          "frame_order": 0.7886627834080928
+        },
+        "ap_50": {
+          "global_sorted": 0.6747062335208658,
+          "frame_order": 0.640150870309935
+        },
+        "ap_70": {
+          "global_sorted": 0.38866948309157956,
+          "frame_order": 0.3426602849434403
+        }
+      },
+      "sigma_0.8m": {
+        "ap_30": {
+          "global_sorted": 0.6863791126616692,
+          "frame_order": 0.6702414184545252
+        },
+        "ap_50": {
+          "global_sorted": 0.5291041785513397,
+          "frame_order": 0.49904348737687576
+        },
+        "ap_70": {
+          "global_sorted": 0.30467804478990124,
+          "frame_order": 0.2692390744332579
+        }
+      },
+      "sigma_1m": {
+        "ap_30": {
+          "global_sorted": 0.5927544101751963,
+          "frame_order": 0.5775844937205932
+        },
+        "ap_50": {
+          "global_sorted": 0.4526921921153581,
+          "frame_order": 0.4276484289330379
+        },
+        "ap_70": {
+          "global_sorted": 0.27994223965047793,
+          "frame_order": 0.2463514114504846
+        }
+      },
+      "sigma_1.5m": {
+        "ap_30": {
+          "global_sorted": 0.4512416697096732,
+          "frame_order": 0.4419788013439382
+        },
+        "ap_50": {
+          "global_sorted": 0.3588313443794662,
+          "frame_order": 0.3436481351163964
+        },
+        "ap_70": {
+          "global_sorted": 0.2585849588633841,
+          "frame_order": 0.2335770470129889
+        }
+      },
+      "sigma_2m": {
+        "ap_30": {
+          "global_sorted": 0.39277727072182866,
+          "frame_order": 0.38575880902783233
+        },
+        "ap_50": {
+          "global_sorted": 0.3281710929184051,
+          "frame_order": 0.3146742984559557
+        },
+        "ap_70": {
+          "global_sorted": 0.25910657537859183,
+          "frame_order": 0.23376404156422917
+        }
+      }
+    },
+    "late_fusion": {
+      "sigma_0m": {
+        "ap_30": {
+          "global_sorted": 0.9112074346331989,
+          "frame_order": 0.8988594464327494
+        },
+        "ap_50": {
+          "global_sorted": 0.9091059498680872,
+          "frame_order": 0.8946050990667755
+        },
+        "ap_70": {
+          "global_sorted": 0.8772925139880589,
+          "frame_order": 0.8438056103308715
+        }
+      },
+      "sigma_0.2m": {
+        "ap_30": {
+          "global_sorted": 0.9067672843451984,
+          "frame_order": 0.8959456162462787
+        },
+        "ap_50": {
+          "global_sorted": 0.8996893080449336,
+          "frame_order": 0.8839557642104653
+        },
+        "ap_70": {
+          "global_sorted": 0.7823983235664304,
+          "frame_order": 0.7391739238559321
+        }
+      },
+      "sigma_0.4m": {
+        "ap_30": {
+          "global_sorted": 0.8794818551968552,
+          "frame_order": 0.8664681383148555
+        },
+        "ap_50": {
+          "global_sorted": 0.8204976935199404,
+          "frame_order": 0.7980935706764496
+        },
+        "ap_70": {
+          "global_sorted": 0.5376700085462874,
+          "frame_order": 0.49709121648697413
+        }
+      },
+      "sigma_0.6m": {
+        "ap_30": {
+          "global_sorted": 0.7926275362405921,
+          "frame_order": 0.7721675692636953
+        },
+        "ap_50": {
+          "global_sorted": 0.6610307816050394,
+          "frame_order": 0.626831702193938
+        },
+        "ap_70": {
+          "global_sorted": 0.3806732338475632,
+          "frame_order": 0.3353190657115691
+        }
+      },
+      "sigma_0.8m": {
+        "ap_30": {
+          "global_sorted": 0.6720360590399019,
+          "frame_order": 0.6556427203690668
+        },
+        "ap_50": {
+          "global_sorted": 0.5181958413090797,
+          "frame_order": 0.48826920818533365
+        },
+        "ap_70": {
+          "global_sorted": 0.2983352917078683,
+          "frame_order": 0.2632324369374195
+        }
+      },
+      "sigma_1m": {
+        "ap_30": {
+          "global_sorted": 0.580923640641641,
+          "frame_order": 0.5657204960086157
+        },
+        "ap_50": {
+          "global_sorted": 0.4438144458742948,
+          "frame_order": 0.4188763748074481
+        },
+        "ap_70": {
+          "global_sorted": 0.274628720015937,
+          "frame_order": 0.2412848678272235
+        }
+      },
+      "sigma_1.5m": {
+        "ap_30": {
+          "global_sorted": 0.44268388738485204,
+          "frame_order": 0.43319476678169944
+        },
+        "ap_50": {
+          "global_sorted": 0.352178738148141,
+          "frame_order": 0.3368683163840872
+        },
+        "ap_70": {
+          "global_sorted": 0.25376194458073487,
+          "frame_order": 0.2288564587511902
+        }
+      },
+      "sigma_2m": {
+        "ap_30": {
+          "global_sorted": 0.3854708437616159,
+          "frame_order": 0.3780949626378804
+        },
+        "ap_50": {
+          "global_sorted": 0.32210999677866636,
+          "frame_order": 0.30840469522878144
+        },
+        "ap_70": {
+          "global_sorted": 0.25437773327231594,
+          "frame_order": 0.2290296021917017
+        }
+      }
+    }
+  }
+}

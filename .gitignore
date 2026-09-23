@@ -227,6 +227,13 @@ outputs/alignformer/*
 outputs/alignformer/r70/*
 !outputs/alignformer/r70/*_gate.json
 !outputs/alignformer/r70/*_result.json
+# ... and once more for the head-to-head baseline runs, which keep one
+# `*_result.json` per intermediate-fusion method plus the bandwidth
+# measurement. Their logs and any weights stay ignored.
+!outputs/alignformer/baselines/
+outputs/alignformer/baselines/*
+!outputs/alignformer/baselines/*_gate.json
+!outputs/alignformer/baselines/*_result.json
 *.pth
 *.pt
 *.ckpt

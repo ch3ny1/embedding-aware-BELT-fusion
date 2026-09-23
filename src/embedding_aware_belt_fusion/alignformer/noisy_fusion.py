@@ -319,6 +319,7 @@ def run_noise_sweep(
     ]
     predictions: Dict[str, List[Tuple[Tensor, Tensor]]] = {key: [] for key in conditions}
     ground_truth: List[Tensor] = []
+    intermediate_ground_truth: List[Tensor] = []
     stats = {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
     nms_threshold = postprocessor.params["nms_thresh"]
 
@@ -327,7 +328,9 @@ def run_noise_sweep(
 
     for index in range(frame_count):
         scenario, timestamp = _frame_identity(dataset, index)
-        sample, poses, ego_pose = _build_test_frame(dataset, index, scenario, timestamp)
+        sample, poses, ego_pose, base = _build_test_frame(
+            dataset, index, scenario, timestamp
+        )
         batch = dataset.collate_batch_test([sample])
 
         detections: Dict[str, AgentDetections] = {}
@@ -404,6 +407,9 @@ def run_noise_sweep(
             gt_corners.detach().cpu().numpy(), order=postprocessor.params["order"]
         )
         ground_truth.append(torch.from_numpy(gt_boxes).float())
+        intermediate_ground_truth.append(
+            _intermediate_convention_ground_truth(dataset, base, ego_pose)
+        )
 
         if (index + 1) % _PROGRESS_INTERVAL == 0:
             rate = (index + 1) / (time.time() - started)
@@ -413,7 +419,47 @@ def run_noise_sweep(
         predictions,
         ground_truth,
         {f"sigma_{sigma:g}m": tally.compute() for sigma, tally in stats.items()},
+        intermediate_ground_truth,
     )
+
+
+def _intermediate_convention_ground_truth(dataset, base_data_dict, ego_pose) -> Tensor:
+    """The ground truth ``IntermediateFusionDataset`` would report for this frame.
+
+    Every in-range CAV's object list is referenced to the **ego** pose (rather
+    than to the CAV's own, which is what late fusion does), unioned by object
+    id, and masked to ``GT_RANGE`` in x and y -- exactly
+    ``IntermediateFusionDataset.__getitem__`` followed by
+    ``generate_gt_bbx``. Measured, not assumed, so the baseline comparison can
+    state how much the convention is worth instead of hoping it is nothing.
+    """
+    import math
+
+    import opencood.data_utils.datasets as opencood_datasets
+    from opencood.utils import box_utils
+
+    order = dataset.post_processor.params["order"]
+    centers, object_ids = [], []
+    for content in base_data_dict.values():
+        pose = content["params"]["lidar_pose"]
+        if math.hypot(pose[0] - ego_pose[0], pose[1] - ego_pose[1]) > \
+                opencood_datasets.COM_RANGE:
+            continue
+        boxes, mask, ids = dataset.post_processor.generate_object_center(
+            [content], list(ego_pose)
+        )
+        centers.append(boxes[mask == 1])
+        object_ids += ids
+
+    if not centers:
+        return torch.zeros((0, 7), dtype=torch.float32)
+
+    stacked = torch.from_numpy(np.vstack(centers)).float()
+    stacked = stacked[[object_ids.index(x) for x in set(object_ids)]]
+    if stacked.shape[0] == 0:
+        return torch.zeros((0, 7), dtype=torch.float32)
+    corners = box_utils.boxes_to_corners_3d(stacked, order)
+    return stacked[box_utils.get_mask_for_boxes_within_range_torch(corners)]
 
 
 def _estimate(modules, ego_pack, cav_pack, ablate: bool):

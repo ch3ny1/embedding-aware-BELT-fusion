@@ -38,6 +38,7 @@ oracle, across a localization-noise sweep.
 | Does the embedding help? | **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
 | **mAP under localization error** (the number the project needs) | **AlignFormer recovers 75-81% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.43 to +0.57 AP@0.7** on the 2170-frame test split, and **+0.16 at sigma = 0.2 m** where it used to lose. At sigma = 0 it still costs **0.070**. |
+| **Head-to-head against intermediate fusion** (the claim the project exists to make) | **Beaten on the clean rows, ahead of the whole field from sigma = 0.6 m, at 1,227x to 5,112x fewer bytes.** Six of seven baselines outscore AlignFormer at sigma = 0 and 0.2 m; from 0.4 m it leads all but V2X-ViT (a tie there), and from 0.6 m it leads every one. All seven were run locally under this sweep and this evaluator -- no published number is quoted. See [below](#head-to-head-against-intermediate-fusion). |
 
 ### The headline
 
@@ -660,6 +661,369 @@ unalignable pairs (1.07%) are a separate, much smaller population.
 | 29 | 1.931 | 2.1561 | 2.1025 | 0.9353 | 0.1557 | 0.2040 | 0.02125 |
 | 30 | 2.000 | 2.1706 | 2.1166 | 0.9357 | 0.1558 | 0.2040 | 0.02125 |
 
+## Head-to-head against intermediate fusion
+
+This is the comparison the project exists to produce, and the claim it tests is
+**robustness per byte**: under one noise sweep, one evaluator and one ground
+truth, AlignFormer's late fusion should retain more AP@0.7 than
+intermediate-fusion methods that transmit dense BEV feature maps. It is
+explicitly **not** a claim about clean AP, and the clean row below is a loss.
+
+**Everything here was run locally.** Published numbers are not quoted beside
+ours anywhere: different detectors, splits and noise conventions make that
+meaningless, and [the design spec](superpowers/specs/2026-09-17-alignformer-design.md)
+forbids it. Seven trained intermediate-fusion checkpoints already on this
+machine were re-run on the same 2170-frame OPV2V test split, under the same
+sigma sweep with `sigma_yaw(deg) = sigma_xy(m)` on the CAV pose only, and
+scored by the same `alignformer/fusion.py::average_precision`.
+
+The perturbation is not merely the same *distribution* -- it is the same
+*draw*. `alignformer/baselines.py` takes each CAV's displacement from
+`noisy_fusion._sweep_rng(seed, sigma, frame, agent)` with this project's seed
+and AlignFormer's own agent ordering, so on any given frame a baseline sees the
+metre-for-metre displacement AlignFormer saw. The comparison is paired.
+
+### AP@0.7 under the sweep
+
+| sigma (m) | **AlignFormer** | late fusion (uncorrected) | V2X-ViT | CoAlign (fusion only) | CoBEVT | AttFuse | Where2comm | F-Cooper | V2VAM |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | **0.8068** | 0.8764 | 0.8174 | 0.8831 | 0.8773 | 0.8638 | 0.7849 | 0.8402 | 0.8975 |
+| 0.2 | **0.7488** | 0.5846 | 0.7894 | 0.7889 | 0.7824 | 0.7758 | 0.7117 | 0.7117 | 0.8006 |
+| 0.4 | **0.7410** | 0.3069 | 0.7319 | 0.6150 | 0.5377 | 0.5983 | 0.5851 | 0.4445 | 0.5702 |
+| 0.6 | **0.7412** | 0.2106 | 0.6732 | 0.5324 | 0.3807 | 0.5002 | 0.4695 | 0.2858 | 0.4109 |
+| 0.8 | **0.7404** | 0.1785 | 0.6250 | 0.5090 | 0.2983 | 0.4648 | 0.4106 | 0.2037 | 0.3385 |
+| 1 | **0.7386** | 0.1690 | 0.6027 | 0.5028 | 0.2746 | 0.4533 | 0.3894 | 0.1788 | 0.3181 |
+| 1.5 | **0.7326** | 0.1737 | 0.5675 | 0.5023 | 0.2538 | 0.4447 | 0.3851 | 0.1506 | 0.3410 |
+| 2 | **0.7046** | 0.1831 | 0.5515 | 0.5057 | 0.2544 | 0.4481 | 0.4106 | 0.1469 | 0.3741 |
+
+| Baseline | sigma where AlignFormer overtakes it | sigmas where the baseline wins |
+|---|---|---|
+| V2X-ViT | 0.4 m | 0, 0.2 |
+| CoAlign (fusion only) | 0.4 m | 0, 0.2 |
+| CoBEVT | 0.4 m | 0, 0.2 |
+| AttFuse | 0.4 m | 0, 0.2 |
+| Where2comm | 0 m | none |
+| F-Cooper | 0.2 m | 0 |
+| V2VAM | 0.4 m | 0, 0.2 |
+
+Three things this says, in the order they matter.
+
+**AlignFormer is beaten on the clean and near-clean rows, and by most of the
+field.** At sigma = 0 six of the seven baselines score above it (V2VAM 0.8975,
+CoAlign 0.8831, CoBEVT 0.8773 against AlignFormer's 0.8068), and at sigma =
+0.2 m the same six still do. That is the expected shape -- late fusion does not
+beat intermediate fusion on clean AP, and this work does not claim it does --
+but it is compounded here by AlignFormer's own sigma = 0 regression against
+uncorrected late fusion (0.8068 against 0.8764), which is carried into this
+table rather than hidden from it.
+
+**From sigma = 0.4 m upward AlignFormer leads every baseline, and the lead
+widens.** Against the six weaker baselines the 0.4 m lead is already large
+(+0.126 over CoAlign, +0.297 over F-Cooper) and it grows: at 1.0 m the margin
+over them runs +0.235 (CoAlign) to +0.560 (F-Cooper). Against **V2X-ViT** the
+0.4 m margin is only **+0.009**, which caveat 4 below shows is inside the
+ground-truth-convention band; from 0.6 m the margin is +0.068, then +0.136 at
+1.0 m and +0.153 at 2.0 m, all of which are well outside it. **Read the 0.4 m
+row against V2X-ViT as a tie, and 0.6 m as the first sigma at which AlignFormer
+leads the whole field.**
+
+**V2X-ViT is a real robustness baseline and the others are not close to it.**
+It retains 67% of its clean AP@0.7 at sigma = 2 m where CoBEVT retains 29% and
+F-Cooper 17%. That reproduces, locally and under our own convention, the thing
+V2X-ViT is known for. AlignFormer retains 87%.
+
+### Retention: AP@0.7 as a fraction of each method's own clean score
+
+| sigma (m) | **AlignFormer** | V2X-ViT | CoAlign (fusion only) | CoBEVT | AttFuse | Where2comm | F-Cooper | V2VAM |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.2 | **93%** | 97% | 89% | 89% | 90% | 91% | 85% | 89% |
+| 0.4 | **92%** | 90% | 70% | 61% | 69% | 75% | 53% | 64% |
+| 0.6 | **92%** | 82% | 60% | 43% | 58% | 60% | 34% | 46% |
+| 0.8 | **92%** | 76% | 58% | 34% | 54% | 52% | 24% | 38% |
+| 1 | **92%** | 74% | 57% | 31% | 52% | 50% | 21% | 35% |
+| 1.5 | **91%** | 69% | 57% | 29% | 51% | 49% | 18% | 38% |
+| 2 | **87%** | 67% | 57% | 29% | 52% | 52% | 17% | 42% |
+
+Retention is the fairer axis for a robustness claim, because it quotients out
+the clean-AP advantage the baselines start with -- including the part of that
+advantage AlignFormer's detector can never recover (see the caveats). On it,
+AlignFormer is ahead of every baseline at every sigma from 0.4 m up, and the
+only method in the same region is V2X-ViT.
+
+### Bytes per frame per agent
+
+Measured, not asserted, on both sides. For each baseline a forward hook on the
+model's own fusion site records the per-agent tensor the fusion stage consumes;
+for AlignFormer the object count is read off the cached detections the sweep
+actually transmits (mean **13.06** objects per agent, never truncated at the
+64-object budget), times the 7-float box plus 128-float embedding. Both at
+float32, which is what the tensors are at runtime; neither side is credited
+with a quantizer that is not in the measured pipeline.
+
+| Method | What crosses the wire | Bytes / frame / agent | vs AlignFormer |
+|---|---|---:|---:|
+| **AlignFormer** | 13.06 boxes+embeddings x 540 B (7 box floats + 128 embedding floats, float32) | **7,051** | 1x |
+| AlignFormer, boxes only | 13.06 boxes x 28 B | 366 | 0.05x |
+| V2X-ViT | BEV feature 256x48x176 float32 | 8,650,752 | 1,227x |
+| CoAlign (fusion only) | BEV feature 64x100x352 float32 | 9,011,200 | 1,278x |
+| CoBEVT | BEV feature 256x96x352 float32 | 34,603,008 | 4,908x |
+| AttFuse | BEV feature 64x100x352 float32 | 9,011,200 | 1,278x |
+| Where2comm | BEV feature 64x192x704 float32 | 34,603,008 | 4,908x |
+| Where2comm, after its own communication mask | selected cells only (rate 0.211) | 7,300,874 | 1,035x |
+| F-Cooper | BEV feature 256x100x352 float32 | 36,044,800 | 5,112x |
+| V2VAM | BEV feature 256x50x176 float32 | 9,011,200 | 1,278x |
+
+The baselines are charged the *smallest* tensor from which the ego could
+reconstruct their contribution -- every one of these models shares one encoder,
+so a receiver holding the first tensor the fusion stage consumes can run the
+rest of the chain itself. Charging them for every fused scale would have
+inflated the ratio. As an external cross-check,
+`/media/chenyi/Elements1/models/opv2v/feature_stats_bwinf.txt`, written by an
+earlier unrelated Where2comm experiment on this machine, records 221.15 KB per
+agent for its *selected* features; our Where2comm-after-mask figure is 7.30 MB
+because that earlier measurement counts non-zero elements rather than the dense
+tensor that must actually be addressed and sent.
+
+**The claim as it stands: three orders of magnitude fewer bytes, and more
+AP@0.7 than any of them at every sigma at or above 0.4 m.** Against the
+robustness SOTA specifically: 1,227x fewer bytes, and ahead from 0.6 m upward
+by a margin larger than any measurement artefact identified below.
+
+### All three IoU thresholds
+
+| Method | sigma (m) | AP@0.3 | AP@0.5 | AP@0.7 |
+|---|---:|---:|---:|---:|
+| AlignFormer | 0 | 0.9092 | 0.8882 | 0.8068 |
+| AlignFormer | 0.2 | 0.9087 | 0.8840 | 0.7488 |
+| AlignFormer | 0.4 | 0.9073 | 0.8787 | 0.7410 |
+| AlignFormer | 0.6 | 0.9042 | 0.8742 | 0.7412 |
+| AlignFormer | 0.8 | 0.9039 | 0.8747 | 0.7404 |
+| AlignFormer | 1 | 0.8998 | 0.8672 | 0.7386 |
+| AlignFormer | 1.5 | 0.8945 | 0.8638 | 0.7326 |
+| AlignFormer | 2 | 0.8850 | 0.8470 | 0.7046 |
+| V2X-ViT | 0 | 0.9199 | 0.9125 | 0.8174 |
+| V2X-ViT | 0.2 | 0.9162 | 0.9035 | 0.7894 |
+| V2X-ViT | 0.4 | 0.9104 | 0.8883 | 0.7319 |
+| V2X-ViT | 0.6 | 0.8905 | 0.8552 | 0.6732 |
+| V2X-ViT | 0.8 | 0.8696 | 0.8264 | 0.6250 |
+| V2X-ViT | 1 | 0.8436 | 0.8031 | 0.6027 |
+| V2X-ViT | 1.5 | 0.7854 | 0.7513 | 0.5675 |
+| V2X-ViT | 2 | 0.7448 | 0.7149 | 0.5515 |
+| CoAlign (fusion only) | 0 | 0.9295 | 0.9260 | 0.8831 |
+| CoAlign (fusion only) | 0.2 | 0.9284 | 0.9200 | 0.7889 |
+| CoAlign (fusion only) | 0.4 | 0.9195 | 0.8687 | 0.6150 |
+| CoAlign (fusion only) | 0.6 | 0.8881 | 0.7899 | 0.5324 |
+| CoAlign (fusion only) | 0.8 | 0.8412 | 0.7287 | 0.5090 |
+| CoAlign (fusion only) | 1 | 0.7988 | 0.6920 | 0.5028 |
+| CoAlign (fusion only) | 1.5 | 0.7166 | 0.6400 | 0.5023 |
+| CoAlign (fusion only) | 2 | 0.6729 | 0.6118 | 0.5057 |
+| CoBEVT | 0 | 0.9112 | 0.9091 | 0.8773 |
+| CoBEVT | 0.2 | 0.9068 | 0.8997 | 0.7824 |
+| CoBEVT | 0.4 | 0.8795 | 0.8205 | 0.5377 |
+| CoBEVT | 0.6 | 0.7926 | 0.6610 | 0.3807 |
+| CoBEVT | 0.8 | 0.6720 | 0.5182 | 0.2983 |
+| CoBEVT | 1 | 0.5809 | 0.4438 | 0.2746 |
+| CoBEVT | 1.5 | 0.4427 | 0.3522 | 0.2538 |
+| CoBEVT | 2 | 0.3855 | 0.3221 | 0.2544 |
+| AttFuse | 0 | 0.9228 | 0.9182 | 0.8638 |
+| AttFuse | 0.2 | 0.9211 | 0.9105 | 0.7758 |
+| AttFuse | 0.4 | 0.9106 | 0.8616 | 0.5983 |
+| AttFuse | 0.6 | 0.8752 | 0.7774 | 0.5002 |
+| AttFuse | 0.8 | 0.8189 | 0.7034 | 0.4648 |
+| AttFuse | 1 | 0.7699 | 0.6619 | 0.4533 |
+| AttFuse | 1.5 | 0.6789 | 0.5974 | 0.4447 |
+| AttFuse | 2 | 0.6359 | 0.5727 | 0.4481 |
+| Where2comm | 0 | 0.9176 | 0.9087 | 0.7849 |
+| Where2comm | 0.2 | 0.9157 | 0.9000 | 0.7117 |
+| Where2comm | 0.4 | 0.9117 | 0.8703 | 0.5851 |
+| Where2comm | 0.6 | 0.8925 | 0.8112 | 0.4695 |
+| Where2comm | 0.8 | 0.8662 | 0.7579 | 0.4106 |
+| Where2comm | 1 | 0.8415 | 0.7282 | 0.3894 |
+| Where2comm | 1.5 | 0.7966 | 0.6976 | 0.3851 |
+| Where2comm | 2 | 0.7756 | 0.6945 | 0.4106 |
+| F-Cooper | 0 | 0.9032 | 0.9001 | 0.8402 |
+| F-Cooper | 0.2 | 0.9015 | 0.8918 | 0.7117 |
+| F-Cooper | 0.4 | 0.8886 | 0.8259 | 0.4445 |
+| F-Cooper | 0.6 | 0.8372 | 0.6837 | 0.2858 |
+| F-Cooper | 0.8 | 0.7461 | 0.5457 | 0.2037 |
+| F-Cooper | 1 | 0.6640 | 0.4681 | 0.1788 |
+| F-Cooper | 1.5 | 0.4895 | 0.3463 | 0.1506 |
+| F-Cooper | 2 | 0.3987 | 0.2934 | 0.1469 |
+| V2VAM | 0 | 0.9426 | 0.9383 | 0.8975 |
+| V2VAM | 0.2 | 0.9426 | 0.9320 | 0.8006 |
+| V2VAM | 0.4 | 0.9342 | 0.8711 | 0.5702 |
+| V2VAM | 0.6 | 0.8953 | 0.7530 | 0.4109 |
+| V2VAM | 0.8 | 0.8316 | 0.6480 | 0.3385 |
+| V2VAM | 1 | 0.7725 | 0.5923 | 0.3181 |
+| V2VAM | 1.5 | 0.6853 | 0.5388 | 0.3410 |
+| V2VAM | 2 | 0.6553 | 0.5422 | 0.3741 |
+
+### Caveats, in descending order of how much they could matter
+
+**1. AlignFormer's detector is blind where the baselines are not, and this is
+not corrected.** AlignFormer's late-fusion detector runs at
+`cav_lidar_range = [-70.4, -40, -3, 70.4, 40, 1]`; every baseline runs at
++/-140.8 m in x. The evaluated ground truth is `GT_RANGE = [-140, -40, -3, 140,
+40, 1]` for **both**, because that is the range
+`base_postprocessor.generate_gt_bbx` filters to regardless of fusion type.
+**10.0% of the evaluated ground-truth boxes lie beyond |x| = 70.4 m**
+(416 of 4152, counted over 272 evenly spaced test frames), so AlignFormer's
+recall ceiling on this split is about 90% while the baselines' is 100%. That
+handicap is in every AlignFormer row of this table. It makes the clean-AP
+deficit partly an artefact of detector configuration rather than of late
+fusion, and it makes the robustness lead an *under*-statement rather than an
+over-statement.
+
+**2. Every baseline was evaluated under noise it may not have been trained
+under -- which is the standard benchmark protocol, and is still worth saying.**
+V2X-ViT's and Where2comm's stored configs carry
+`wild_setting: {loc_err: true, xyz_std: 0.2, ryp_std: 0.2, async: true}`, so
+those two were plausibly trained (and certainly evaluated by their authors)
+with localization noise; CoAlign, CoBEVT, AttFuse, F-Cooper and V2VAM carry no
+noise setting at all. That setting is **disabled** here for every method, so
+the only noise in the sweep is ours. The consequence is asymmetric and runs
+against the baselines: a method trained clean and tested noisy is not being
+shown at its best. V2X-ViT's strong showing is consistent with it being the one
+that was.
+
+**3. "CoAlign" here is CoAlign's fusion, not CoAlign's robustness mechanism.**
+`external/OpenCOOD/opencood/models/point_pillar_coalign.py` states in its own
+header that it contains the multiscale intermediate feature fusion **only**,
+and that the agent-object pose graph -- which is the part of CoAlign that
+corrects pose error -- is not included. This row should not be read as a
+measurement of CoAlign's published method. It is the most direct competitor on
+paper and the one this comparison is least able to represent.
+
+**4. The two fusion families have different ground-truth conventions, and one
+had to be chosen.** `generate_object_center` filters objects against
+`GT_RANGE` in the *reference agent's* frame and in 3D, so late fusion (each CAV
+referenced to itself) and intermediate fusion (every CAV referenced to the ego)
+admit different object sets wherever agents differ in heading or elevation --
+on **363 of 2170 frames**, 33,089 boxes against 32,604. Every number in the
+tables above uses the **late-fusion** set, which is the convention every AP in
+this project has always been measured on, and
+`baselines.late_fusion_convention_ground_truth` was verified to reproduce
+`LateFusionDataset`'s own ground truth exactly on 61 sampled frames. The size
+of the thumb this puts on the scale is measured rather than assumed:
+
+| Baseline | frames where the two GT sets differ | AP@0.7 sigma 0 (late-fusion GT) | AP@0.7 sigma 0 (native GT) | AP@0.7 sigma 1 (late-fusion GT) | AP@0.7 sigma 1 (native GT) |
+|---|---:|---:|---:|---:|---:|
+| V2X-ViT | 363 | 0.8174 | 0.8340 | 0.6027 | 0.6150 |
+| CoAlign (fusion only) | 363 | 0.8831 | 0.9012 | 0.5028 | 0.5108 |
+| CoBEVT | 363 | 0.8773 | 0.8960 | 0.2746 | 0.2799 |
+| AttFuse | 363 | 0.8638 | 0.8812 | 0.4533 | 0.4609 |
+| Where2comm | 363 | 0.7849 | 0.8003 | 0.3894 | 0.3973 |
+| F-Cooper | 363 | 0.8402 | 0.8559 | 0.1788 | 0.1816 |
+| V2VAM | 363 | 0.8975 | 0.9132 | 0.3181 | 0.3233 |
+
+Under the intermediate convention every baseline gains 0.008 to 0.019
+AP@0.7 while AlignFormer gains only 0.001 to 0.007, so the choice made here is
+worth about **0.010 in AlignFormer's favour**. That is enough to matter in
+exactly one place -- the sigma = 0.4 m row against V2X-ViT -- and nowhere else.
+The same sweep re-run to emit both:
+
+| sigma (m) | AlignFormer (late-fusion GT) | AlignFormer (intermediate GT) | V2X-ViT (late-fusion GT) | V2X-ViT (intermediate GT) |
+|---|---:|---:|---:|---:|
+| 0 | 0.8068 | 0.8077 | 0.8174 | 0.8340 |
+| 0.2 | 0.7488 | 0.7511 | 0.7894 | 0.8054 |
+| 0.4 | 0.7410 | 0.7462 | 0.7319 | 0.7467 |
+| 0.6 | 0.7412 | 0.7467 | 0.6732 | 0.6872 |
+| 0.8 | 0.7404 | 0.7458 | 0.6250 | 0.6378 |
+| 1 | 0.7386 | 0.7439 | 0.6027 | 0.6150 |
+| 1.5 | 0.7326 | 0.7383 | 0.5675 | 0.5788 |
+| 2 | 0.7046 | 0.7111 | 0.5515 | 0.5623 |
+
+At sigma = 0.4 m AlignFormer leads V2X-ViT by +0.009 under the late-fusion
+ground truth and *trails* it by 0.0005 under the intermediate one: a dead heat
+either way. At 0.6 m it leads by +0.068 and +0.060 respectively, and the lead
+only grows. **So the claim that survives both conventions is: AlignFormer ties
+V2X-ViT at sigma = 0.4 m and leads it from 0.6 m upward.** Against the other
+six baselines the 0.4 m lead is between +0.137 and +0.294 under either
+convention, so no crossover point there is in question. The AlignFormer rows in
+that table reproduce `p2_r70_noisy_ap_result.json` to the last digit, which is
+also the check that adding the second ground truth changed nothing else.
+
+**5. Checkpoint provenance cannot be fully verified.** These are third-party
+weights already present on this machine. Several of their stored `config.yaml`
+files name the *test* split as `root_dir`, which is what OpenCOOD's own
+`inference.py` writes back, but it means training provenance cannot be
+established from the files alone. The clean-AP column should be read with that
+in mind; the robustness column, which is about degradation from each method's
+own clean score, is less exposed to it.
+
+**6. One noise seed.** Each cell is a single draw, as in the rest of this
+document's AP tables. The pose sweep uses three; the AP sweeps use one.
+
+### Provenance
+
+| Method | Checkpoint | Trained with pose noise? | Notes |
+|---|---|---|---|
+| V2X-ViT | `net_epoch60.pth` | yes -- {'loc_err': True, 'xyz_std': 0.2, 'ryp_std': 0.2} | OpenCOOD point_pillar_transformer (V2X-ViT). Its own config carries wild_setting async=True loc_err=True xyz_std=0.2 ryp_std=0.2, i.e. it was trained/evaluated under OpenCOOD's noisy setting; that setting is disabled for this sweep. |
+| CoAlign (fusion only) | `net_epoch15.pth` | no | OpenCOOD point_pillar_coalign. The model file states in its header that it contains CoAlign's multiscale intermediate feature fusion ONLY, not the agent-object pose graph that is CoAlign's pose-error correction. This row is therefore CoAlign's fusion, not CoAlign's robustness mechanism. |
+| CoBEVT | `net_epoch19.pth` | no | OpenCOOD point_pillar_cobevt, no-compression variant. |
+| AttFuse | `latest.pth` | no | OpenCOOD point_pillar_intermediate (AttFuse / the OPV2V paper's attentive fusion). |
+| Where2comm | `net_epoch50.pth` | yes -- {'loc_err': True, 'xyz_std': 0.2, 'ryp_std': 0.2} | OpenCOOD point_pillar_where2comm. Its config carries wild_setting async=True loc_err=True; disabled for this sweep. |
+| F-Cooper | `latest.pth` | no | OpenCOOD point_pillar_fcooper (maxout spatial fusion). |
+| V2VAM | `latest.pth` | no | OpenCOOD point_pillar_intermediate_V2VAM, no-compression. |
+
+### Baselines that could not be run, and why
+
+Three rows are missing, and the reason is the same in each case: the model code
+is not in this repository's OpenCOOD submodule, and `external/OpenCOOD` is not
+ours to modify.
+
+| Checkpoint | `model.core_method` | Why not run |
+|---|---|---|
+| `ermvp` | `point_pillar_ermvp` | No `opencood/models/point_pillar_ermvp.py` in this fork. Its config also sets `max_cav: 2`, below the 5 in-range CAVs this split reaches. |
+| `comamba` | `point_pillar_opv2v_comamba` | No such module in this fork. |
+| `pointpillar_mamba` | `point_pillar_mamba_simple` | No such module in this fork. |
+
+V2VAM **is** in the table, but only after two dead imports in
+`point_pillar_intermediate_V2VAM.py` were satisfied in memory:
+`opencood.models.sub_modules.noise` does not exist in this fork and
+`fuse_modules.self_attn` has been trimmed of `regroup`. Neither name is used
+anywhere below its import line, so `baselines._shim_missing_v2vam_import` binds
+stubs that **raise if called**, and the model's computation is untouched. The
+result JSON records the shim.
+
+### Reproducing
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
+export PYTHONPATH=src:external/OpenCOOD
+
+# One sweep per baseline (~35 min each alone on an RTX 4090; they are
+# independent and were run concurrently).
+for b in v2xvit coalign cobevt attfuse where2comm fcooper v2vam; do
+  python -m embedding_aware_belt_fusion.alignformer.baselines --baseline $b \
+    --output outputs/alignformer/baselines/${b}_result.json
+done
+
+# Bytes per frame per agent, both sides
+python -m embedding_aware_belt_fusion.alignformer.bandwidth --frames 100 \
+  --output outputs/alignformer/baselines/bandwidth_result.json
+
+# AlignFormer's own sweep, re-run to emit BOTH ground-truth conventions, so
+# caveat 4 is measured rather than argued. Its `ap` block reproduces
+# p2_r70_noisy_ap_result.json exactly.
+O=outputs/alignformer/r70
+python -m embedding_aware_belt_fusion.alignformer.evaluate \
+  --config configs/alignformer_detector.yaml \
+  --split /media/chenyi/Elements1/Dataset/OPV2V/test \
+  --metric noisy_ap --alignformer-config configs/alignformer.yaml \
+  --checkpoint $O/stage2_B_boxes+embeddings/best.pth \
+  --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 \
+  --shrinkage $O/shrinkage_B_calibration_result.json \
+  --output outputs/alignformer/baselines/alignformer_gt_conventions_result.json
+
+# Every table above is rendered from those JSONs
+python scripts/summarize_alignformer_baselines.py \
+  --alignformer $O/p2_r70_noisy_ap_result.json \
+  --baselines outputs/alignformer/baselines/{v2xvit,coalign,cobevt,attfuse,where2comm,fcooper,v2vam}_result.json \
+  --bandwidth outputs/alignformer/baselines/bandwidth_result.json \
+  --alignformer-gt-conventions outputs/alignformer/baselines/alignformer_gt_conventions_result.json
+```
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.
@@ -722,6 +1086,14 @@ Four things follow, in priority order:
   [alignformer_pose_floor.md](alignformer_pose_floor.md) section 6; not
   corrected, because correcting it would mean calibrating on test.
 - One noise seed for the AP sweep, three for the pose sweep.
-- The V2X-ViT comparison (published noisy AP@0.7 0.614 on OPV2V) is still not
-  apples-to-apples: that number is under V2X-ViT's own noise convention and
-  detector and has to be re-run locally before it can stand beside these.
+- **Done, and it changed the framing.** V2X-ViT and six other
+  intermediate-fusion baselines were re-run locally under this sweep and this
+  evaluator; see [Head-to-head against intermediate
+  fusion](#head-to-head-against-intermediate-fusion). No published number is
+  quoted anywhere. What is left open from it: AlignFormer's detector runs at
+  half the baselines' x-range and cannot see 10% of the evaluated ground truth
+  (caveat 1 there); CoAlign is represented by its fusion module only, because
+  this OpenCOOD fork does not ship its pose graph (caveat 3); and FreeAlign,
+  the closest competitor in kind, cannot be run as published on this machine --
+  porting its training-free matcher onto our own detections is the recommended
+  P3 item.

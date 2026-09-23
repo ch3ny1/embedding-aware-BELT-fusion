@@ -1,0 +1,288 @@
+{
+  "method": "where2comm",
+  "label": "Where2comm",
+  "metric": "baseline_noisy_ap",
+  "notes": "OpenCOOD point_pillar_where2comm. Its config carries wild_setting async=True loc_err=True; disabled for this sweep.",
+  "config": "/media/chenyi/Elements1/models/opv2v/pointpillar_where2comm/config.yaml",
+  "checkpoint": "/media/chenyi/Elements1/models/opv2v/pointpillar_where2comm/net_epoch50.pth",
+  "model_core_method": "point_pillar_where2comm",
+  "fusion_core_method": "IntermediateFusionDataset",
+  "disabled_wild_setting": {
+    "async": true,
+    "async_mode": "sim",
+    "async_overhead": 100,
+    "backbone_delay": 10,
+    "data_size": 1.06,
+    "loc_err": true,
+    "ryp_std": 0.2,
+    "seed": 20,
+    "transmission_speed": 27,
+    "xyz_std": 0.2
+  },
+  "cav_lidar_range": [
+    -140.8,
+    -38.4,
+    -3,
+    140.8,
+    38.4,
+    1
+  ],
+  "score_threshold": 0.27,
+  "nms_thresh": 0.15,
+  "max_cav": 100,
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+  "sweep_sigmas_m": [
+    0,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0,
+    1.5,
+    2.0
+  ],
+  "seed": 0,
+  "run": {
+    "frames": 2170,
+    "native_gt_boxes": 32604,
+    "late_fusion_gt_boxes": 33089,
+    "frames_where_gt_conventions_differ": 363,
+    "empty_prediction_cells": 0,
+    "ground_truth_invariance_checks": 15190,
+    "seconds": 6279.828280210495
+  },
+  "ground_truth_conventions": {
+    "native": "OpenCOOD IntermediateFusionDataset: every CAV's objects range-filtered in the EGO frame.",
+    "late_fusion": "OpenCOOD LateFusionDataset: every CAV's objects range-filtered in that CAV's OWN frame, then projected to ego. This is the convention AlignFormer's AP is measured under."
+  },
+  "ap": {
+    "native": {
+      "sigma_0m": {
+        "ap_30": {
+          "global_sorted": 0.9350312870724584,
+          "frame_order": 0.9008959343393044
+        },
+        "ap_50": {
+          "global_sorted": 0.9259216248462531,
+          "frame_order": 0.8847458522951244
+        },
+        "ap_70": {
+          "global_sorted": 0.8003205456842422,
+          "frame_order": 0.7122055971641308
+        }
+      },
+      "sigma_0.2m": {
+        "ap_30": {
+          "global_sorted": 0.9331409611314376,
+          "frame_order": 0.8984366228089258
+        },
+        "ap_50": {
+          "global_sorted": 0.9171374979504783,
+          "frame_order": 0.8709370758160488
+        },
+        "ap_70": {
+          "global_sorted": 0.7258240776199179,
+          "frame_order": 0.6304420243337439
+        }
+      },
+      "sigma_0.4m": {
+        "ap_30": {
+          "global_sorted": 0.9289915377350026,
+          "frame_order": 0.8929437568810306
+        },
+        "ap_50": {
+          "global_sorted": 0.8869002336882195,
+          "frame_order": 0.831753949500076
+        },
+        "ap_70": {
+          "global_sorted": 0.5967466014027054,
+          "frame_order": 0.4982898800004342
+        }
+      },
+      "sigma_0.6m": {
+        "ap_30": {
+          "global_sorted": 0.9092845724792393,
+          "frame_order": 0.86598680637075
+        },
+        "ap_50": {
+          "global_sorted": 0.8267532082726552,
+          "frame_order": 0.7540185829959543
+        },
+        "ap_70": {
+          "global_sorted": 0.4789401888140581,
+          "frame_order": 0.37871663004213485
+        }
+      },
+      "sigma_0.8m": {
+        "ap_30": {
+          "global_sorted": 0.8828365930462274,
+          "frame_order": 0.8267530001781684
+        },
+        "ap_50": {
+          "global_sorted": 0.7724955650265732,
+          "frame_order": 0.6827888365609907
+        },
+        "ap_70": {
+          "global_sorted": 0.4188807737452335,
+          "frame_order": 0.31676881075564833
+        }
+      },
+      "sigma_1m": {
+        "ap_30": {
+          "global_sorted": 0.8576454834360727,
+          "frame_order": 0.7846707920158125
+        },
+        "ap_50": {
+          "global_sorted": 0.7422807785221264,
+          "frame_order": 0.635489062363421
+        },
+        "ap_70": {
+          "global_sorted": 0.39725216409635716,
+          "frame_order": 0.2905263446418482
+        }
+      },
+      "sigma_1.5m": {
+        "ap_30": {
+          "global_sorted": 0.811569335509376,
+          "frame_order": 0.6912697686376084
+        },
+        "ap_50": {
+          "global_sorted": 0.711030253150556,
+          "frame_order": 0.5669321181294242
+        },
+        "ap_70": {
+          "global_sorted": 0.39296327827274635,
+          "frame_order": 0.2667523892204057
+        }
+      },
+      "sigma_2m": {
+        "ap_30": {
+          "global_sorted": 0.789984314552329,
+          "frame_order": 0.6507104889564369
+        },
+        "ap_50": {
+          "global_sorted": 0.7074195760738176,
+          "frame_order": 0.54753643285321
+        },
+        "ap_70": {
+          "global_sorted": 0.41866304739625604,
+          "frame_order": 0.2754582674332301
+        }
+      }
+    },
+    "late_fusion": {
+      "sigma_0m": {
+        "ap_30": {
+          "global_sorted": 0.917641018592875,
+          "frame_order": 0.8832734851458532
+        },
+        "ap_50": {
+          "global_sorted": 0.9086590616230563,
+          "frame_order": 0.8672915006871086
+        },
+        "ap_70": {
+          "global_sorted": 0.7848958233124438,
+          "frame_order": 0.6967324566625674
+        }
+      },
+      "sigma_0.2m": {
+        "ap_30": {
+          "global_sorted": 0.9156931072795693,
+          "frame_order": 0.8807079748218833
+        },
+        "ap_50": {
+          "global_sorted": 0.8999561754713695,
+          "frame_order": 0.8535827145883469
+        },
+        "ap_70": {
+          "global_sorted": 0.7117274663518343,
+          "frame_order": 0.6162530337378308
+        }
+      },
+      "sigma_0.4m": {
+        "ap_30": {
+          "global_sorted": 0.9117002259091026,
+          "frame_order": 0.8755239201488879
+        },
+        "ap_50": {
+          "global_sorted": 0.8703445731849602,
+          "frame_order": 0.8152174594186596
+        },
+        "ap_70": {
+          "global_sorted": 0.5851086252323561,
+          "frame_order": 0.4870139734854195
+        }
+      },
+      "sigma_0.6m": {
+        "ap_30": {
+          "global_sorted": 0.8924555785880467,
+          "frame_order": 0.8491084006938876
+        },
+        "ap_50": {
+          "global_sorted": 0.8112495105900395,
+          "frame_order": 0.7382538741736717
+        },
+        "ap_70": {
+          "global_sorted": 0.46949772460886163,
+          "frame_order": 0.3697240561999901
+        }
+      },
+      "sigma_0.8m": {
+        "ap_30": {
+          "global_sorted": 0.8662119984210825,
+          "frame_order": 0.8103279927192548
+        },
+        "ap_50": {
+          "global_sorted": 0.7578971285510487,
+          "frame_order": 0.6682430936054379
+        },
+        "ap_70": {
+          "global_sorted": 0.410589176826589,
+          "frame_order": 0.30940045781373615
+        }
+      },
+      "sigma_1m": {
+        "ap_30": {
+          "global_sorted": 0.8415203600456601,
+          "frame_order": 0.7689470222560157
+        },
+        "ap_50": {
+          "global_sorted": 0.7282213256196384,
+          "frame_order": 0.6221479000531887
+        },
+        "ap_70": {
+          "global_sorted": 0.38940403218104325,
+          "frame_order": 0.2838813365279913
+        }
+      },
+      "sigma_1.5m": {
+        "ap_30": {
+          "global_sorted": 0.7966340088321628,
+          "frame_order": 0.6775206661819477
+        },
+        "ap_50": {
+          "global_sorted": 0.6976421008553358,
+          "frame_order": 0.5551566881714125
+        },
+        "ap_70": {
+          "global_sorted": 0.3851361152913694,
+          "frame_order": 0.2605015587820435
+        }
+      },
+      "sigma_2m": {
+        "ap_30": {
+          "global_sorted": 0.7756036076111158,
+          "frame_order": 0.6373769371344127
+        },
+        "ap_50": {
+          "global_sorted": 0.6944772018631972,
+          "frame_order": 0.5361084778571052
+        },
+        "ap_70": {
+          "global_sorted": 0.410583962100895,
+          "frame_order": 0.2691306306003528
+        }
+      }
+    }
+  }
+}

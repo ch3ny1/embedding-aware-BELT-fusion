@@ -184,14 +184,18 @@ def _frame_identity(dataset, index: int) -> Tuple[str, str]:
 
 def _build_test_frame(
     dataset, index: int, scenario: str, timestamp: str
-) -> Tuple[Dict[str, dict], Dict[str, List[float]], List[float]]:
+) -> Tuple[Dict[str, dict], Dict[str, List[float]], List[float], Dict]:
     """Reimplement ``LateFusionDataset.get_item_test`` with a reproducible seed.
 
-    Returns ``(frame, lidar_poses, ego_lidar_pose)``. The raw poses come back
-    alongside the processed frame because ``collate_batch_test`` keeps only the
-    fields it knows about, and the noisy sweep needs the un-collated pose to
-    perturb -- re-reading it would mean a second ``retrieve_base_data`` and a
-    second point-cloud decode per frame.
+    Returns ``(frame, lidar_poses, ego_lidar_pose, base_data_dict)``. The raw
+    poses come back alongside the processed frame because
+    ``collate_batch_test`` keeps only the fields it knows about, and the noisy
+    sweep needs the un-collated pose to perturb -- re-reading it would mean a
+    second ``retrieve_base_data`` and a second point-cloud decode per frame.
+    The raw ``base_data_dict`` comes back for the same reason: the fused-AP
+    sweep scores its predictions against a second, intermediate-fusion ground
+    truth as well, and that one is built from the un-processed per-CAV object
+    lists rather than from the collated frame.
 
     OpenCOOD's own ``__getitem__`` gives no hook to reseed between agents, so
     this replicates its ego-selection / communication-range / per-agent
@@ -228,7 +232,7 @@ def _build_test_frame(
         frame[key] = processed
         poses[key] = list(cav_pose)
 
-    return frame, poses, list(ego_lidar_pose)
+    return frame, poses, list(ego_lidar_pose), base_data_dict
 
 
 def _cav_content(entry: Dict, device) -> Dict:
@@ -271,7 +275,7 @@ def run_late_fusion_clean(
 
     for index in range(frame_count):
         scenario, timestamp = _frame_identity(dataset, index)
-        sample, _, _ = _build_test_frame(dataset, index, scenario, timestamp)
+        sample, _, _, _ = _build_test_frame(dataset, index, scenario, timestamp)
         batch = dataset.collate_batch_test([sample])
 
         corrected = []
@@ -708,7 +712,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     modules, checkpoint = load_stage2(checkpoint_path, device)
     shrinkage = _load_shrinkage(args)
 
-    predictions, ground_truth, pose_stats = run_noise_sweep(
+    predictions, ground_truth, pose_stats, intermediate_truth = run_noise_sweep(
         dataset, detector, dataset.post_processor, device,
         modules=modules,
         ablate_embeddings=checkpoint["message_content"] == "boxes_only",
@@ -721,13 +725,16 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         shrinkage=shrinkage,
     )
 
-    ap = {}
+    ap, ap_intermediate_gt = {}, {}
     for name, frames in predictions.items():
         ap[name] = _ap_report(frames, ground_truth)
+        ap_intermediate_gt[name] = _ap_report(frames, intermediate_truth)
         print(
             f"  {name:<32} AP@0.3={ap[name]['ap_30']['global_sorted']:.4f} "
             f"AP@0.5={ap[name]['ap_50']['global_sorted']:.4f} "
-            f"AP@0.7={ap[name]['ap_70']['global_sorted']:.4f}",
+            f"AP@0.7={ap[name]['ap_70']['global_sorted']:.4f} "
+            f"(intermediate-GT AP@0.7="
+            f"{ap_intermediate_gt[name]['ap_70']['global_sorted']:.4f})",
             flush=True,
         )
 
@@ -752,6 +759,19 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         "ap": ap,
+        # The same predictions scored against the ground truth OpenCOOD's
+        # IntermediateFusionDataset would report, so the head-to-head table
+        # against intermediate-fusion baselines can say how much the choice of
+        # convention is worth. `ap` above is unchanged and remains the headline.
+        "ap_intermediate_convention_gt": ap_intermediate_gt,
+        "ground_truth_boxes": sum(int(g.shape[0]) for g in ground_truth),
+        "intermediate_convention_ground_truth_boxes": sum(
+            int(g.shape[0]) for g in intermediate_truth
+        ),
+        "frames_where_gt_conventions_differ": sum(
+            1 for a, b in zip(ground_truth, intermediate_truth)
+            if a.shape[0] != b.shape[0]
+        ),
         "pose": pose_stats,
     }
 
