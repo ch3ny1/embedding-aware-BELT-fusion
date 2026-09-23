@@ -111,7 +111,7 @@ trade it exists to make, and it is what keeps the sigma = 0 cost at 0.070
 instead of 0.120.
 
 The heading fold is the large one (+0.167 to +0.177 everywhere). Matching the
-pair index to the evaluation protocol is the second (+0.034 to +0.046), and it
+pair index to the evaluation protocol is the second (+0.034 to +0.048), and it
 is the only one that helps the clean case materially (+0.040 at sigma = 0).
 Neither is a modelling change: both are defects in what the model was shown.
 
