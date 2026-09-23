@@ -229,7 +229,7 @@ Official OPV2V test split, globally confidence-sorted AP.
 | | Method | Role |
 |---|---|---|
 | 1 | Ego-only, no fusion | floor |
-| 2 | Vanilla late fusion, clean | late-fusion ceiling (0.856 global-sorted / 0.781 frame-order) |
+| 2 | Vanilla late fusion, clean | late-fusion ceiling, **measured 0.8764 global-sorted / 0.8180 frame-order** (P0 gate, commit 4180ca9; supersedes the 0.856/0.781 predicted from README.md:133, which came from a checkpoint that no longer exists) |
 | 3 | Vanilla late fusion, noisy | what we beat |
 | 4 | RANSAC SE(2) on box centres (`integration/localization.py`) | classical control |
 | 5 | CoLoca-QuA correction + late fusion | strong, ~25 MiB/frame - the bandwidth contrast |
@@ -237,6 +237,50 @@ Official OPV2V test split, globally confidence-sorted AP.
 | 7 | **AlignFormer-B** | matching + Procrustes |
 | 8 | Oracle correspondence + Procrustes | isolates matching error from solver error |
 | 9 | V2X-ViT, CoAlign, CoBEVT, AttFuse, Where2comm | **the robustness SOTA to beat** |
+| 10 | **FreeAlign** (Lei, Ni, Han, Tang, Wang, Feng, Chen, Wang, ICRA 2024, arXiv 2405.02965) | **the closest competitor** - object-level geometric alignment, boxes only |
+
+### FreeAlign: the closest competitor, and where AlignFormer differs structurally
+
+FreeAlign builds a **salient object graph** per agent - nodes are detected boxes,
+edges are **relative distances between them**, which are invariant to the
+viewer's pose - and matches common subgraphs across agents with a GNN, recovering
+the relative pose with no localization prior at all. Code:
+`github.com/MediaBrain-SJTU/FreeAlign`, built on CoAlign and therefore
+OpenCOOD-derived, so it runs in this stack for a like-for-like local comparison
+at inference cost, exactly like rows 9.
+
+This became the most important baseline once the association diagnostic
+(2026-09-22) established that AlignFormer's appearance embedding contributes
+nothing to matching on OPV2V, leaving object-level **geometry** as what both
+methods actually use. The comparison is therefore direct, and the burden is on
+AlignFormer to show a difference that matters.
+
+**The structural difference is the minimum number of correspondences each method
+needs, and it is measurable rather than rhetorical.** FreeAlign's evidence is
+pairwise *distances*, so:
+
+- 1 shared object = a 1-node graph with **0 edges**: no constraint at all.
+- 2 shared objects = **1 edge**: a single scalar distance, which fixes neither
+  rotation nor the reflection ambiguity.
+- 3+ shared objects are needed before a distance graph rigidly determines SE(2).
+
+AlignFormer augments every object with **heading virtual points** (lambda = 2 m,
+Section 3.3), so a *single* matched object carries both a position and an
+orientation and determines the full SE(2) on its own.
+
+Measured on this machine's ROI cache (8,936 frames, ~18,200 ego-CAV pairs):
+**18.5% of pairs share no object** (neither method can help; both must fall back
+to the uncorrected pose), and **~7.8% share exactly one or two** - the regime
+where AlignFormer is structurally solvable and a distance-graph method is not.
+That ~7.8% slice is the sharpest experiment against FreeAlign and must be
+reported as its own row, not averaged into the whole split where it would be
+diluted eightfold.
+
+Required, and not yet done: run FreeAlign locally on OPV2V under this project's
+own noise sweep and evaluator (`alignformer/evaluate.py`, global-sorted AP,
+2170-frame test split), never quoting its published numbers beside ours - the
+same rule that applies to rows 9 and for the same reason (see the P0 gate note
+on the measured 0.8764 baseline).
 
 ### The SOTA claim, stated precisely
 
@@ -285,7 +329,7 @@ use a single seed and flag this as a weakness; it is fixed here.
 
 ## 7. Phases and go/no-go gates
 
-- **P0** cache, dataset, clean reproduction - *gate: clean AP@0.7 = 0.856 +/- 0.01*
+- **P0** cache, dataset, clean reproduction - *gate: clean AP@0.7 = 0.856 +/- 0.01* - **PASSED, measured 0.8764**; the band came from a lost checkpoint, so 0.8764 is the baseline to beat
 - **P1** embedding head + matching - *gate: cross-agent Top-1 >= 0.85*
 - **P2** Head B + the boxes-only ablation - *gate: yaw MAE strictly below the
   predict-zero conditional-mean value at each sigma*
@@ -308,7 +352,39 @@ experiment run in **P2, not at the end**. If geometry wins, that is a real
 finding and the contribution shifts to the closed-form solver plus the efficiency
 argument.
 
-*Contingency:* augment the embedding with **camera semantics**. OPV2V provides
+> **THIS RISK FIRED, AND IS RESOLVED AGAINST THE EMBEDDING (2026-09-22).** The
+> ablation was run early as planned, and a follow-up pre-registered diagnostic
+> settled it: the appearance embedding contributes **nothing** to association on
+> OPV2V. Hard-subset delta (r = 5 m, n = 17,484) at sigma = 0.5 m is
+> **+0.0001, 95% CI [-0.0013, +0.0014]**. Three independent causes, all
+> confirmed: true-partner separability is **AUC 0.560** on raw pooled ROI
+> features (chance 0.5); competing vehicles differ by a median **0.071 m** in
+> width against a detector width spread of +/-0.081 m (they are the same CARLA
+> asset); and the BEV map is **0.8 m/cell**, so a car spans 5.7 x 2.5 cells and
+> the 4x4 ROI grid samples ~a dozen - enough for size class, not instance
+> identity. "Undertrained" is **ruled out**: the embedding head's weight norm
+> went 19.60 -> 38.87 and a causal shuffle control costs the model 0.0036, so
+> it genuinely consumes the embedding and gets ~0.4 points, which a retrained
+> boxes-only trunk recovers entirely from geometry.
+>
+> Per this risk's own mitigation clause, **the contribution shifts to the
+> closed-form solver plus the efficiency argument**, and AlignFormer is a
+> boxes-only method unless a contingency below changes that. Do not claim
+> embedding-driven association gains on OPV2V anywhere. Full write-up:
+> `.superpowers/sdd/2026-09-17-alignformer-p0-p2/association-diagnostic-report.md`.
+
+*Contingency A (camera semantics) - RETAINED, but it does not rescue association
+on OPV2V.* The diagnostic's binding constraint is that **no ego object in the
+entire validation split has a competitor within 2 m** (the r = 2 hard subset is
+empty; r = 3 holds 31 objects). Geometry never fails at stage-1 noise, so there
+is nothing for a better feature to disambiguate, however good it is. Camera
+augmentation is therefore **not** a fix for the OPV2V association number, and
+proposing it as one would repeat the error this diagnostic corrected. It remains
+live for two other purposes: (a) a dataset where vehicles genuinely cluster
+(Contingency B), and (b) communication delay, where objects have moved and
+geometric correspondence degrades while appearance stays time-invariant - the
+one regime on OPV2V where appearance could still earn its place. The mechanism
+is unchanged and bandwidth-neutral: OPV2V provides
 four RGB cameras per CAV, present on disk, and
 `scripts/opv2v_camera_bbox_viewer.py` already implements world-to-camera cuboid
 projection with occlusion rejection. Each box is projected into the cameras,
@@ -316,9 +392,26 @@ ROI-cropped, encoded by a light 2-D encoder, and fused with the LiDAR ROI
 embedding. This is **bandwidth-neutral** - the embedding dimension is unchanged,
 only the encoder differs - so the efficiency claim survives intact.
 
+*Contingency B (V2X-Real) - RETAINED, and it is the principled test.* Every
+cause above is a property of OPV2V specifically: CARLA's small vehicle asset
+library, and scenes sparse enough that competitors never come within 2 m.
+**V2X-Real** is real traffic with real vehicle diversity and genuine density, so
+both the appearance premise and the "geometry fails when objects cluster"
+premise become testable rather than structurally unanswerable. It is also the
+dataset CoLoca-QuA reports on (with V2XSet), which makes it the natural venue
+for the comparison against that method. Treat OPV2V's negative as **specific to
+OPV2V** and say so; do not generalize it to "appearance embeddings do not help
+cooperative association", which the evidence does not support.
+
 **Risk 2 - low-overlap CAV pairs.** Distant CAVs share few objects. Mitigated by
 confidence gating with a no-correction fallback; AP additionally reported
-conditioned on shared-object count.
+conditioned on shared-object count. **Measured on this machine's cache: 18.5%
+of ego-CAV pairs share no object at all and ~7.8% share exactly one or two.**
+The zero-overlap 18.5% is a correctness requirement - the fusion path must fall
+back to the uncorrected pose there, or roughly one pair in five is actively
+corrupted. The ~7.8% one-or-two slice is the sharpest experiment against
+FreeAlign, whose distance-graph evidence is structurally degenerate below three
+correspondences while AlignFormer's heading virtual points solve from one.
 
 **Risk 3 - detection errors couple into matching.** Correspondences are between
 *detections*, not ground-truth objects, so false positives and misses corrupt the
