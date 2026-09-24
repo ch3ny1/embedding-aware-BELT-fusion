@@ -241,13 +241,34 @@ Official OPV2V test split, globally confidence-sorted AP.
 
 ### FreeAlign: the closest competitor, and where AlignFormer differs structurally
 
-FreeAlign builds a **salient object graph** per agent - nodes are detected boxes,
-edges are **relative distances between them**, which are invariant to the
-viewer's pose - and matches common subgraphs across agents with a GNN, recovering
-the relative pose with no localization prior at all. Code:
-`github.com/MediaBrain-SJTU/FreeAlign`, built on CoAlign and therefore
-OpenCOOD-derived, so it runs in this stack for a like-for-like local comparison
-at inference cost, exactly like rows 9.
+FreeAlign builds a **salient object graph** per agent - nodes are detected
+boxes, and edges are *learned* k-dim features produced by **EdgeGAT** from a
+relative-distance matrix, trained with a contrastive loss. Relative distance is
+what makes the edge invariant to the viewer's pose. Correspondence comes from
+**MASS** (multi-anchor subgraph searching) and the relative pose from **RANSAC
+or LMedS** over the matched point sets. It needs **no localization prior**,
+though the paper notes GNSS can optionally narrow the search. The full title is
+"Robust Collaborative Perception without External Localization **and Clock
+Devices**": it estimates **latency as well as pose**, a strictly larger problem
+than ours.
+
+**Correction (2026-09-24, from reading the paper and task 17's repo
+assessment).** An earlier version of this section claimed the public code "runs
+in this stack ... at inference cost". It does not. `github.com/MediaBrain-SJTU/FreeAlign`
+is built on **CoAlign's** OpenCOOD fork with a different dataset,
+postprocessor and AP implementation; it requires CoAlign's uncertainty detector
+(absent here), a stage-1 precalc pass, source-built **g2opy**, and checkpoints
+distributed via Baidu Drive. Running it end to end would mean training a
+detector from scratch and would still not be apples-to-apples. The plan is
+therefore a **reimplementation onto our detections, our sweep and our
+evaluator** (task 20), which isolates the alignment algorithm - the thing under
+test - from detector and evaluator differences.
+
+Their setup is close enough to make that fair: OPV2V, PointPillars at 0.4 m
+grid, detection range x in [-140, 140] m and y in [-40, 40] m, essentially our
+`r140` detector. But they report **AP@0.3 and AP@0.5 only**, never AP@0.7, and
+sweep Gaussian noise on (x, y, theta) with sigma in [0, 8] - four times our
+range.
 
 This became the most important baseline once the association diagnostic
 (2026-09-22) established that AlignFormer's appearance embedding contributes
@@ -263,6 +284,19 @@ pairwise *distances*, so:
 - 2 shared objects = **1 edge**: a single scalar distance, which fixes neither
   rotation nor the reflection ambiguity.
 - 3+ shared objects are needed before a distance graph rigidly determines SE(2).
+
+The paper confirms this and states the policy: below a predetermined minimum
+node count, FreeAlign **discards the collaborative message** rather than emit a
+pose. So in the sparse regime it *abstains*, and the difference must be reported
+as **coverage** (fraction of pairs corrected at all) alongside AP, or the
+comparison is unfair to them. Their stated prerequisite is explicit:
+"Collaboration is initiated only when agents are in close proximity, ensuring a
+common field of view."
+
+Note also what FreeAlign does *not* use: **heading**. Distance edges are immune
+to the 180-degree detector ambiguity that cost this project its single largest
+fix. That is a genuine advantage of their design and belongs in any honest
+comparison.
 
 AlignFormer augments every object with **heading virtual points** (lambda = 2 m,
 Section 3.3), so a *single* matched object carries both a position and an
