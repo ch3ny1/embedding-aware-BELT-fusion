@@ -1,0 +1,542 @@
+{
+  "method": "alignformer_pose_by_object_range",
+  "config": "configs/alignformer_r140.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "val_pairs": 6262,
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "range_edges_m": [
+    0.0,
+    25.0,
+    40.0,
+    70.4,
+    1000000000.0
+  ],
+  "bucket_key": "median ego-frame range of the pair's matched objects",
+  "noise_seeds": [
+    1000,
+    1001,
+    1002
+  ],
+  "sweep_sigmas_m": [
+    0.0,
+    0.2,
+    0.4,
+    1.0,
+    2.0
+  ],
+  "results": {
+    "sigma_0m": {
+      "sigma_xy_m": 0.0,
+      "configurations": {
+        "B / boxes+embeddings / ivw none": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_boxes+embeddings/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.18064584583159504,
+            "tau_yaw_rad": 0.004659253900598647,
+            "tau_yaw_deg": 0.26695558418416887,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.023672415844754494,
+              "yaw_mae_deg": 0.041832244720523035,
+              "predict_zero_translation_mae_m": 2.1319739194811783e-15,
+              "predict_zero_yaw_mae_deg": 7.924210902866864e-16
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.03832450122029713,
+              "yaw_mae_deg": 0.05406271519649858,
+              "predict_zero_translation_mae_m": 2.405784289794881e-15,
+              "predict_zero_yaw_mae_deg": 7.033105851112462e-16
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.0900243861610416,
+              "yaw_mae_deg": 0.10962801564176015,
+              "predict_zero_translation_mae_m": 3.5182811794553407e-15,
+              "predict_zero_yaw_mae_deg": 9.08725333712279e-16
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        },
+        "B / boxes+embeddings / ivw scalar": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.15098965345634374,
+            "tau_yaw_rad": 0.0038598557953988867,
+            "tau_yaw_deg": 0.2211534466054676,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.02119221356509926,
+              "yaw_mae_deg": 0.03655736592069425,
+              "predict_zero_translation_mae_m": 2.1319739194811783e-15,
+              "predict_zero_yaw_mae_deg": 7.924210902866864e-16
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.029021594565934974,
+              "yaw_mae_deg": 0.04062254112611331,
+              "predict_zero_translation_mae_m": 2.405784289794881e-15,
+              "predict_zero_yaw_mae_deg": 7.033105851112462e-16
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.11194131156632349,
+              "yaw_mae_deg": 0.12781430173115177,
+              "predict_zero_translation_mae_m": 3.5182811794553407e-15,
+              "predict_zero_yaw_mae_deg": 9.08725333712279e-16
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        }
+      }
+    },
+    "sigma_0.2m": {
+      "sigma_xy_m": 0.2,
+      "configurations": {
+        "B / boxes+embeddings / ivw none": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_boxes+embeddings/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.18064584583159504,
+            "tau_yaw_rad": 0.004659253900598647,
+            "tau_yaw_deg": 0.26695558418416887,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.15064702409764993,
+              "yaw_mae_deg": 0.1441153440626475,
+              "predict_zero_translation_mae_m": 0.2733425295455316,
+              "predict_zero_yaw_mae_deg": 0.1614304495278508
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.16207552080143628,
+              "yaw_mae_deg": 0.15124727040152197,
+              "predict_zero_translation_mae_m": 0.272667135198291,
+              "predict_zero_yaw_mae_deg": 0.15857914115628627
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.1974001741471068,
+              "yaw_mae_deg": 0.1909926159750503,
+              "predict_zero_translation_mae_m": 0.2848292544921651,
+              "predict_zero_yaw_mae_deg": 0.15725634808431738
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        },
+        "B / boxes+embeddings / ivw scalar": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.15098965345634374,
+            "tau_yaw_rad": 0.0038598557953988867,
+            "tau_yaw_deg": 0.2211534466054676,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.12737620428116553,
+              "yaw_mae_deg": 0.12809459378625906,
+              "predict_zero_translation_mae_m": 0.2733425295455316,
+              "predict_zero_yaw_mae_deg": 0.1614304495278508
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.13410279130227143,
+              "yaw_mae_deg": 0.12890339328216585,
+              "predict_zero_translation_mae_m": 0.272667135198291,
+              "predict_zero_yaw_mae_deg": 0.15857914115628627
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.19885167827594877,
+              "yaw_mae_deg": 0.19834670690547784,
+              "predict_zero_translation_mae_m": 0.2848292544921651,
+              "predict_zero_yaw_mae_deg": 0.15725634808431738
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        }
+      }
+    },
+    "sigma_0.4m": {
+      "sigma_xy_m": 0.4,
+      "configurations": {
+        "B / boxes+embeddings / ivw none": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_boxes+embeddings/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.18064584583159504,
+            "tau_yaw_rad": 0.004659253900598647,
+            "tau_yaw_deg": 0.26695558418416887,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.14307035889698497,
+              "yaw_mae_deg": 0.15757273252347562,
+              "predict_zero_translation_mae_m": 0.546682739380989,
+              "predict_zero_yaw_mae_deg": 0.3228608984854102
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.1542223173076747,
+              "yaw_mae_deg": 0.16440673931681954,
+              "predict_zero_translation_mae_m": 0.5453355135446397,
+              "predict_zero_yaw_mae_deg": 0.31715828200003693
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.20295248488173379,
+              "yaw_mae_deg": 0.20776163624854524,
+              "predict_zero_translation_mae_m": 0.5697258084960963,
+              "predict_zero_yaw_mae_deg": 0.3145126957761603
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        },
+        "B / boxes+embeddings / ivw scalar": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.15098965345634374,
+            "tau_yaw_rad": 0.0038598557953988867,
+            "tau_yaw_deg": 0.2211534466054676,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.12116910508097466,
+              "yaw_mae_deg": 0.13791396476778162,
+              "predict_zero_translation_mae_m": 0.546682739380989,
+              "predict_zero_yaw_mae_deg": 0.3228608984854102
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.1276537235491095,
+              "yaw_mae_deg": 0.13839916829472249,
+              "predict_zero_translation_mae_m": 0.5453355135446397,
+              "predict_zero_yaw_mae_deg": 0.31715828200003693
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.20197119041376574,
+              "yaw_mae_deg": 0.20783068396477591,
+              "predict_zero_translation_mae_m": 0.5697258084960963,
+              "predict_zero_yaw_mae_deg": 0.3145126957761603
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        }
+      }
+    },
+    "sigma_1m": {
+      "sigma_xy_m": 1.0,
+      "configurations": {
+        "B / boxes+embeddings / ivw none": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_boxes+embeddings/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.18064584583159504,
+            "tau_yaw_rad": 0.004659253900598647,
+            "tau_yaw_deg": 0.26695558418416887,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.1304582349832059,
+              "yaw_mae_deg": 0.15828114193706697,
+              "predict_zero_translation_mae_m": 1.3666859230973423,
+              "predict_zero_yaw_mae_deg": 0.8071522498604308
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.14044422054603808,
+              "yaw_mae_deg": 0.16502613430022456,
+              "predict_zero_translation_mae_m": 1.3633446264794173,
+              "predict_zero_yaw_mae_deg": 0.7928957058015408
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.20005846185857407,
+              "yaw_mae_deg": 0.2135048671488832,
+              "predict_zero_translation_mae_m": 1.424813171227773,
+              "predict_zero_yaw_mae_deg": 0.7862817262514898
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        },
+        "B / boxes+embeddings / ivw scalar": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.15098965345634374,
+            "tau_yaw_rad": 0.0038598557953988867,
+            "tau_yaw_deg": 0.2211534466054676,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.11398546842541256,
+              "yaw_mae_deg": 0.14108607424498085,
+              "predict_zero_translation_mae_m": 1.3666859230973423,
+              "predict_zero_yaw_mae_deg": 0.8071522498604308
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.120216261266613,
+              "yaw_mae_deg": 0.1403795814930197,
+              "predict_zero_translation_mae_m": 1.3633446264794173,
+              "predict_zero_yaw_mae_deg": 0.7928957058015408
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.20442090055138026,
+              "yaw_mae_deg": 0.21079663939079163,
+              "predict_zero_translation_mae_m": 1.424813171227773,
+              "predict_zero_yaw_mae_deg": 0.7862817262514898
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        }
+      }
+    },
+    "sigma_2m": {
+      "sigma_xy_m": 2.0,
+      "configurations": {
+        "B / boxes+embeddings / ivw none": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_boxes+embeddings/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.18064584583159504,
+            "tau_yaw_rad": 0.004659253900598647,
+            "tau_yaw_deg": 0.26695558418416887,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.15946644740004215,
+              "yaw_mae_deg": 0.19496799982540305,
+              "predict_zero_translation_mae_m": 2.7332789289522608,
+              "predict_zero_yaw_mae_deg": 1.614304506836306
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.1599246833123203,
+              "yaw_mae_deg": 0.19023964379998315,
+              "predict_zero_translation_mae_m": 2.7266858737317494,
+              "predict_zero_yaw_mae_deg": 1.5857914146664331
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.23442761569777712,
+              "yaw_mae_deg": 0.2432797657790721,
+              "predict_zero_translation_mae_m": 2.8512475861168896,
+              "predict_zero_yaw_mae_deg": 1.572563466715702
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        },
+        "B / boxes+embeddings / ivw scalar": {
+          "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+          "shrinkage": {
+            "tau_translation_m": 0.15098965345634374,
+            "tau_yaw_rad": 0.0038598557953988867,
+            "tau_yaw_deg": 0.2211534466054676,
+            "pairs": 6262,
+            "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+            "sigma_m": 0.0
+          },
+          "buckets": [
+            {
+              "low_m": 0.0,
+              "high_m": 25.0,
+              "pairs": 9315,
+              "translation_mae_m": 0.14387380143990455,
+              "yaw_mae_deg": 0.17590573960520284,
+              "predict_zero_translation_mae_m": 2.7332789289522608,
+              "predict_zero_yaw_mae_deg": 1.614304506836306
+            },
+            {
+              "low_m": 25.0,
+              "high_m": 40.0,
+              "pairs": 8892,
+              "translation_mae_m": 0.13956427597325569,
+              "yaw_mae_deg": 0.16463637887510701,
+              "predict_zero_translation_mae_m": 2.7266858737317494,
+              "predict_zero_yaw_mae_deg": 1.5857914146664331
+            },
+            {
+              "low_m": 40.0,
+              "high_m": 70.4,
+              "pairs": 579,
+              "translation_mae_m": 0.2344072402160557,
+              "yaw_mae_deg": 0.24651764391626702,
+              "predict_zero_translation_mae_m": 2.8512475861168896,
+              "predict_zero_yaw_mae_deg": 1.572563466715702
+            },
+            {
+              "low_m": 70.4,
+              "high_m": 1000000000.0,
+              "pairs": 0
+            }
+          ],
+          "no_matched_object": {
+            "pairs": 0
+          }
+        }
+      }
+    }
+  }
+}
