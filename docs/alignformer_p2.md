@@ -48,7 +48,7 @@ oracle, across a localization-noise sweep.
 | Question | Answer |
 |---|---|
 | **P2 gate** (head B yaw MAE below predict-zero at every non-zero sigma) | **PASS, 7 of 7 on validation**, definition unmodified, at both detector ranges (6262 pairs out to 70 m). On the **test** split the same criterion still **fails at sigma = 0.2 and 0.4 m** and passes from 0.6 m up -- and at +/-140.8 m the *translation* criterion now fails at 0.2 m too (0.3043 against 0.2797 m), where at +/-70.4 m it passed everywhere. The gate is a validation statement and is not a claim about test; see [below](#p2-gate). |
-| Head A vs head B | **Decisive for B, and head A's collapse reproduces post-fix.** Head A's translation MAE tracks predict-zero to within 1-3% at every sigma (2.688 against 2.734 m at sigma = 2) and its **yaw MAE is *worse* than predict-zero** (1.643 against 1.600 deg). It never leaves the conditional mean -- exactly [CoLoca-QuA's failure](coloca_qua_baseline.md) on the same data. Head B is 8.0x better on yaw and 17x better on translation at sigma = 2 m. |
+| Head A vs head B | **Decisive for B, at both ranges.** At `r70` head A's translation MAE tracks predict-zero to within 1-3% at every sigma (2.688 against 2.734 m at sigma = 2) and its **yaw MAE is *worse* than predict-zero** (1.643 against 1.600 deg). At `r140` its translation pulls 14-20% ahead of predict-zero but its **yaw is worse than predict-zero at every sigma** (0.811 against 0.800 at sigma = 1; 1.603 against 1.600 at sigma = 2), and its error still grows almost linearly in the injected noise -- the signature of a head sitting at the conditional mean. Exactly [CoLoca-QuA's failure](coloca_qua_baseline.md) on the same data. Head B is 8.0x better on yaw and 17x on translation at `r70` (8.9x and 16x at `r140`), with an error essentially flat in sigma. |
 | Does the embedding help? | **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
 | **mAP under localization error** (the number the project needs) | **AlignFormer recovers 78-84% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.46 to +0.60 AP@0.7** on the 2170-frame test split, and **+0.18 at sigma = 0.2 m**. At sigma = 0 it still costs **0.055** (it cost 0.070 at +/-70.4 m: the regression shrank by a fifth but did **not** close). |
@@ -1655,8 +1655,11 @@ Five things follow, in priority order:
   [alignformer_pose_floor.md](alignformer_pose_floor.md) section 6; not
   corrected, because correcting it would mean calibrating on test.
 - One noise seed for the AP sweep, three for the pose sweep.
-- The head A / `match_weight 0` ablations, the shrinkage on/off table and the
-  per-epoch training curve are all `r70`. The **boxes-only ablation was**
+- The `match_weight 0` ablation, the shrinkage on/off table and the per-epoch
+  training curve are all `r70`. **Head A was also run at +/-140.8 m** (task 19,
+  `p2_r140_ablations_result.json`) and the conclusion strengthens there: its yaw
+  MAE is worse than predict-zero at *every* sigma, not only at the high-noise
+  end. The **boxes-only ablation was**
   retrained at +/-140.8 m in task 19 with both arms matched on epoch and
   lineage; see [the matched rerun](#the-matched-r140-rerun-removes-both-confounds-and-the-null-holds).
   The pose-level embedding gap (12-15% at `r70`) was never re-tested under those
