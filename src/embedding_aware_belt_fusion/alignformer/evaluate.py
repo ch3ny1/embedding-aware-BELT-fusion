@@ -141,6 +141,14 @@ def parse_args() -> argparse.Namespace:
         help="AlignFormer model/data config; --metric noisy_ap only (--config there is "
              "the OpenCOOD detector hypes yaml)",
     )
+    parser.add_argument(
+        "--oracle-match", action="store_true",
+        help="--metric noisy_ap only: also fuse the two oracle-correspondence "
+             "conditions, i.e. the same estimator with the learned Sinkhorn "
+             "correspondence replaced by the ground-truth assignment (weighted "
+             "uniformly, and by the checkpoint's own inverse-variance model). "
+             "This is the ceiling on what any matching improvement can deliver.",
+    )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--max-frames", type=int, default=None, help="limit frames, for smoke-testing")
@@ -730,6 +738,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
         ALIGNFORMER,
         ORACLE,
+        ORACLE_MATCH_CONDITIONS,
         UNCORRECTED,
         condition_key,
         run_noise_sweep,
@@ -757,6 +766,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         training_comm_range_m=float(model_config["data"]["comm_range_m"]),
         max_frames=args.max_frames,
         shrinkage=shrinkage,
+        oracle_match=args.oracle_match,
     )
 
     ap, ap_intermediate_gt = {}, {}
@@ -790,6 +800,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "oracle": ORACLE,
             "uncorrected": UNCORRECTED,
             "alignformer": ALIGNFORMER,
+            "oracle_match": list(ORACLE_MATCH_CONDITIONS) if args.oracle_match else [],
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         "ap": ap,
@@ -806,7 +817,11 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             1 for a, b in zip(ground_truth, intermediate_truth)
             if a.shape[0] != b.shape[0]
         ),
-        "pose": pose_stats,
+        # Unchanged in shape and meaning: the deployed estimator's own pose
+        # error per sigma, which every earlier result file carries under this
+        # key. The oracle conditions are reported beside it, never folded in.
+        "pose": pose_stats[ALIGNFORMER],
+        "pose_by_condition": pose_stats,
     }
 
 

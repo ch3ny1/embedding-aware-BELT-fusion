@@ -14,6 +14,8 @@ are the four places a bug would be invisible in that output:
   perturbation rescaled rather than a curve.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -23,11 +25,18 @@ from embedding_aware_belt_fusion.alignformer.fusion import correct_boxes, correc
 from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
     ALIGNFORMER,
     ORACLE,
+    ORACLE_MATCH_IVW,
+    ORACLE_MATCH_UNIFORM,
     _object_set,
+    _oracle_variance_models,
     _shares_an_object,
     _sweep_rng,
     _truncate_by_score,
     condition_key,
+)
+from embedding_aware_belt_fusion.alignformer.variance import (
+    UNWEIGHTED,
+    CorrespondenceVarianceModel,
 )
 
 
@@ -109,6 +118,36 @@ def test_a_condition_key_names_its_sigma_except_for_the_oracle():
     assert condition_key(ORACLE, 1.5) == "oracle"
     assert condition_key(ALIGNFORMER, 1.5) == "alignformer_sigma_1.5m"
     assert condition_key(ALIGNFORMER, 0.0) == "alignformer_sigma_0m"
+    # The oracle-correspondence ceiling is a per-sigma condition like
+    # alignformer, not a sigma-independent one like `oracle`: its input is the
+    # noisily-projected CAV box set, only its correspondence is free.
+    assert condition_key(ORACLE_MATCH_IVW, 0.4) == "oracle_match_ivw_sigma_0.4m"
+    assert condition_key(ORACLE_MATCH_UNIFORM, 2.0) == "oracle_match_uniform_sigma_2m"
+
+
+def test_the_oracle_ceiling_reuses_the_checkpoints_own_inverse_variance_model():
+    # Read off the loaded head, never rebuilt from a config: the IVW variant is
+    # the like-for-like comparison only if it weights correspondences exactly
+    # the way the checkpoint being compared against does.
+    deployed = CorrespondenceVarianceModel(
+        mode="scalar", sigma_translation_m=0.2516, translation_exponent=1.1281,
+        sigma_yaw_rad=0.081, yaw_exponent=1.9322,
+    )
+    modules = {"pose": SimpleNamespace(variance_model=deployed)}
+
+    models = _oracle_variance_models(modules)
+
+    assert models[ORACLE_MATCH_IVW] is deployed
+    assert models[ORACLE_MATCH_UNIFORM] is UNWEIGHTED
+    assert not UNWEIGHTED.enabled  # weight 1.0 on each true pair
+
+
+def test_a_head_with_no_correspondence_cannot_have_its_matching_oracled():
+    # Head A regresses the pose from a pooled descriptor; there is no
+    # correspondence matrix to substitute, so asking for the ceiling is a
+    # mistake that must surface rather than silently measure something else.
+    with pytest.raises(ValueError, match="head B"):
+        _oracle_variance_models({"pose": SimpleNamespace()})
 
 
 def test_the_object_set_batch_marks_every_real_object_valid():

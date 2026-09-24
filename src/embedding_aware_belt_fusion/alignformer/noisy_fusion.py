@@ -19,6 +19,12 @@ but the correction differs between them:
 - ``alignformer`` -- the noisy correction, then AlignFormer's estimated
   residual SE(2) on top. The result is the gap it closes between the two.
 
+With ``oracle_match`` two further conditions join them,
+``oracle_match_uniform`` and ``oracle_match_ivw``: the *same* estimator with
+the learned correspondence replaced by the ground-truth assignment. They are
+not a method, they are a ceiling -- the most any improvement to cross-agent
+matching, by camera or by anything else, could be worth on this data.
+
 The detector runs once per agent per frame and every condition and sigma reuses
 those detections. Without that the sweep would be a detector benchmark: the
 forward pass dominates everything else here by two orders of magnitude.
@@ -48,10 +54,19 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     correct_detections,
     late_fuse,
 )
+from embedding_aware_belt_fusion.alignformer.model import DEFAULT_HEADING_LAMBDA
+from embedding_aware_belt_fusion.alignformer.oracle import (
+    oracle_assignment,
+    oracle_pose_estimate,
+)
 from embedding_aware_belt_fusion.alignformer.shrinkage import ShrinkageCalibration, shrink
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 from embedding_aware_belt_fusion.alignformer.train import embed_batch
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
+from embedding_aware_belt_fusion.alignformer.variance import (
+    UNWEIGHTED,
+    CorrespondenceVarianceModel,
+)
 from embedding_aware_belt_fusion.coloca.geometry import perturb_pose_2d, relative_pose_error
 
 # A FIXED reporting boundary, independent of whatever range the pair index was
@@ -64,6 +79,14 @@ DIAGNOSTIC_RANGE_M = 40.0
 ORACLE = "oracle"
 UNCORRECTED = "uncorrected"
 ALIGNFORMER = "alignformer"
+# The oracle-correspondence ceiling (task 21): AlignFormer's own estimator with
+# the learned Sinkhorn correspondence replaced by the ground-truth one-to-one
+# assignment. Two weightings, because the deployed model weights its
+# correspondences by inverse variance and a ceiling that bounded only the
+# matching would leave the weighting scheme unbounded. See alignformer.oracle.
+ORACLE_MATCH_UNIFORM = "oracle_match_uniform"
+ORACLE_MATCH_IVW = "oracle_match_ivw"
+ORACLE_MATCH_CONDITIONS = (ORACLE_MATCH_UNIFORM, ORACLE_MATCH_IVW)
 
 _PROGRESS_INTERVAL = 100
 
@@ -289,18 +312,25 @@ def run_noise_sweep(
     training_comm_range_m: float,
     max_frames: Optional[int] = None,
     shrinkage: Optional[ShrinkageCalibration] = None,
+    oracle_match: bool = False,
 ) -> Tuple[Dict[str, List[Tuple[Tensor, Tensor]]], List[Tensor], Dict[str, Dict[str, float]]]:
     """Fuse every frame under every condition; return predictions, truth and pose stats.
 
-    Returns ``(predictions_by_condition, ground_truth, pose_stats_by_sigma)``.
-    ``ground_truth`` is shared by every condition -- the frames and their labels
-    do not change, only the correction applied to the CAV boxes does.
+    Returns ``(predictions_by_condition, ground_truth, pose_stats_by_condition)``,
+    the last being ``{estimator: {sigma key: metrics}}``. ``ground_truth`` is
+    shared by every condition -- the frames and their labels do not change,
+    only the correction applied to the CAV boxes does.
 
     ``shrinkage``, when given, is applied to every estimate before the boxes
     are moved, so the ``alignformer`` condition measures what the method would
     actually deploy. The calibration is fitted on the validation split at
     sigma = 0 and is the same one at every sigma here -- a per-sigma factor
     would be fitting the sweep it is being scored on.
+
+    ``oracle_match`` adds the two :data:`ORACLE_MATCH_CONDITIONS`, which are
+    the deployed estimator run on the ground-truth correspondence. They share
+    the frame's detections, noise draws and shrinkage with ``alignformer``, so
+    the difference between them is the matching and nothing else.
     """
     from opencood.utils import box_utils
     from opencood.utils.transformation_utils import x1_to_x2
@@ -312,15 +342,24 @@ def run_noise_sweep(
         _pose_correction,
     )
 
+    variance_models = _oracle_variance_models(modules) if oracle_match else {}
+    estimators = [ALIGNFORMER] + list(variance_models)
+    heading_lambda = float(
+        getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA)
+    )
+
     conditions = [ORACLE] + [
         condition_key(name, sigma)
         for sigma in sigmas
-        for name in (UNCORRECTED, ALIGNFORMER)
+        for name in [UNCORRECTED] + estimators
     ]
     predictions: Dict[str, List[Tuple[Tensor, Tensor]]] = {key: [] for key in conditions}
     ground_truth: List[Tensor] = []
     intermediate_ground_truth: List[Tensor] = []
-    stats = {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
+    stats = {
+        name: {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
+        for name in estimators
+    }
     nms_threshold = postprocessor.params["nms_thresh"]
 
     frame_count = len(dataset) if max_frames is None else min(max_frames, len(dataset))
@@ -354,7 +393,9 @@ def run_noise_sweep(
         ego_pack = packs["ego"]
         for sigma in sigmas:
             uncorrected = [detections["ego"]]  # ego's own transform is the identity
-            aligned = [detections["ego"]]
+            # Every estimator corrects the SAME noisy detections, so the fused
+            # sets differ by the estimate alone.
+            aligned = {name: [detections["ego"]] for name in estimators}
             for agent, key in enumerate(sorted(k for k in detections if k != "ego")):
                 rng = _sweep_rng(seed, sigma, index, agent)
                 noisy_pose = perturb_pose_2d(
@@ -373,34 +414,54 @@ def run_noise_sweep(
                 cav_pack = dict(packs[key])
                 cav_pack["boxes"] = correct_boxes(packs[key]["boxes"], psi_noisy, t_noisy)
 
-                estimate = _estimate(modules, ego_pack, cav_pack, ablate_embeddings)
-                if shrinkage is not None:
-                    estimate = shrink(estimate, shrinkage)
-                aligned.append(
-                    correct_detections(noisy_detections, estimate.psi[0], estimate.t[0])
-                )
+                pair = _object_set(ego_pack, cav_pack)
+                estimates = {
+                    ALIGNFORMER: _estimate(modules, pair, ablate_embeddings)
+                }
+                if variance_models:
+                    assignment = oracle_assignment(
+                        ego_pack["gt_ids"],
+                        cav_pack["gt_ids"],
+                        device=pair["ego_boxes"].device,
+                    )
+                    for name, variance_model in variance_models.items():
+                        estimates[name] = oracle_pose_estimate(
+                            pair,
+                            assignment,
+                            heading_lambda=heading_lambda,
+                            variance_model=variance_model,
+                        )
 
                 dx, dy, dpsi_deg = relative_pose_error(ego_pose, poses[key], noisy_pose)
-                stats[sigma].update(
-                    float(estimate.psi[0].item()),
-                    (float(estimate.t[0, 0]), float(estimate.t[0, 1])),
-                    float(np.radians(dpsi_deg)),
-                    (dx, dy),
-                    fell_back=bool(is_fallback(estimate)[0].item()),
-                    alignable=_shares_an_object(
-                        packs["ego"]["gt_ids"], packs[key]["gt_ids"]
-                    ),
-                    distance_m=float(np.hypot(
-                        poses[key][0] - ego_pose[0], poses[key][1] - ego_pose[1]
-                    )),
-                )
+                for name, estimate in estimates.items():
+                    if shrinkage is not None:
+                        estimate = shrink(estimate, shrinkage)
+                    aligned[name].append(
+                        correct_detections(
+                            noisy_detections, estimate.psi[0], estimate.t[0]
+                        )
+                    )
+                    stats[name][sigma].update(
+                        float(estimate.psi[0].item()),
+                        (float(estimate.t[0, 0]), float(estimate.t[0, 1])),
+                        float(np.radians(dpsi_deg)),
+                        (dx, dy),
+                        fell_back=bool(is_fallback(estimate)[0].item()),
+                        alignable=_shares_an_object(
+                            packs["ego"]["gt_ids"], packs[key]["gt_ids"]
+                        ),
+                        distance_m=float(np.hypot(
+                            poses[key][0] - ego_pose[0], poses[key][1] - ego_pose[1]
+                        )),
+                    )
 
             predictions[condition_key(UNCORRECTED, sigma)].append(
                 _fuse(uncorrected, nms_threshold)
             )
-            predictions[condition_key(ALIGNFORMER, sigma)].append(
-                _fuse(aligned, nms_threshold)
-            )
+            for name, corrected in aligned.items():
+                predictions[condition_key(name, sigma)].append(
+                    _fuse(corrected, nms_threshold)
+                )
 
         gt_corners = postprocessor.generate_gt_bbx(batch)
         gt_boxes = box_utils.corner_to_center(
@@ -418,9 +479,33 @@ def run_noise_sweep(
     return (
         predictions,
         ground_truth,
-        {f"sigma_{sigma:g}m": tally.compute() for sigma, tally in stats.items()},
+        {
+            name: {f"sigma_{sigma:g}m": tally.compute() for sigma, tally in by_sigma.items()}
+            for name, by_sigma in stats.items()
+        },
         intermediate_ground_truth,
     )
+
+
+def _oracle_variance_models(modules) -> Dict[str, CorrespondenceVarianceModel]:
+    """The correspondence weightings the two oracle conditions are measured under.
+
+    The IVW one is read off the loaded pose head rather than rebuilt from a
+    config, so it is by construction the weighting this very checkpoint
+    deploys: the two conditions then differ in the correspondence alone, which
+    is the whole claim. A pose head with no ``variance_model`` is head A, which
+    has no correspondence to replace.
+    """
+    variance_model = getattr(modules["pose"], "variance_model", None)
+    if variance_model is None:
+        raise ValueError(
+            "the oracle-correspondence conditions need head B; the loaded "
+            "checkpoint's pose head builds no correspondence to replace"
+        )
+    return {
+        ORACLE_MATCH_UNIFORM: UNWEIGHTED,
+        ORACLE_MATCH_IVW: variance_model,
+    }
 
 
 def _intermediate_convention_ground_truth(dataset, base_data_dict, ego_pose) -> Tensor:
@@ -462,9 +547,8 @@ def _intermediate_convention_ground_truth(dataset, base_data_dict, ego_pose) -> 
     return stacked[box_utils.get_mask_for_boxes_within_range_torch(corners)]
 
 
-def _estimate(modules, ego_pack, cav_pack, ablate: bool):
+def _estimate(modules, batch: Mapping[str, Tensor], ablate: bool):
     """Run the frozen embedding head and the pose head over one ego-CAV pair."""
-    batch = _object_set(ego_pack, cav_pack)
     enriched = embed_batch(modules["embedding"], batch, ablate=ablate)
     return modules["pose"](enriched)
 
