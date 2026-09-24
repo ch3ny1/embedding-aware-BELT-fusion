@@ -759,14 +759,97 @@ need **different exponents**, 1.128 against 1.932. Centres and heading virtual
 points should not carry the same weight, and forcing them to would have thrown
 away most of the yaw gain.
 
-Deployed parameters (`outputs/alignformer/r140/correspondence_variance_result.json`):
+Fitted parameters (`outputs/alignformer/r140/correspondence_variance_result.json`):
 
 ```
-mode                  split
 sigma_translation_m   0.2516   translation_exponent  1.128
 sigma_yaw_deg         4.639    yaw_exponent          1.932
 score_reference       0.4
 ```
+
+**Two weighting modes were trained from those same parameters, and the fit file's
+own `mode: split` is not what ships.** `split` carries the translation and yaw
+variances through the Kabsch solve separately; `scalar` reduces them to one
+weight per correspondence. On validation `scalar` wins -- translation MAE
+**0.1418 m against 0.1488 m**, yaw **0.1693 deg against 0.1868 deg** -- so
+`stage2_B_ivw_scalar` is the deployed checkpoint and every IVW number in this
+document comes from it. The `split` checkpoint exists at
+`outputs/alignformer/r140/stage2_B_ivw_split/` but was never carried through the
+AP sweep, so it appears in no reported figure. Quoting the fit file's `mode`
+as the deployed configuration would be wrong; this was caught in task 21.
+
+### The oracle-correspondence ceiling: how much is matching worth at all?
+
+Replacing the learned Sinkhorn assignment with the ground-truth one, built from
+the `gt_ids` the dataset already carries, bounds what *any* matching improvement
+can contribute -- a camera-augmented embedding, a larger trunk, a different
+matcher. The decision rule was pre-registered before the run: mean AP@0.7 delta
+over sigma in [0.2, 2.0] on validation, above 0.02 means headroom, below 0.01
+means matching is closed.
+
+**The rule returned `ambiguous` by 0.0001** -- mean delta **+0.0101** against a
+0.0100 boundary, from one noise seed per cell. It should be read as
+indistinguishable from closed, and the mean badly misdescribes the shape:
+
+| sigma (m) | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| validation delta | +0.0070 | +0.0059 | +0.0049 | +0.0068 | +0.0036 | +0.0145 | +0.0282 |
+
+At every sigma a vehicle with working localization actually sees (<= 1.0 m) the
+delta is 0.0036-0.0070, inside "closed". The mean clears the line only at 1.5 and
+2.0 m, where the *learned* matcher starts to fail while the oracle's stays flat.
+
+**The error decomposition refutes the premise that matching is the lever.**
+
+| Split | sigma | deployed | oracle floor | residual | reachable by matching |
+|---|---|---:|---:|---:|---:|
+| validation | 0 | 0.0375 m | 0.0436 m | **-0.0060** | **-16.0%** |
+| validation | 1 | 0.1281 m | 0.1309 m | **-0.0027** | **-2.1%** |
+| test | 0 | 0.1610 m | 0.1378 m | +0.0232 | +14.4% |
+| test | 1 | 0.2649 m | 0.2386 m | +0.0262 | +9.9% |
+
+On validation the residual is **negative** below sigma 1.5: the learned soft
+correspondence produces a *better* pose than the ground-truth hard assignment,
+so perfect matching is not even an upper bound there. On test, **86-90% of the
+deployed translation error is unreachable by any matching improvement.**
+
+**The two splits disagree, and that is the finding.** Test gives mean delta
+**+0.0454**, 4.5x validation, above "headroom" at every sigma. The mechanism was
+measured rather than assumed (`scripts/correspondence_evidence_budget.py`): test
+carries **6x more sparse pairs** -- 12.8% with three or fewer true
+correspondences against validation's 2.1% -- and on its sparsest pairs the
+learned matcher gives 1.98 m where the oracle holds 1.05 m. A validation-only
+rule was the wrong instrument here, because the quantity it measures is one of
+the quantities that differs most between the two splits. The rule's output is
+reported unchanged rather than re-chosen after the fact.
+
+**Weighting beats matching.** The oracle correspondence with *uniform* weights
+scores **-0.0026 on validation** -- worse than the shipped model -- against
+IVW's +0.0101. Inverse-variance weighting alone is worth more than a perfect
+correspondence on validation, and over a third of the ceiling on test. That
+continues the task 19 result rather than contradicting it.
+
+Two qualifiers travel with this ceiling. It is **not a strict upper bound**:
+17.5-17.7% of ego detections carry no `gt_id` (they fail IoU >= 0.3 against
+their own agent's local ground truth) and get zero mass under the oracle,
+although the Sinkhorn matcher can and does use them -- a matcher that recovered
+identity for those could exceed this "ceiling". And hard one-to-one assignment
+discards the soft matcher's averaging, which is why the oracle loses outright on
+sparse pairs.
+
+The substitution is verified structurally, not by inspection: `model.py` was
+refactored into `reduce_correspondence` + `solve_pose`, which both
+`AlignFormerB.forward` and the new `alignformer/oracle.py` call, so only the
+(B, M, N) matrix differs. The test-split `alignformer`, `uncorrected` and
+`oracle` rows come back **bit-identical** to the published sweep, max absolute
+difference 0.0.
+
+**What this means for the camera contingency.** Do not start a camera pipeline
+for OPV2V association. The validation case for more matching capacity is
+confined to sigma >= 1.5 m; the test case is confined to the 12.8% sparse-pair
+tail, which is a generalization failure of the *existing* matcher reachable by
+harder training data and by refusing to correct at low match mass; and 86-90% of
+the residual pose error is not matching at all.
 
 ### The embedding: still nothing on association, marginal on AP, larger on pose
 
@@ -1596,15 +1679,13 @@ Five things follow, in priority order:
   published on this machine -- porting its training-free matcher onto our own
   detections is the recommended P3 item. (Caveat 1, the detector range, is
   resolved as of task 18.)
-- **The oracle-correspondence ceiling is being measured (task 21).** Replacing
-  the learned assignment with the ground-truth one bounds what *any* matching
-  improvement -- a camera-augmented embedding, a larger trunk, a different
-  matcher -- can contribute. The decision rule was pre-registered before the
-  run: a validation AP@0.7 gap above 0.02 means headroom exists, below 0.01
-  means matching is closed on OPV2V. The prior from the existing numbers is that
-  it is closed, since association is already at Top-1 0.9968 against a
-  nearest-centre baseline of 1.0000, and the oracle-correspondence pose floor at
-  sigma = 0 was 0.104 m against a deployed 0.161 m.
+- **Measured in task 21, verdict `ambiguous` by 0.0001.** See [the
+  oracle-correspondence ceiling](#the-oracle-correspondence-ceiling-how-much-is-matching-worth-at-all).
+  The open part is the **split disagreement**: validation says matching is
+  closed, test says there is headroom, and the difference is carried by test's
+  6x larger sparse-pair tail. Whether to chase that tail (harder training pairs,
+  refusing to correct at low match mass) is a decision the branch does not make.
+  One noise seed per AP cell, so the 0.0001 margin is not meaningful on its own.
 - **The sigma = 0 regression is a property, not a bug** (ruling R44). Five
   attempted fixes failed; it is the unavoidable cost of moving boxes by an
   imperfect estimate when the pose was already correct. The deployment answer is
