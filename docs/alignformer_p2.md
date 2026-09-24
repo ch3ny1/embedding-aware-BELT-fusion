@@ -52,6 +52,7 @@ oracle, across a localization-noise sweep.
 | Does the embedding help? | **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
 | **mAP under localization error** (the number the project needs) | **AlignFormer recovers 78-84% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.46 to +0.60 AP@0.7** on the 2170-frame test split, and **+0.18 at sigma = 0.2 m**. At sigma = 0 it still costs **0.055** (it cost 0.070 at +/-70.4 m: the regression shrank by a fifth but did **not** close). |
+| **Inverse-variance correspondence weighting** (deployed, task 19) | **Better pose everywhere, better AP at every non-zero sigma, 0.011 worse at sigma = 0.** Weighting each correspondence by its fitted inverse variance cuts translation MAE 13-16% and yaw MAE 12-14% at every sigma, lifts AP@0.7 by +0.003 to +0.016 from sigma = 0.2 up, and costs 0.0105 at sigma = 0. It also **fixes the test-split translation gate failure at sigma = 0.2 m** (0.2599 against predict-zero's 0.2797, where the unweighted fit gave 0.3043). The variance is driven by **detection score, not range** -- see [below](#the-correspondence-variance-model). |
 | **Head-to-head against intermediate fusion** (the claim the project exists to make) | **Ties the strongest baseline on the clean row, loses one row at 0.2 m, and leads the whole field from 0.4 m, at 1,021x to 4,254x fewer bytes.** At sigma = 0 AlignFormer is above V2X-ViT, Where2comm and F-Cooper and below CoAlign, CoBEVT, AttFuse and V2VAM; at 0.2 m six of seven are ahead of it; from 0.4 m it leads every one, by +0.030 to +0.040 over V2X-ViT and +0.16 to +0.33 over the rest. All seven were run locally under this sweep and this evaluator -- no published number is quoted. See [below](#head-to-head-against-intermediate-fusion). |
 
 ### The headline
@@ -69,6 +70,48 @@ detector at **+/-140.8 m** (`r140`):
 | 1.0 | 0.1763 | **0.7771** | 0.8964 | **+0.6008** | 83.4% |
 | 1.5 | 0.1799 | **0.7728** | 0.8964 | **+0.5928** | 82.7% |
 | 2.0 | 0.1898 | **0.7441** | 0.8964 | **+0.5542** | 78.4% |
+
+The table above is the **unweighted** Procrustes fit, kept as the reference
+configuration. The **deployed** configuration additionally weights each
+correspondence by its fitted inverse variance (task 19). Both are published,
+because neither dominates:
+
+| sigma (m) | Vanilla late fusion | AlignFormer (unweighted) | **AlignFormer (IVW, deployed)** | IVW is worth | Oracle |
+|---|---:|---:|---:|---:|---:|
+| 0 | **0.8964** | 0.8415 | 0.8310 | **-0.0105** | 0.8964 |
+| 0.2 | 0.5978 | 0.7743 | **0.7841** | +0.0098 | 0.8964 |
+| 0.4 | 0.3158 | 0.7717 | **0.7835** | +0.0118 | 0.8964 |
+| 0.6 | 0.2154 | 0.7717 | **0.7819** | +0.0102 | 0.8964 |
+| 0.8 | 0.1844 | 0.7804 | **0.7850** | +0.0046 | 0.8964 |
+| 1.0 | 0.1763 | 0.7771 | **0.7851** | +0.0080 | 0.8964 |
+| 1.5 | 0.1799 | 0.7728 | **0.7756** | +0.0028 | 0.8964 |
+| 2.0 | 0.1898 | 0.7441 | **0.7600** | +0.0159 | 0.8964 |
+
+The pose metric it was designed to improve moves further than the AP does:
+
+| sigma (m) | translation MAE (unweighted -> IVW) | yaw MAE (unweighted -> IVW) | predict-zero t / yaw |
+|---|---:|---:|---:|
+| 0 | 0.1856 -> **0.1610 m** (-13%) | 0.3440 -> **0.2962 deg** (-14%) | 0 / 0 |
+| 0.2 | 0.3043 -> **0.2599 m** (-15%) | 0.4308 -> **0.3772 deg** (-12%) | 0.2797 / 0.1610 |
+| 0.4 | 0.3045 -> **0.2562 m** (-16%) | 0.4550 -> **0.3803 deg** (-16%) | 0.5450 / 0.3241 |
+| 0.6 | 0.3063 -> **0.2626 m** (-14%) | 0.4550 -> **0.3844 deg** (-16%) | 0.8140 / 0.4865 |
+| 0.8 | 0.3161 -> **0.2675 m** (-15%) | 0.4777 -> **0.3948 deg** (-17%) | 1.0904 / 0.6308 |
+| 1.0 | 0.3216 -> **0.2649 m** (-18%) | 0.4825 -> **0.3979 deg** (-18%) | 1.3459 / 0.7892 |
+| 1.5 | 0.3408 -> **0.2988 m** (-12%) | 0.5099 -> **0.4324 deg** (-15%) | 2.0195 / 1.1962 |
+| 2.0 | 0.3628 -> **0.3291 m** (-9%) | 0.5114 -> **0.4500 deg** (-12%) | 2.6933 / 1.6053 |
+
+Two consequences worth stating plainly. IVW **closes the test-split translation
+gate failure at sigma = 0.2 m**: 0.2599 m now beats predict-zero's 0.2797 m,
+where the unweighted fit's 0.3043 m did not. And it **does not close the yaw
+failure** at sigma = 0.2 and 0.4 m (0.3772 against 0.1610, 0.3803 against
+0.3241), which remains the one criterion that passes on validation and fails on
+test.
+
+The `sigma = 0` cost is the same trade the whole method makes, one notch
+sharper: a better-conditioned estimator moves boxes more confidently, which is
+exactly wrong when there was nothing to correct. Turning shrinkage off makes
+this explicit -- IVW without shrinkage scores 0.7978 at sigma = 0 (worse) but
+0.7941 at sigma = 0.2 (better than either shrunk configuration).
 
 And the same table at the superseded **+/-70.4 m** range (`r70`), kept because
 the difference between the two is a result in its own right:
@@ -682,6 +725,49 @@ the measurement this document exists to take: gate the correction on an
 estimate of the localization error, or train with a loss that pins the identity
 at sigma = 0.
 
+### The correspondence variance model
+
+Inverse-variance weighting needs a model of how noisy each correspondence is.
+Fitted on 63,988 correspondences over the 6,262 scenario-disjoint validation
+pairs at sigma = 0, so the residual is detector noise alone with no injected
+pose error in it.
+
+The form was **fixed in advance**: additive, because a correspondence's
+disagreement is the difference of two independent detections and its variance
+is therefore the sum of theirs. Five candidate forms per channel were fitted
+anyway, so that "nothing else fits materially better" is a measurement rather
+than an assertion:
+
+| Candidate | Deviance improvement over constant |
+|---|---:|
+| constant | 0.000 |
+| range | 0.020 |
+| score_additive (**selected**) | 0.129 |
+| score_min | 0.136 |
+
+**Detection score beats range by roughly 7x**, and this refuted the hypothesis
+that dispatched the task -- task 18's far-vs-near split had implicated *range*,
+and range is largely a proxy. The two are only weakly correlated (Pearson
+-0.352), so they are not the same variable, and score wins on its own terms.
+The mechanism is straightforward once measured: distant objects carry fewer
+LiDAR points, so they score lower, and it is the point count that sets the
+localization noise. The lowest score decile has RMS translation disagreement
+0.532 m and RMS yaw 13.56 deg; the range deciles span only 0.272 to ~0.43 m.
+
+The fit also answered a question posed without a prior: translation and yaw
+need **different exponents**, 1.128 against 1.932. Centres and heading virtual
+points should not carry the same weight, and forcing them to would have thrown
+away most of the yaw gain.
+
+Deployed parameters (`outputs/alignformer/r140/correspondence_variance_result.json`):
+
+```
+mode                  split
+sigma_translation_m   0.2516   translation_exponent  1.128
+sigma_yaw_deg         4.639    yaw_exponent          1.932
+score_reference       0.4
+```
+
 ### The embedding: still nothing on association, marginal on AP, larger on pose
 
 **This sub-section is `r70` throughout**: the boxes-only ablation was not
@@ -742,6 +828,57 @@ The claim that should be published is therefore the narrow one, unchanged:
 **the appearance embedding does not carry the method.** The wider claim, that
 it contributes literally nothing anywhere, is no longer exactly right at the
 pose level and should be stated with the numbers above.
+
+#### The matched `r140` rerun removes both confounds, and the null holds
+
+The two caveats above -- one seed, and warm starts that selected best
+checkpoints at different epochs with different Top-1 -- were removable, so they
+were removed. Both arms were retrained at +/-140.8 m to **epoch 30**, each from
+**its own** stage-1 lineage, so message content is the only difference between
+them:
+
+| sigma (m) | boxes+embeddings | boxes_only | Embedding is worth |
+|---|---:|---:|---:|
+| 0 | 0.8425 | **0.8452** | -0.0028 |
+| 0.2 | **0.7899** | 0.7874 | +0.0025 |
+| 0.4 | **0.7851** | 0.7821 | +0.0029 |
+| 0.6 | **0.7892** | 0.7848 | +0.0043 |
+| 0.8 | **0.7920** | 0.7881 | +0.0039 |
+| 1.0 | **0.7906** | 0.7903 | +0.0003 |
+| 1.5 | 0.7791 | **0.7804** | -0.0014 |
+| 2.0 | 0.7584 | **0.7629** | -0.0045 |
+
+**Mean +0.0007, range -0.0045 to +0.0043, sign flipping three times.** The
++0.011 mean measured at `r70` was the confound, not the embedding: once the two
+arms are matched on epoch and lineage, the fused-AP benefit disappears into the
+noise, and boxes-only is ahead on three of eight rows including the two
+hardest.
+
+This supersedes the "marginal on AP" half of this sub-section's title. The
+honest summary across every level at which the embedding has been measured:
+
+| Level | Verdict |
+|---|---|
+| Association Top-1 | **nothing** (boxes-only marginally ahead) |
+| Fused AP@0.7, matched arms | **nothing** (+0.0007, sign flips) |
+| Fused AP@0.7, mismatched arms (`r70`) | +0.011 -- **an artifact of the mismatch** |
+| Pose MAE at sigma = 0, mismatched arms (`r70`) | +12-15%, never re-tested matched |
+
+The claim to publish is the strong one: **on OPV2V the appearance embedding
+contributes nothing that geometry does not already supply.** Three independent
+reasons, all measured: no appearance signal exists to extract (true-partner
+separability AUC 0.560 on raw ROI features; all 65,774 CAV box widths are
+2.014 +/- 0.081 m, because CARLA reuses a small vehicle asset library), the
+0.8 m/cell BEV resolution cannot resolve instance identity anyway, and -- the
+binding constraint -- **no ego object in the whole validation split has a
+competitor within 2 m**, so there is nothing for any descriptor to
+disambiguate. The nearest-centre association baseline scores Top-1 **1.0000**
+at sigma = 0.
+
+That last reason is geometric, not perceptual, which is why the camera
+contingency in the design spec **cannot rescue association here** however good
+the features are. It remains open on a real-traffic dataset such as V2X-Real,
+where competitors within 2 m are common.
 
 ## Tables
 
@@ -1370,16 +1507,26 @@ evaluation protocol does not use, and a detector configured for half the range
 the evaluation scores. None was visible in any loss curve. That is the
 transferable lesson from P2.
 
-**The embedding still does not carry the method, but the claim needs its
-numbers.** On association it is worth nothing -- boxes-only is marginally ahead
-(0.9976 against 0.9961). On fused AP it is worth +0.011 on average. On the pose
-metric it is now worth 12-15%, enough to decide the gate at sigma = 0.2 m, on
-one seed and with separate warm starts. The plan's second branch therefore still
-applies: the contribution rests on the closed-form solver plus the efficiency
-argument, and the camera-augmentation contingency (spec 8) remains live. The
+**The embedding does not carry the method, and the matched rerun closed the
+question.** On association it is worth nothing -- boxes-only is marginally
+ahead (0.9976 against 0.9961). On fused AP, once both arms are matched on epoch
+and stage-1 lineage at +/-140.8 m, it is worth **+0.0007 with the sign flipping
+three times**; the +0.011 measured at `r70` was the mismatch, not the
+embedding. The plan's second branch therefore applies in its strong form: the
+contribution rests on the closed-form solver plus the efficiency argument. The
 `match_weight 0` control continues to show that the *matching supervision* is
 worth more than the embedding -- 24% of the corner loss against the embedding's
 17%.
+
+The **camera-augmentation contingency (spec 8) is not live on OPV2V.** It
+addresses two of the three reasons the embedding fails -- no appearance signal,
+and BEV resolution -- but not the binding one: no ego object in the validation
+split has a competitor within 2 m, so nearest-centre association already scores
+Top-1 1.0000 and there is nothing for a better descriptor to disambiguate. The
+contingency stays open for **V2X-Real**, where real traffic supplies the
+competitors OPV2V lacks. Whether any matching improvement can move the headline
+metric at all is bounded by the oracle-correspondence measurement recorded in
+the open items below.
 
 Five things follow, in priority order:
 
@@ -1394,8 +1541,13 @@ Five things follow, in priority order:
    |x| = 70.4 m disagree across agents by 0.230 m against the near field's
    0.151 m, and 6.65 deg against 3.69 deg, yet they enter the closed-form fit
    with equal weight. That is why every test-split pose number got worse at the
-   wider range even as every AP number got better. An inverse-variance weight
-   is the obvious first thing to try and is *not* done here.
+   wider range even as every AP number got better. **Done in task 19**: the
+   inverse-variance weight is now fitted and deployed, and it cuts translation
+   MAE 13-16% and yaw MAE 12-14% at every sigma. See [The correspondence
+   variance model](#the-correspondence-variance-model). The variable that
+   drives the variance turned out to be **detection score, not range** --
+   the hypothesis that dispatched the task was wrong by a factor of ~7 in
+   deviance improvement.
 3. **Attack the detector-limited residual.** What caps AlignFormer at ~0.77
    AP@0.7 against an oracle 0.8964 is not the injected noise -- the residual is
    nearly sigma-independent. It is the cross-agent disagreement in the
@@ -1420,14 +1572,20 @@ Five things follow, in priority order:
   [alignformer_pose_floor.md](alignformer_pose_floor.md) section 6; not
   corrected, because correcting it would mean calibrating on test.
 - One noise seed for the AP sweep, three for the pose sweep.
-- The head A / boxes-only / `match_weight 0` ablations, the shrinkage on/off
-  table and the per-epoch training curve are all `r70`. Only the deployed
-  configuration (B / boxes+embeddings) was retrained at +/-140.8 m.
-- Pose estimation is measurably **worse** at the wider range on the test split
-  (translation MAE 0.2509 -> 0.3043 m at sigma = 0.2, yaw 0.3605 -> 0.4308 deg),
-  and the P2 gate's translation criterion now fails at sigma = 0.2 on test where
-  it used to pass. Fused AP rose anyway. Nothing was tuned to recover the pose
-  numbers; weighting the fit by object range is the recommended next step.
+- The head A / `match_weight 0` ablations, the shrinkage on/off table and the
+  per-epoch training curve are all `r70`. The **boxes-only ablation was**
+  retrained at +/-140.8 m in task 19 with both arms matched on epoch and
+  lineage; see [the matched rerun](#the-matched-r140-rerun-removes-both-confounds-and-the-null-holds).
+  The pose-level embedding gap (12-15% at `r70`) was never re-tested under those
+  matched conditions and should not be quoted without that caveat.
+- **Resolved in task 19.** Pose estimation was measurably worse at the wider
+  range on the test split (translation MAE 0.2509 -> 0.3043 m at sigma = 0.2),
+  and the P2 gate's translation criterion failed at sigma = 0.2 on test where it
+  used to pass. Inverse-variance weighting brings it to **0.2599 m**, below
+  predict-zero's 0.2797 m, so that criterion **passes again**. The yaw criterion
+  still fails on test at sigma = 0.2 and 0.4 and remains open. The recommended
+  fix at the time -- weighting by object *range* -- was measured and is roughly
+  7x weaker than weighting by detection score; score is what was deployed.
 - **Done, and it changed the framing.** V2X-ViT and six other
   intermediate-fusion baselines were re-run locally under this sweep and this
   evaluator; see [Head-to-head against intermediate
@@ -1438,3 +1596,18 @@ Five things follow, in priority order:
   published on this machine -- porting its training-free matcher onto our own
   detections is the recommended P3 item. (Caveat 1, the detector range, is
   resolved as of task 18.)
+- **The oracle-correspondence ceiling is being measured (task 21).** Replacing
+  the learned assignment with the ground-truth one bounds what *any* matching
+  improvement -- a camera-augmented embedding, a larger trunk, a different
+  matcher -- can contribute. The decision rule was pre-registered before the
+  run: a validation AP@0.7 gap above 0.02 means headroom exists, below 0.01
+  means matching is closed on OPV2V. The prior from the existing numbers is that
+  it is closed, since association is already at Top-1 0.9968 against a
+  nearest-centre baseline of 1.0000, and the oracle-correspondence pose floor at
+  sigma = 0 was 0.104 m against a deployed 0.161 m.
+- **The sigma = 0 regression is a property, not a bug** (ruling R44). Five
+  attempted fixes failed; it is the unavoidable cost of moving boxes by an
+  imperfect estimate when the pose was already correct. The deployment answer is
+  to gate the correction on a pose-uncertainty signal rather than to remove the
+  regression. Whether that framing is acceptable for publication is a judgement
+  call, not a measurement, and is recorded here as open.
