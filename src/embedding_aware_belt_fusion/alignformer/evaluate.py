@@ -57,6 +57,11 @@ from torch import Tensor
 
 from embedding_aware_belt_fusion.alignformer.boxes import detect_agent
 from embedding_aware_belt_fusion.alignformer.cache import frame_seed
+from embedding_aware_belt_fusion.alignformer.freealign import (
+    DEFAULT_MIN_NODES,
+    EDGE_DISTANCE,
+    EDGE_DISTANCE_YAW,
+)
 from embedding_aware_belt_fusion.alignformer.fusion import (
     average_precision,
     correct_detections,
@@ -148,6 +153,30 @@ def parse_args() -> argparse.Namespace:
              "correspondence replaced by the ground-truth assignment (weighted "
              "uniformly, and by the checkpoint's own inverse-variance model). "
              "This is the ceiling on what any matching improvement can deliver.",
+    )
+    parser.add_argument(
+        "--freealign", action="store_true",
+        help="--metric noisy_ap only: also fuse the FreeAlign condition -- this "
+             "project's REIMPLEMENTATION of Lei et al., ICRA 2024 "
+             "(arXiv 2405.02965), not the authors' code, which cannot be run "
+             "here (see alignformer.freealign). It is applied to the same late "
+             "fusion, the same detections and the same evaluator as "
+             "--metric noisy_ap's alignformer arm, so the only thing that "
+             "differs between the two rows is the alignment algorithm. That "
+             "late-fusion pairing is the row their own paper never reports.",
+    )
+    parser.add_argument(
+        "--freealign-edge-feature", choices=(EDGE_DISTANCE, EDGE_DISTANCE_YAW),
+        default=EDGE_DISTANCE,
+        help="the paper's training-free edge attribute is the relative distance "
+             "alone; their shipped greedy_match.py adds the relative yaw. "
+             "Selected on validation, never on test.",
+    )
+    parser.add_argument(
+        "--freealign-min-nodes", type=int, default=DEFAULT_MIN_NODES,
+        help="FreeAlign discards a collaborative message whose common subgraph "
+             "has fewer nodes than this; 3 is their shipped default and the "
+             "count below which a distance graph cannot determine SE(2).",
     )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -735,10 +764,13 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     from opencood.data_utils.datasets import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
+    from embedding_aware_belt_fusion.alignformer.freealign import FreeAlignConfig
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
         ALIGNFORMER,
+        FREEALIGN,
         ORACLE,
         ORACLE_MATCH_CONDITIONS,
+        SHARED_BUCKETS,
         UNCORRECTED,
         condition_key,
         run_noise_sweep,
@@ -755,7 +787,22 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     modules, checkpoint = load_stage2(checkpoint_path, device)
     shrinkage = _load_shrinkage(args)
 
-    predictions, ground_truth, pose_stats, intermediate_truth = run_noise_sweep(
+    freealign = (
+        FreeAlignConfig(
+            edge_feature=args.freealign_edge_feature,
+            min_nodes=args.freealign_min_nodes,
+        )
+        if args.freealign
+        else None
+    )
+
+    (
+        predictions,
+        ground_truth,
+        pose_stats,
+        intermediate_truth,
+        frame_shared_counts,
+    ) = run_noise_sweep(
         dataset, detector, dataset.post_processor, device,
         modules=modules,
         ablate_embeddings=checkpoint["message_content"] == "boxes_only",
@@ -767,6 +814,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         max_frames=args.max_frames,
         shrinkage=shrinkage,
         oracle_match=args.oracle_match,
+        freealign=freealign,
     )
 
     ap, ap_intermediate_gt = {}, {}
@@ -781,6 +829,26 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             f"{ap_intermediate_gt[name]['ap_70']['global_sorted']:.4f})",
             flush=True,
         )
+
+    # AP sliced by how many ground-truth objects the frame's agents share --
+    # the row the FreeAlign comparison turns on, because a relative-distance
+    # graph is structurally degenerate below three and AlignFormer's heading
+    # virtual points are not. Averaged over the whole split that slice is
+    # diluted eightfold and the difference disappears into noise.
+    buckets = _frames_by_shared_bucket(frame_shared_counts)
+    ap_by_shared = {
+        bucket: {
+            "frames": len(indices),
+            "conditions": {
+                name: _ap_report(
+                    [frames[i] for i in indices], [ground_truth[i] for i in indices]
+                )
+                for name, frames in predictions.items()
+            },
+        }
+        for bucket, indices in buckets.items()
+        if indices
+    }
 
     return {
         "method": "alignformer_noisy_late_fusion",
@@ -801,8 +869,12 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "uncorrected": UNCORRECTED,
             "alignformer": ALIGNFORMER,
             "oracle_match": list(ORACLE_MATCH_CONDITIONS) if args.oracle_match else [],
+            "freealign": FREEALIGN if freealign is not None else None,
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
+        # Labelled unambiguously: this row is OUR reimplementation of the
+        # published method, on our detections, never the authors' code.
+        "freealign_config": None if freealign is None else freealign.to_dict(),
         "ap": ap,
         # The same predictions scored against the ground truth OpenCOOD's
         # IntermediateFusionDataset would report, so the head-to-head table
@@ -822,7 +894,49 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # key. The oracle conditions are reported beside it, never folded in.
         "pose": pose_stats[ALIGNFORMER],
         "pose_by_condition": pose_stats,
+        "ap_by_shared_objects": ap_by_shared,
+        "shared_object_buckets": list(SHARED_BUCKETS),
+        "frames_with_mixed_shared_object_buckets": len(buckets["mixed"]),
+        "pairs_by_shared_object_bucket": _pairs_by_shared_bucket(frame_shared_counts),
     }
+
+
+def _frames_by_shared_bucket(frame_shared_counts) -> Dict[str, List[int]]:
+    """Frame indices grouped by the shared-object bucket of ALL their pairs.
+
+    AP is a per-frame quantity but the shared-object count is a per-*pair* one,
+    so a frame with two CAVs in different buckets belongs to neither. Those
+    frames go to ``mixed`` and are reported as a count rather than silently
+    assigned, and a frame with no CAV at all is in no bucket: nothing about it
+    distinguishes the conditions.
+    """
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        SHARED_BUCKETS,
+        shared_object_bucket,
+    )
+
+    grouped: Dict[str, List[int]] = {name: [] for name in SHARED_BUCKETS}
+    grouped["mixed"] = []
+    for index, counts in enumerate(frame_shared_counts):
+        if not counts:
+            continue
+        names = {shared_object_bucket(count) for count in counts}
+        grouped[names.pop() if len(names) == 1 else "mixed"].append(index)
+    return grouped
+
+
+def _pairs_by_shared_bucket(frame_shared_counts) -> Dict[str, int]:
+    """How many ego-CAV PAIRS fall in each bucket, the denominator for coverage."""
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        SHARED_BUCKETS,
+        shared_object_bucket,
+    )
+
+    tally = {name: 0 for name in SHARED_BUCKETS}
+    for counts in frame_shared_counts:
+        for count in counts:
+            tally[shared_object_bucket(count)] += 1
+    return tally
 
 
 def _run_ap(args: argparse.Namespace, device) -> Dict:

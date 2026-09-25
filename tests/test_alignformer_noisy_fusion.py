@@ -29,10 +29,10 @@ from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
     ORACLE_MATCH_UNIFORM,
     _object_set,
     _oracle_variance_models,
-    _shares_an_object,
     _sweep_rng,
     _truncate_by_score,
     condition_key,
+    shared_object_count,
 )
 from embedding_aware_belt_fusion.alignformer.variance import (
     UNWEIGHTED,
@@ -95,12 +95,63 @@ def test_the_model_input_and_the_fused_boxes_move_by_the_same_se2():
     assert torch.equal(detections.boxes, _detections([0.9, 0.8, 0.7]).boxes)
 
 
+def test_the_pose_stats_slice_pairs_by_shared_object_count_and_report_coverage():
+    # Task 20. FreeAlign's evidence is pairwise distances, so one shared object
+    # is a graph with no edge and two give a single scalar; three is where a
+    # distance graph stops being degenerate, which is where the boundary sits.
+    # Coverage is reported beside the error because a method that abstains
+    # often looks good on the pairs it does answer.
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        SHARED_BUCKETS,
+        _PoseStats,
+        shared_object_bucket,
+    )
+
+    assert SHARED_BUCKETS == ("shared_0", "shared_1_2", "shared_3plus")
+    assert [shared_object_bucket(n) for n in (0, 1, 2, 3, 40)] == [
+        "shared_0", "shared_1_2", "shared_1_2", "shared_3plus", "shared_3plus"
+    ]
+
+    stats = _PoseStats(70.0)
+    # A declined sparse pair, an answered sparse pair, an answered dense one.
+    stats.update(0.0, (0.0, 0.0), 0.0, (2.0, 0.0),
+                 fell_back=True, shared_count=2, distance_m=10.0)
+    stats.update(0.0, (0.4, 0.0), 0.0, (0.0, 0.0),
+                 fell_back=False, shared_count=1, distance_m=10.0)
+    stats.update(0.0, (0.1, 0.0), 0.0, (0.0, 0.0),
+                 fell_back=False, shared_count=9, distance_m=10.0)
+
+    metrics = stats.compute()
+
+    assert metrics["coverage"] == pytest.approx(2 / 3)
+    assert metrics["shared_1_2_pairs"] == 2.0
+    assert metrics["shared_1_2_coverage"] == 0.5
+    # Over ALL sparse pairs the declined one contributes its 2 m of uncorrected
+    # error; over the ANSWERED ones only, it does not. Both are reported,
+    # because FreeAlign's published pose figures are conditioned on the latter.
+    assert metrics["shared_1_2_translation_mae_m"] == pytest.approx(1.2)
+    assert metrics["shared_1_2_answered_translation_mae_m"] == pytest.approx(0.4)
+    assert metrics["shared_3plus_coverage"] == 1.0
+    assert metrics["shared_0_pairs"] == 0.0
+
+
+def test_the_freealign_condition_is_named_and_keyed_like_every_other():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        FREEALIGN,
+        condition_key,
+    )
+
+    assert FREEALIGN == "freealign"
+    assert condition_key(FREEALIGN, 0.4) == "freealign_sigma_0.4m"
+
+
 def test_two_unmatched_detections_are_not_the_same_object():
     # None means "matched no ground-truth object". Treating two of them as a
     # shared object would report a structurally unalignable pair as alignable.
-    assert not _shares_an_object([None, None], [None])
-    assert not _shares_an_object(["7"], ["9", None])
-    assert _shares_an_object(["7", None], [None, "7"])
+    assert shared_object_count([None, None], [None]) == 0
+    assert shared_object_count(["7"], ["9", None]) == 0
+    assert shared_object_count(["7", None], [None, "7"]) == 1
+    assert shared_object_count(["7", "9", "4"], ["9", "7", None]) == 2
 
 
 def test_each_sigma_draws_independent_noise():
@@ -181,9 +232,9 @@ def test_the_pose_stats_split_pairs_by_the_training_communication_range():
 
     stats = _PoseStats(40.0)
     stats.update(0.0, (0.0, 0.0), 0.0, (1.0, 0.0),
-                 fell_back=True, alignable=True, distance_m=12.0)
+                 fell_back=True, shared_count=4, distance_m=12.0)
     stats.update(0.0, (0.0, 0.0), 0.0, (3.0, 0.0),
-                 fell_back=True, alignable=True, distance_m=55.0)
+                 fell_back=True, shared_count=4, distance_m=55.0)
 
     metrics = stats.compute()
 
@@ -210,9 +261,9 @@ def test_the_pose_stats_also_split_at_the_fixed_40m_diagnostic_boundary():
     # Arrange: a training range that no longer coincides with the boundary
     stats = _PoseStats(70.0)
     stats.update(0.0, (0.0, 0.0), 0.0, (1.0, 0.0),
-                 fell_back=False, alignable=True, distance_m=12.0)
+                 fell_back=False, shared_count=4, distance_m=12.0)
     stats.update(0.0, (0.0, 0.0), 0.0, (3.0, 0.0),
-                 fell_back=False, alignable=True, distance_m=55.0)
+                 fell_back=False, shared_count=4, distance_m=55.0)
 
     # Act
     metrics = stats.compute()

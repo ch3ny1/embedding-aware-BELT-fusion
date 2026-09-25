@@ -53,6 +53,7 @@ oracle, across a localization-noise sweep.
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
 | **mAP under localization error** (the number the project needs) | **AlignFormer recovers 78-84% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.46 to +0.60 AP@0.7** on the 2170-frame test split, and **+0.18 at sigma = 0.2 m**. At sigma = 0 it still costs **0.055** (it cost 0.070 at +/-70.4 m: the regression shrank by a fifth but did **not** close). |
 | **Inverse-variance correspondence weighting** (deployed, task 19) | **Better pose everywhere, better AP at every non-zero sigma, 0.011 worse at sigma = 0.** Weighting each correspondence by its fitted inverse variance cuts translation MAE 13-16% and yaw MAE 12-14% at every sigma, lifts AP@0.7 by +0.003 to +0.016 from sigma = 0.2 up, and costs 0.0105 at sigma = 0. It also **fixes the test-split translation gate failure at sigma = 0.2 m** (0.2599 against predict-zero's 0.2797, where the unweighted fit gave 0.3043). The variance is driven by **detection score, not range** -- see [below](#the-correspondence-variance-model). |
+| **Head-to-head against FreeAlign** (the closest published competitor, reimplemented onto our late fusion) | **Not ordered: FreeAlign wins AP@0.7 at every sigma (by 0.015 to 0.049), AlignFormer wins AP@0.3 from 0.2 m up (by up to 0.020) and AP@0.5 through the middle of the sweep.** FreeAlign's pose error has a slightly BETTER median (0.109 m against 0.116 m) and a 5.7x worse mean, because 2.55% of its corrections are wrong by more than 3 m against AlignFormer's 0.93%. On the 8.7% of pairs sharing one or two objects -- where a relative-distance graph is structurally degenerate -- FreeAlign declines 84% and gains +0.011 AP@0.7 over doing nothing while AlignFormer answers 93% and gains +0.184. The row is a **reimplementation**, never the authors' code. See [below](#freealign-the-boxes-only-competitor-reimplemented-onto-our-late-fusion). |
 | **Head-to-head against intermediate fusion** (the claim the project exists to make) | **Ties the strongest baseline on the clean row, loses one row at 0.2 m, and leads the whole field from 0.4 m, at 1,021x to 4,254x fewer bytes.** At sigma = 0 AlignFormer is above V2X-ViT, Where2comm and F-Cooper and below CoAlign, CoBEVT, AttFuse and V2VAM; at 0.2 m six of seven are ahead of it; from 0.4 m it leads every one, by +0.030 to +0.040 over V2X-ViT and +0.16 to +0.33 over the rest. All seven were run locally under this sweep and this evaluator -- no published number is quoted. See [below](#head-to-head-against-intermediate-fusion). |
 
 ### The headline
@@ -1567,6 +1568,259 @@ python scripts/summarize_alignformer_baselines.py \
   --bandwidth $O/bandwidth_r140_result.json \
   --alignformer-gt-conventions $O/p2_r140_noisy_ap_result.json
 ```
+
+## FreeAlign: the boxes-only competitor, reimplemented onto our late fusion
+
+FreeAlign (Lei, Ni, Han, Tang, Wang, Feng, Chen, Wang; ICRA 2024;
+arXiv 2405.02965) is the closest published competitor: it aligns agents from
+**boxes only, with no localization prior**, by building a salient-object graph
+per agent -- nodes are detected boxes, edges are relative distances, invariant
+to the viewer's pose -- and matching common subgraphs. It became the most
+important baseline once the association diagnostic established that
+AlignFormer's appearance embedding contributes nothing to matching on OPV2V,
+leaving object-level **geometry** as what both methods actually use.
+
+**Every number below is a reimplementation of the published method, not a run
+of the authors' code, and must never be quoted as theirs.** Their repository is
+built on CoAlign's OpenCOOD fork with a different dataset, postprocessor and AP
+implementation; it needs CoAlign's uncertainty detector (absent here), a
+stage-1 precalc pass, source-built `g2opy` and Baidu-Drive checkpoints. Running
+it end to end would mean training a detector from scratch and would still not
+be apples-to-apples. `alignformer/freealign.py` ports the algorithm onto **our**
+detections, **our** sweep and **our** evaluator instead, which isolates the
+alignment algorithm -- the thing under test -- from detector and evaluator
+differences. Both rows below come out of **one** `--metric noisy_ap`
+invocation per split, so the detections, the noise draws, the fusion and the AP
+are identical and the only thing that differs is the alignment algorithm.
+
+**The pairing measured here is the one their paper does not report.** Every
+FreeAlign result there sits on an intermediate-fusion backbone --
+CoAlign+FreeAlign, V2X-ViT+FreeAlign, Where2comm+FreeAlign -- so the system
+still transmits feature maps. AlignFormer's claim is robustness at *late-fusion*
+bandwidth, so the honest comparison holds bytes fixed, and the row that does
+that is **late fusion + FreeAlign**.
+
+### The headline: FreeAlign wins AP@0.7 and AlignFormer wins AP@0.3
+
+Test split, 2170 frames, global-sorted AP, shrinkage as deployed on the
+AlignFormer arm and none on FreeAlign (it has no such step).
+
+| sigma (m) | uncorrected | AlignFormer | FreeAlign | AP@0.7 delta |
+|---|---:|---:|---:|---:|
+| 0 | 0.8964 | 0.8310 | **0.8461** | -0.0151 |
+| 0.2 | 0.5978 | 0.7841 | **0.8334** | -0.0492 |
+| 0.4 | 0.3158 | 0.7835 | **0.8164** | -0.0329 |
+| 0.6 | 0.2154 | 0.7819 | **0.8094** | -0.0276 |
+| 0.8 | 0.1844 | 0.7850 | **0.8069** | -0.0219 |
+| 1.0 | 0.1763 | 0.7851 | **0.8054** | -0.0203 |
+| 1.5 | 0.1799 | 0.7756 | **0.8048** | -0.0291 |
+| 2.0 | 0.1898 | 0.7600 | **0.8047** | -0.0448 |
+
+Negative delta means FreeAlign is ahead. **It is ahead at every sigma on
+AP@0.7, by 0.015 to 0.049**, and it is essentially flat across the sweep
+(0.8047-0.8461), which is exactly the pose-prior independence its paper claims.
+That is reported first because it is the result that costs this project the
+most.
+
+At the thresholds FreeAlign's own paper reports, the picture reverses:
+
+| sigma (m) | AP@0.3 AlignFormer | AP@0.3 FreeAlign | AP@0.5 AlignFormer | AP@0.5 FreeAlign |
+|---|---:|---:|---:|---:|
+| 0 | 0.9373 | 0.9377 | 0.9163 | **0.9287** |
+| 0.2 | **0.9379** | 0.9376 | 0.9139 | **0.9277** |
+| 0.4 | **0.9376** | 0.9368 | 0.9122 | **0.9169** |
+| 0.6 | **0.9349** | 0.9309 | **0.9077** | 0.9043 |
+| 0.8 | **0.9328** | 0.9233 | **0.9054** | 0.8983 |
+| 1.0 | **0.9337** | 0.9163 | **0.9059** | 0.8929 |
+| 1.5 | **0.9275** | 0.9074 | **0.8959** | 0.8879 |
+| 2.0 | **0.9202** | 0.8999 | 0.8841 | **0.8857** |
+
+**AlignFormer leads AP@0.3 at every sigma from 0.2 m up, by as much as 0.020,
+and AP@0.5 through the middle of the sweep.** The two methods are not ordered:
+which one wins depends on the IoU threshold, and any single-threshold headline
+would be a choice of framing rather than a finding.
+
+On validation FreeAlign's lead at AP@0.7 is wider and flatter still (0.8957
+-0.8962 at every sigma against AlignFormer's 0.8506-0.8985), and AlignFormer
+wins only the clean row.
+
+### Why a method with five times the mean pose error wins AP@0.7
+
+The pose numbers look incompatible with the AP table until the distribution is
+looked at. Test split, sigma = 1.0 m, stride-8 diagnostic, 431 pairs, the same
+detections for both (`scripts/calibrate_freealign.py --selected-only`):
+
+| | FreeAlign | AlignFormer |
+|---|---:|---:|
+| translation **median** (m) | **0.109** | 0.116 |
+| translation mean (m) | 1.317 | **0.233** |
+| yaw **median** (deg) | **0.092** | 0.119 |
+| yaw mean (deg) | 2.351 | **0.378** |
+| coverage (pairs corrected at all) | 0.907 | **0.988** |
+| error rate, \|dt\| > 3 m (their Table II metric) | 2.55% | **0.93%** |
+
+**FreeAlign's median pose error is slightly better than AlignFormer's; its mean
+is 5.7x worse, entirely because of a 2.55% catastrophic tail.** AP@0.7 responds
+to the typical pair and rewards FreeAlign's noise-independence; MAE is dragged
+by the tail and rewards AlignFormer. Both summaries are true and they point
+opposite ways, which is why both are reported.
+
+### The structural experiment: shared-object count
+
+FreeAlign's evidence is pairwise *distances*, so one shared object is a 1-node
+graph with **no edge**, two give a single scalar that fixes neither rotation nor
+the reflection, and three are needed before a distance graph rigidly determines
+SE(2). AlignFormer augments every object with heading virtual points
+(`heading_lambda = 2.0` m), so a *single* matched object determines the full
+SE(2). Averaged over the split that difference is diluted, so it is reported as
+its own slice. Test split: 34 pairs share no object (1.0%), 300 share one or two
+(8.7%), 3111 share three or more (90.3%); no frame straddles two slices.
+
+AP@0.7, sigma = 1.0 m:
+
+| slice | frames | pairs | uncorrected | AlignFormer | FreeAlign | AF coverage | FA coverage |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 shared | 30 | 34 | 0.1173 | 0.1188 | 0.1173 | 0.118 | 0.059 |
+| 1-2 shared | 290 | 300 | 0.3348 | **0.5185** | 0.3456 | 0.930 | 0.163 |
+| 3+ shared | 1731 | 3111 | 0.1521 | 0.8119 | **0.8513** | 0.997 | 0.989 |
+
+**The prediction holds, and the mechanism is coverage.** On the 1-2 slice
+FreeAlign declines 84% of pairs -- its own safety rule firing exactly where the
+spec said it would -- and gains +0.011 AP@0.7 over doing nothing, while
+AlignFormer answers 93% of them and gains +0.184. On the 3+ slice, which is 90%
+of pairs and therefore the aggregate, FreeAlign wins.
+
+The pose diagnostic says the same thing more sharply. Of the sparse pairs
+FreeAlign *does* answer, **60% are wrong by more than 3 m** (median 3.32 m)
+against AlignFormer's 10.3% (median 0.454 m); of the no-shared-object pairs it
+answers (25% of them) the mean error is **113 m**, while AlignFormer declines
+all of them. On the 3+ slice the two are level on the median (0.099 m against
+0.103 m) and FreeAlign's tail is 1.29% against AlignFormer's 0.00%.
+
+### The port is not a strawman, and here is the evidence
+
+A reimplementation that loses can always be dismissed, so the port was verified
+where it *should* succeed before any loss was reported.
+
+- **Validation, 234 pairs, sigma = 1.0 m: 0.0994 m mean / 0.0818 m median
+  translation, 0.113 deg mean yaw, coverage 1.000, error rate 0.00%.** The
+  paper reports 0.266 m / 0.017 deg / 0.56% on OPV2V for the full model and
+  0.283 m / 0.029 deg / 0.78% for the anchor-based matching *without* GNN edge
+  features, which is the path ported here. The port's translation is better
+  than either; its yaw is worse; its error rate is zero on this slice.
+- **Test, 3+ shared objects: error rate 1.29% against their no-GNN 0.78%** --
+  a factor of 1.65 on a harder pair population, which is the right regime.
+- On validation it also **beats the deployed AlignFormer** on the same pairs
+  (0.0994 m against 0.124 m mean, 0.082 m against 0.094 m median).
+- The parameters the paper leaves open were chosen by a 192-point grid on the
+  validation slice, and **two of them came back as the authors' own shipped
+  values** (`max_error = 0.5` m, `min_nodes = 3`).
+
+### What is ported, what is not, and every deviation
+
+| Their component | Here |
+|---|---|
+| Salient-object graph, fully connected, one node per box (Section IV-A) | ported |
+| Edge feature = EdgeGAT over the relative-distance matrix, contrastive loss (eq. 2) | **not ported.** Their Table VI prices anchor-based matching without GNN features on OPV2V at 0.029 deg / 0.283 m / 0.78% against 0.017 / 0.266 / 0.56% with them, and their released configs set `gnn: false`, so this is the path their own code ships |
+| MASS, all four steps: n x m anchor init, anchor-list expansion to gamma, subgraph growth, minimal-eps selection (Section IV-B) | ported |
+| Relative pose by RANSAC or LMedS over the matched point sets (Section IV-C) | ported. The port carries its own unweighted least-squares core so that `MIN_MATCH_MASS`, heading virtual points and the inverse-variance weighting cannot leak into the competitor; a test pins that this core agrees with `procrustes.weighted_se2_kabsch` at uniform weights |
+| Discard the message below a minimum common-subgraph node count | ported; a discarded message is fused uncorrected, exactly as our own fallback does, which is what makes the two coverage figures comparable |
+| Clock-deviation estimation (their title's "and Clock Devices") | out of scope: this sweep perturbs pose only and the frames are synchronous. **Their problem is strictly larger than ours** |
+
+Deviations beyond the two above, in full:
+
+- **The paper and the authors' code disagree on the edge attribute, and the
+  port follows the paper -- which is also the better of the two here.** Section
+  V-C says that absent the GNN "edge matching is determined by the relative
+  distance between two nodes"; their `greedy_match.py` builds a 2-channel edge
+  of relative distance *and relative yaw*. Both were measured on validation:
+  distance alone gives 0.0994 m, distance-and-yaw 0.2903 m. The detector here
+  reports a box's *axis*, not its direction -- 20.3% of cross-agent detections
+  of the same object disagree by ~180 degrees -- so a yaw channel imports
+  exactly the ambiguity a distance-only graph is immune to. **That immunity is a
+  real advantage of their design** and it is kept.
+- **The selection score's constant is load-bearing and is taken from their
+  code.** The paper's step (iv) is `eps = (1/r^p) sum_e eps_e` with `p` "a
+  tunable hyperparameter"; their `get_best_match` seeds the accumulator at 100
+  and divides by the match count, making the selection "largest common subgraph
+  first, discrepancy as the tie-break" -- which is also what Section IV-B's own
+  phrase "approximate **maximum** common subgraph" says. With the constant at
+  zero, a three-node coincidence outscores the true eleven-node subgraph and the
+  port degrades to 19 m of error; that was observed here before the constant was
+  restored, and it is the single likeliest way a naive port turns into a
+  strawman.
+- Relative yaw in the 2-channel variant is wrapped to `(-pi, pi]`; the shipped
+  code subtracts raw yaws, which is not invariant across the branch cut.
+- RANSAC/LMedS enumerate **all** minimal (2-correspondence) samples rather than
+  drawing random ones, capped at 512 by even subsampling. At the subgraph sizes
+  seen here that is exhaustive, hence stronger than random sampling, and it is
+  deterministic.
+- Ties in the greedy steps break by smallest discrepancy, then by index; the
+  paper specifies no order.
+- `gamma` (3), the epsilon exponent (1.0) and the RANSAC inlier threshold
+  (1.0 m) have no published value and were chosen on validation.
+
+### Two facts the earlier spec asserted that this measurement corrects
+
+- The spec records "**18.5% of ego-CAV pairs share no object**" and "~7.8% share
+  exactly one or two", measured over the ROI cache. On the evaluated test split
+  those figures are **1.0% and 8.7%**, and on validation **0.0% and 1.8%**. The
+  sparse slice is real and it is where AlignFormer's structural advantage shows
+  up, but the no-shared-object population is an order of magnitude smaller than
+  the spec claimed and the argument should not lean on it.
+- The spec notes that FreeAlign does not use heading and calls that a genuine
+  advantage. That is confirmed and quantified above: adding the heading channel
+  the authors' own code carries makes the port **three times worse** on this
+  detector.
+
+### Reproducing
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
+export PYTHONPATH=src:external/OpenCOOD
+O=outputs/alignformer/r140
+DET=configs/alignformer_detector_r140.yaml
+AF=configs/alignformer_r140.yaml
+VAL=/media/chenyi/basement2/cache/opv2v_splits/val
+TEST=/media/chenyi/Elements1/Dataset/OPV2V/test
+CKPT=$O/stage2_B_ivw_scalar/best.pth
+SHRINK=$O/shrinkage_ivw_scalar_calibration_result.json
+E="python -m embedding_aware_belt_fusion.alignformer.evaluate"
+
+# 1. Choose the port's free parameters on VALIDATION only (~25 min).
+python scripts/calibrate_freealign.py --config $DET --alignformer-config $AF \
+  --split $VAL --stride 8 --sigma 1.0 \
+  --output $O/freealign_calibration_result.json
+
+# 2. One evaluator pass per split produces BOTH rows (~25 min val, ~95 min test).
+for SPLIT_NAME in val test; do
+  [ $SPLIT_NAME = val ] && SPLIT=$VAL || SPLIT=$TEST
+  $E --config $DET --split $SPLIT --metric noisy_ap --alignformer-config $AF \
+     --checkpoint $CKPT --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0 \
+     --shrinkage $SHRINK --freealign \
+     --output $O/freealign_${SPLIT_NAME}_result.json
+done
+
+# 3. Median and their own >3 m error rate, paired, to explain the AP/MAE
+#    inversion. This is a MEASUREMENT, so it may point at test (~6 min each).
+for SPLIT_NAME in val test; do
+  [ $SPLIT_NAME = val ] && SPLIT=$VAL || SPLIT=$TEST
+  python scripts/calibrate_freealign.py --config $DET --alignformer-config $AF \
+    --split $SPLIT --stride 8 --sigma 1.0 --selected-only \
+    --checkpoint $CKPT --shrinkage $SHRINK \
+    --output $O/freealign_pose_diagnostic_${SPLIT_NAME}_result.json
+done
+
+# 4. Every table above is rendered from those JSONs
+python scripts/summarize_freealign.py \
+  --test $O/freealign_test_result.json --validation $O/freealign_val_result.json \
+  --calibration $O/freealign_calibration_result.json \
+  --output $O/freealign_result.json
+```
+
+The AlignFormer, uncorrected and oracle rows of this run reproduce
+`p2_r140_ivw_scalar_noisy_ap_result.json` exactly at every sigma and every IoU
+threshold, so adding the condition changed nothing about the deployed arm.
 
 ## What this means for P3-P5
 

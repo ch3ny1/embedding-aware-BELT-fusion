@@ -19,6 +19,15 @@ but the correction differs between them:
 - ``alignformer`` -- the noisy correction, then AlignFormer's estimated
   residual SE(2) on top. The result is the gap it closes between the two.
 
+With ``freealign`` a fourth condition joins them: this project's
+REIMPLEMENTATION of Lei et al.'s FreeAlign (ICRA 2024), the closest published
+competitor, aligning the same agents from the same boxes by a salient-object
+graph instead of by a learned correspondence. Running it here rather than in
+the authors' repository is what makes the row comparable at all -- same
+detector, same fusion, same AP -- and **late fusion + FreeAlign is the pairing
+their own paper never reports**, since every result there sits on an
+intermediate-fusion backbone still shipping feature maps.
+
 With ``oracle_match`` two further conditions join them,
 ``oracle_match_uniform`` and ``oracle_match_ivw``: the *same* estimator with
 the learned correspondence replaced by the ground-truth assignment. They are
@@ -49,6 +58,10 @@ from torch import Tensor
 from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections, detect_agent
 from embedding_aware_belt_fusion.alignformer.dataset import YAW_STD_PER_XY_STD
 from embedding_aware_belt_fusion.alignformer.embedding import rotated_roi_align
+from embedding_aware_belt_fusion.alignformer.freealign import (
+    FreeAlignConfig,
+    freealign_estimate,
+)
 from embedding_aware_belt_fusion.alignformer.fusion import (
     correct_boxes,
     correct_detections,
@@ -79,6 +92,12 @@ DIAGNOSTIC_RANGE_M = 40.0
 ORACLE = "oracle"
 UNCORRECTED = "uncorrected"
 ALIGNFORMER = "alignformer"
+# The FreeAlign REIMPLEMENTATION (task 20), applied to this same late-fusion
+# pipeline on these same detections. That pairing -- late fusion + FreeAlign --
+# is the row FreeAlign's own paper never reports: every result there pairs it
+# with an intermediate-fusion backbone, so the system still ships feature maps.
+# See alignformer.freealign for what is and is not ported.
+FREEALIGN = "freealign"
 # The oracle-correspondence ceiling (task 21): AlignFormer's own estimator with
 # the learned Sinkhorn correspondence replaced by the ground-truth one-to-one
 # assignment. Two weightings, because the deployed model weights its
@@ -87,6 +106,14 @@ ALIGNFORMER = "alignformer"
 ORACLE_MATCH_UNIFORM = "oracle_match_uniform"
 ORACLE_MATCH_IVW = "oracle_match_ivw"
 ORACLE_MATCH_CONDITIONS = (ORACLE_MATCH_UNIFORM, ORACLE_MATCH_IVW)
+
+# Slices by how many ground-truth objects the two agents both detected. The
+# boundary at 3 is not arbitrary: it is exactly where a relative-distance graph
+# stops being degenerate (see shared_object_count).
+SHARED_NONE = "shared_0"
+SHARED_SPARSE = "shared_1_2"
+SHARED_DENSE = "shared_3plus"
+SHARED_BUCKETS = (SHARED_NONE, SHARED_SPARSE, SHARED_DENSE)
 
 _PROGRESS_INTERVAL = 100
 
@@ -226,6 +253,13 @@ class _PoseStats:
         self.beyond_training_range = _PoseSubset()
         self.within_40m = _PoseSubset()
         self.beyond_40m = _PoseSubset()
+        # Task 20. ``answered`` drops the pairs the estimator declined, which
+        # is the conditioning FreeAlign's published pose figures are reported
+        # under; without it the two are not comparable as printed. The
+        # shared-object slices are where the two methods differ structurally.
+        self.answered = _PoseSubset()
+        self.shared = {name: _PoseSubset() for name in SHARED_BUCKETS}
+        self.shared_answered = {name: _PoseSubset() for name in SHARED_BUCKETS}
 
     def update(
         self,
@@ -235,7 +269,7 @@ class _PoseStats:
         t_true: Sequence[float],
         *,
         fell_back: bool,
-        alignable: bool,
+        shared_count: int,
         distance_m: float,
     ) -> None:
         translation = float(np.hypot(t_hat[0] - t_true[0], t_hat[1] - t_true[1]))
@@ -247,8 +281,13 @@ class _PoseStats:
 
         terms = (translation, zero_translation, yaw, zero_yaw, fell_back)
         self.all.add(*terms)
-        if not alignable:
+        if shared_count == 0:
             self.unalignable.add(*terms)
+        bucket = shared_object_bucket(shared_count)
+        self.shared[bucket].add(*terms)
+        if not fell_back:
+            self.answered.add(*terms)
+            self.shared_answered[bucket].add(*terms)
         if distance_m <= self.training_range_m:
             self.within_training_range.add(*terms)
         else:
@@ -271,29 +310,61 @@ class _PoseStats:
         metrics["beyond_40m_fraction"] = (
             self.beyond_40m.pairs / self.all.pairs if self.all.pairs else None
         )
-        for name, subset in (
+        metrics["coverage"] = (
+            self.answered.pairs / self.all.pairs if self.all.pairs else None
+        )
+        subsets = [
             ("unalignable", self.unalignable),
             ("within_training_range", self.within_training_range),
             ("beyond_training_range", self.beyond_training_range),
             ("within_40m", self.within_40m),
             ("beyond_40m", self.beyond_40m),
-        ):
+            ("answered", self.answered),
+        ]
+        for name in SHARED_BUCKETS:
+            subsets.append((name, self.shared[name]))
+            subsets.append((f"{name}_answered", self.shared_answered[name]))
+            answered = self.shared_answered[name].pairs
+            total = self.shared[name].pairs
+            metrics[f"{name}_coverage"] = answered / total if total else None
+            metrics[f"{name}_fraction"] = (
+                total / self.all.pairs if self.all.pairs else None
+            )
+        for name, subset in subsets:
             for key, value in subset.compute().items():
                 metrics[f"{name}_{key}"] = value
         return metrics
 
 
-def _shares_an_object(left: Sequence[Optional[str]], right: Sequence[Optional[str]]) -> bool:
-    """True when both agents matched at least one common ground-truth object.
+def shared_object_count(
+    left: Sequence[Optional[str]], right: Sequence[Optional[str]]
+) -> int:
+    """How many ground-truth objects both agents detected.
 
     ``None`` means "matched no ground-truth object", so two ``None`` detections
     are different objects, not the same one -- the same rule
     ``dataset.correspondence_indices`` applies.
+
+    This count, not merely whether it is positive, is what separates the two
+    methods structurally (task 20). FreeAlign's evidence is pairwise
+    *distances*: one shared object is a 1-node graph with no edge, two give a
+    single scalar that fixes neither rotation nor the reflection, and three are
+    needed before a distance graph rigidly determines SE(2). AlignFormer's
+    heading virtual points solve the full SE(2) from one. Averaged over the
+    whole split that difference is diluted eightfold, so it is reported as its
+    own slice.
     """
-    return bool(
+    return len(
         {value for value in left if value is not None}
         & {value for value in right if value is not None}
     )
+
+
+def shared_object_bucket(count: int) -> str:
+    """The slice name for a pair sharing ``count`` ground-truth objects."""
+    if count == 0:
+        return SHARED_NONE
+    return SHARED_SPARSE if count <= 2 else SHARED_DENSE
 
 
 @torch.no_grad()
@@ -313,13 +384,24 @@ def run_noise_sweep(
     max_frames: Optional[int] = None,
     shrinkage: Optional[ShrinkageCalibration] = None,
     oracle_match: bool = False,
-) -> Tuple[Dict[str, List[Tuple[Tensor, Tensor]]], List[Tensor], Dict[str, Dict[str, float]]]:
+    freealign: Optional[FreeAlignConfig] = None,
+) -> Tuple[
+    Dict[str, List[Tuple[Tensor, Tensor]]],
+    List[Tensor],
+    Dict[str, Dict[str, Dict[str, float]]],
+    List[Tensor],
+    List[List[int]],
+]:
     """Fuse every frame under every condition; return predictions, truth and pose stats.
 
-    Returns ``(predictions_by_condition, ground_truth, pose_stats_by_condition)``,
-    the last being ``{estimator: {sigma key: metrics}}``. ``ground_truth`` is
-    shared by every condition -- the frames and their labels do not change,
-    only the correction applied to the CAV boxes does.
+    Returns ``(predictions_by_condition, ground_truth, pose_stats_by_condition,
+    intermediate_convention_ground_truth, shared_object_counts_per_frame)``.
+    ``pose_stats_by_condition`` is ``{estimator: {sigma key: metrics}}``.
+    ``ground_truth`` is shared by every condition -- the frames and their
+    labels do not change, only the correction applied to the CAV boxes does --
+    and the last entry carries, per frame, how many ground-truth objects each
+    of its ego-CAV pairs shares, which is what lets AP be sliced the way the
+    pose error is.
 
     ``shrinkage``, when given, is applied to every estimate before the boxes
     are moved, so the ``alignformer`` condition measures what the method would
@@ -331,6 +413,15 @@ def run_noise_sweep(
     the deployed estimator run on the ground-truth correspondence. They share
     the frame's detections, noise draws and shrinkage with ``alignformer``, so
     the difference between them is the matching and nothing else.
+
+    ``freealign``, when given, adds the :data:`FREEALIGN` condition -- the
+    reimplementation of Lei et al.'s ICRA 2024 method (see
+    ``alignformer.freealign``) -- on the SAME detections, the SAME noise draws
+    and through the SAME fusion and evaluator, so the only thing that differs
+    between that row and ``alignformer`` is the alignment algorithm.
+    ``shrinkage`` is deliberately NOT applied to it: the calibration is fitted
+    on AlignFormer's own residuals and FreeAlign has no such step, so applying
+    it would be scoring the competitor through our calibration.
     """
     from opencood.utils import box_utils
     from opencood.utils.transformation_utils import x1_to_x2
@@ -344,6 +435,8 @@ def run_noise_sweep(
 
     variance_models = _oracle_variance_models(modules) if oracle_match else {}
     estimators = [ALIGNFORMER] + list(variance_models)
+    if freealign is not None:
+        estimators.append(FREEALIGN)
     heading_lambda = float(
         getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA)
     )
@@ -356,6 +449,11 @@ def run_noise_sweep(
     predictions: Dict[str, List[Tuple[Tensor, Tensor]]] = {key: [] for key in conditions}
     ground_truth: List[Tensor] = []
     intermediate_ground_truth: List[Tensor] = []
+    # One entry per frame: how many ground-truth objects each of the frame's
+    # ego-CAV pairs shares. Independent of sigma (the detections do not move
+    # with the noise), and the key that lets AP be sliced the way the pose
+    # error already is.
+    frame_shared_counts: List[List[int]] = []
     stats = {
         name: {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
         for name in estimators
@@ -391,12 +489,19 @@ def run_noise_sweep(
         predictions[ORACLE].append(_fuse(oracle, nms_threshold))
 
         ego_pack = packs["ego"]
+        cav_keys = sorted(key for key in detections if key != "ego")
+        # Fixed for the frame: the detections do not move with sigma, so the
+        # shared-object count of each pair is a property of the frame alone.
+        shared_this_frame = [
+            shared_object_count(ego_pack["gt_ids"], packs[key]["gt_ids"])
+            for key in cav_keys
+        ]
         for sigma in sigmas:
             uncorrected = [detections["ego"]]  # ego's own transform is the identity
             # Every estimator corrects the SAME noisy detections, so the fused
             # sets differ by the estimate alone.
             aligned = {name: [detections["ego"]] for name in estimators}
-            for agent, key in enumerate(sorted(k for k in detections if k != "ego")):
+            for agent, key in enumerate(cav_keys):
                 rng = _sweep_rng(seed, sigma, index, agent)
                 noisy_pose = perturb_pose_2d(
                     poses[key], sigma, sigma * YAW_STD_PER_XY_STD, rng
@@ -418,6 +523,8 @@ def run_noise_sweep(
                 estimates = {
                     ALIGNFORMER: _estimate(modules, pair, ablate_embeddings)
                 }
+                if freealign is not None:
+                    estimates[FREEALIGN] = freealign_estimate(pair, freealign)
                 if variance_models:
                     assignment = oracle_assignment(
                         ego_pack["gt_ids"],
@@ -433,8 +540,11 @@ def run_noise_sweep(
                         )
 
                 dx, dy, dpsi_deg = relative_pose_error(ego_pose, poses[key], noisy_pose)
+                shared = shared_this_frame[agent]
                 for name, estimate in estimates.items():
-                    if shrinkage is not None:
+                    # FreeAlign is scored as published: no shrinkage, which is
+                    # AlignFormer's calibration and not part of their method.
+                    if shrinkage is not None and name != FREEALIGN:
                         estimate = shrink(estimate, shrinkage)
                     aligned[name].append(
                         correct_detections(
@@ -447,9 +557,7 @@ def run_noise_sweep(
                         float(np.radians(dpsi_deg)),
                         (dx, dy),
                         fell_back=bool(is_fallback(estimate)[0].item()),
-                        alignable=_shares_an_object(
-                            packs["ego"]["gt_ids"], packs[key]["gt_ids"]
-                        ),
+                        shared_count=shared,
                         distance_m=float(np.hypot(
                             poses[key][0] - ego_pose[0], poses[key][1] - ego_pose[1]
                         )),
@@ -468,6 +576,7 @@ def run_noise_sweep(
             gt_corners.detach().cpu().numpy(), order=postprocessor.params["order"]
         )
         ground_truth.append(torch.from_numpy(gt_boxes).float())
+        frame_shared_counts.append(shared_this_frame)
         intermediate_ground_truth.append(
             _intermediate_convention_ground_truth(dataset, base, ego_pose)
         )
@@ -484,6 +593,7 @@ def run_noise_sweep(
             for name, by_sigma in stats.items()
         },
         intermediate_ground_truth,
+        frame_shared_counts,
     )
 
 

@@ -1,0 +1,100 @@
+{
+  "method": "freealign_reimplementation",
+  "metric": "freealign_pose_diagnostic",
+  "note": "A MEASUREMENT of the shipped configuration, not a selection. Reimplementation of Lei et al., FreeAlign, ICRA 2024.",
+  "split": "/media/chenyi/basement2/cache/opv2v_splits/val",
+  "stride": 8,
+  "sigma_m": 1.0,
+  "pairs": 234,
+  "config": {
+    "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+    "authors_code_used": false,
+    "gnn_edge_features": false,
+    "edge_feature": "distance",
+    "edge_threshold_m": 0.5,
+    "anchor_limit_gamma": 3,
+    "min_nodes": 3,
+    "epsilon_power": 1.0,
+    "epsilon_offset": 100.0,
+    "robust_estimator": "lmeds",
+    "inlier_threshold_m": 1.0,
+    "ransac_iterations": 512,
+    "yaw_weight": 1.0
+  },
+  "overall": {
+    "translation_mae_m": 0.0993729145532631,
+    "translation_median_m": 0.08183376149257406,
+    "yaw_mae_deg": 0.11328049252999664,
+    "yaw_median_deg": 0.0679843366094808,
+    "coverage": 1.0,
+    "error_rate_over_3m": 0.0,
+    "answered_translation_mae_m": 0.0993729145532631,
+    "answered_translation_median_m": 0.08183376149257406,
+    "answered_yaw_mae_deg": 0.11328049252999664,
+    "answered_error_rate_over_3m": 0.0
+  },
+  "by_shared_objects": {
+    "shared_1_2": {
+      "translation_mae_m": 0.09381664721891454,
+      "translation_median_m": 0.07162097359963818,
+      "yaw_mae_deg": 0.1803777021317077,
+      "yaw_median_deg": 0.19191389587343938,
+      "coverage": 1.0,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": 0.09381664721891454,
+      "answered_translation_median_m": 0.07162097359963818,
+      "answered_yaw_mae_deg": 0.1803777021317077,
+      "answered_error_rate_over_3m": 0.0
+    },
+    "shared_3plus": {
+      "translation_mae_m": 0.09946954528951264,
+      "translation_median_m": 0.08285803151854604,
+      "yaw_mae_deg": 0.1121135845369234,
+      "yaw_median_deg": 0.06748018736523748,
+      "coverage": 1.0,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": 0.09946954528951264,
+      "answered_translation_median_m": 0.08285803151854604,
+      "answered_yaw_mae_deg": 0.1121135845369234,
+      "answered_error_rate_over_3m": 0.0
+    }
+  },
+  "alignformer_overall": {
+    "translation_mae_m": 0.12414026160601511,
+    "translation_median_m": 0.09429059283442304,
+    "yaw_mae_deg": 0.15908035907296875,
+    "yaw_median_deg": 0.10186886651148923,
+    "coverage": 1.0,
+    "error_rate_over_3m": 0.0,
+    "answered_translation_mae_m": 0.12414026160601511,
+    "answered_translation_median_m": 0.09429059283442304,
+    "answered_yaw_mae_deg": 0.15908035907296875,
+    "answered_error_rate_over_3m": 0.0
+  },
+  "alignformer_by_shared_objects": {
+    "shared_1_2": {
+      "translation_mae_m": 0.30906517729159516,
+      "translation_median_m": 0.338023809455595,
+      "yaw_mae_deg": 0.3657505664841096,
+      "yaw_median_deg": 0.2861338181609754,
+      "coverage": 1.0,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": 0.30906517729159516,
+      "answered_translation_median_m": 0.338023809455595,
+      "answered_yaw_mae_deg": 0.3657505664841096,
+      "answered_error_rate_over_3m": 0.0
+    },
+    "shared_3plus": {
+      "translation_mae_m": 0.1209241761158311,
+      "translation_median_m": 0.0937231283896393,
+      "yaw_mae_deg": 0.1554860945962533,
+      "yaw_median_deg": 0.10100878061361646,
+      "coverage": 1.0,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": 0.1209241761158311,
+      "answered_translation_median_m": 0.0937231283896393,
+      "answered_yaw_mae_deg": 0.1554860945962533,
+      "answered_error_rate_over_3m": 0.0
+    }
+  }
+}

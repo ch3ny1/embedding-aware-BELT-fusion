@@ -1,0 +1,124 @@
+{
+  "method": "freealign_reimplementation",
+  "metric": "freealign_pose_diagnostic",
+  "note": "A MEASUREMENT of the shipped configuration, not a selection. Reimplementation of Lei et al., FreeAlign, ICRA 2024.",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+  "stride": 8,
+  "sigma_m": 1.0,
+  "pairs": 431,
+  "config": {
+    "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+    "authors_code_used": false,
+    "gnn_edge_features": false,
+    "edge_feature": "distance",
+    "edge_threshold_m": 0.5,
+    "anchor_limit_gamma": 3,
+    "min_nodes": 3,
+    "epsilon_power": 1.0,
+    "epsilon_offset": 100.0,
+    "robust_estimator": "lmeds",
+    "inlier_threshold_m": 1.0,
+    "ransac_iterations": 512,
+    "yaw_weight": 1.0
+  },
+  "overall": {
+    "translation_mae_m": 1.3171980050863912,
+    "translation_median_m": 0.10862443297110404,
+    "yaw_mae_deg": 2.3507155755915474,
+    "yaw_median_deg": 0.09156511312184534,
+    "coverage": 0.9071925754060325,
+    "error_rate_over_3m": 0.025522041763341066,
+    "answered_translation_mae_m": 1.2984498389394528,
+    "answered_translation_median_m": 0.09921481263253161,
+    "answered_yaw_mae_deg": 2.512094816015951,
+    "answered_error_rate_over_3m": 0.023017902813299233
+  },
+  "by_shared_objects": {
+    "shared_0": {
+      "translation_mae_m": 29.537909859499305,
+      "translation_median_m": 1.7817942438085752,
+      "yaw_mae_deg": 7.229660081435878,
+      "yaw_median_deg": 0.8758132701940982,
+      "coverage": 0.25,
+      "error_rate_over_3m": 0.25,
+      "answered_translation_mae_m": 113.16102259725068,
+      "answered_translation_median_m": 113.16102259725068,
+      "answered_yaw_mae_deg": 27.020101440352597,
+      "answered_error_rate_over_3m": 1.0
+    },
+    "shared_1_2": {
+      "translation_mae_m": 3.3569220823500863,
+      "translation_median_m": 1.48231534160333,
+      "yaw_mae_deg": 5.822264882700571,
+      "yaw_median_deg": 0.573751622604939,
+      "coverage": 0.1282051282051282,
+      "error_rate_over_3m": 0.1282051282051282,
+      "answered_translation_mae_m": 15.851472104085127,
+      "answered_translation_median_m": 3.316215412300358,
+      "answered_yaw_mae_deg": 40.11726009633121,
+      "answered_error_rate_over_3m": 0.6
+    },
+    "shared_3plus": {
+      "translation_mae_m": 0.8212390194396494,
+      "translation_median_m": 0.09868665857180528,
+      "yaw_mae_deg": 1.951472789507452,
+      "yaw_median_deg": 0.07465455487496941,
+      "coverage": 0.9922680412371134,
+      "error_rate_over_3m": 0.01288659793814433,
+      "answered_translation_mae_m": 0.818897412747142,
+      "answered_translation_median_m": 0.09844573850648847,
+      "answered_yaw_mae_deg": 1.9600588860785155,
+      "answered_error_rate_over_3m": 0.012987012987012988
+    }
+  },
+  "alignformer_overall": {
+    "translation_mae_m": 0.23294951139193112,
+    "translation_median_m": 0.1163166826850198,
+    "yaw_mae_deg": 0.37812763466079863,
+    "yaw_median_deg": 0.11852073041494211,
+    "coverage": 0.988399071925754,
+    "error_rate_over_3m": 0.009280742459396751,
+    "answered_translation_mae_m": 0.22025312698600305,
+    "answered_translation_median_m": 0.11474065064026932,
+    "answered_yaw_mae_deg": 0.37646128461679307,
+    "answered_error_rate_over_3m": 0.009389671361502348
+  },
+  "alignformer_by_shared_objects": {
+    "shared_0": {
+      "translation_mae_m": 1.5906720097597593,
+      "translation_median_m": 1.5264857013244961,
+      "yaw_mae_deg": 0.6385031998246542,
+      "yaw_median_deg": 0.7433867470712618,
+      "coverage": 0.0,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": null,
+      "answered_translation_median_m": null,
+      "answered_yaw_mae_deg": null,
+      "answered_error_rate_over_3m": null
+    },
+    "shared_1_2": {
+      "translation_mae_m": 1.037872231209062,
+      "translation_median_m": 0.4537027164322775,
+      "yaw_mae_deg": 2.364031521126023,
+      "yaw_median_deg": 0.8804907063993453,
+      "coverage": 1.0,
+      "error_rate_over_3m": 0.10256410256410256,
+      "answered_translation_mae_m": 1.037872231209062,
+      "answered_translation_median_m": 0.4537027164322775,
+      "answered_yaw_mae_deg": 2.364031521126023,
+      "answered_error_rate_over_3m": 0.10256410256410256
+    },
+    "shared_3plus": {
+      "translation_mae_m": 0.13804519163332438,
+      "translation_median_m": 0.102611746988166,
+      "yaw_mae_deg": 0.17582930004018218,
+      "yaw_median_deg": 0.1007205540752758,
+      "coverage": 0.9974226804123711,
+      "error_rate_over_3m": 0.0,
+      "answered_translation_mae_m": 0.13785740330460952,
+      "answered_translation_median_m": 0.1024311009931448,
+      "answered_yaw_mae_deg": 0.17616350884454504,
+      "answered_error_rate_over_3m": 0.0
+    }
+  }
+}
