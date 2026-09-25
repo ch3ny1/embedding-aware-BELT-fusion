@@ -149,13 +149,35 @@ class CorrespondenceVarianceModel:
         variances, which is the plug-in estimate for a row whose CAV counterpart
         is a mixture rather than a single box.
         """
+        variance_centre, variance_heading = self.correspondence_variances(
+            ego_scores, cav_variance_centre, cav_variance_heading, heading_lambda
+        )
+        reference = 2.0 * self.sigma_translation_m ** 2
+        return reference / variance_centre, reference / variance_heading
+
+    def correspondence_variances(
+        self,
+        ego_scores: Tensor,
+        cav_variance_centre: Tensor,
+        cav_variance_heading: Tensor,
+        heading_lambda: float,
+    ) -> Tuple[Tensor, Tensor]:
+        """``(Var_centre, Var_heading)``, each ``(B, M)``, in metres squared.
+
+        The same two quantities :meth:`precisions` inverts, exposed unnormalized
+        because :mod:`alignformer.abstain` needs the disagreement covariance
+        itself and not a weight derived from it. ``Var_centre`` is the 2-D total
+        over both axes; ``Var_heading`` is that plus ``lam^2`` times the two
+        angular variances, because the heading virtual point carries the centre
+        error AND the lever-armed heading error -- which is exactly the
+        correlation between an object's two augmented points.
+        """
         ego_centre, ego_heading = self.detection_variances(ego_scores)
         variance_centre = ego_centre + cav_variance_centre
         variance_heading = variance_centre + (heading_lambda ** 2) * (
             ego_heading + cav_variance_heading
         )
-        reference = 2.0 * self.sigma_translation_m ** 2
-        return reference / variance_centre, reference / variance_heading
+        return variance_centre, variance_heading
 
     def augmented_weights(
         self,

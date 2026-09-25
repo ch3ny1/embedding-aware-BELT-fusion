@@ -60,10 +60,12 @@ class PoseEstimate:
     """A CAV's estimated SE(2) correction, with the evidence behind it.
 
     ``offset_statistic`` is the Wald statistic of ``(psi, t)`` against the
-    weighted least-squares fit's OWN covariance (:mod:`alignformer.abstain`).
-    It is ``None`` unless the solve was asked for it, so every estimate
-    produced before task 24 -- and every one produced today by a caller that
-    does not want a per-pair decision -- is unchanged in shape and in value.
+    weighted least-squares fit's OWN covariance, and ``offset_dof`` the degrees
+    of freedom its reference distribution is taken at
+    (:mod:`alignformer.abstain`). Both are ``None`` unless the solve was asked
+    for them, so every estimate produced before task 24 -- and every one
+    produced today by a caller that does not want a per-pair decision -- is
+    unchanged in shape and in value.
     """
 
     psi: Tensor
@@ -71,6 +73,7 @@ class PoseEstimate:
     confidence: Tensor
     log_assignment: Optional[Tensor] = None
     offset_statistic: Optional[Tensor] = None
+    offset_dof: Optional[Tensor] = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,7 @@ def _zero_estimate(
         t=t,
         confidence=confidence,
         offset_statistic=torch.zeros_like(psi) if statistic else None,
+        offset_dof=torch.zeros_like(psi) if statistic else None,
     )
 
 
@@ -249,12 +253,12 @@ def solve_pose(
     reported as ``PoseEstimate.confidence``.
 
     ``statistic`` additionally reports the Wald statistic of the emitted
-    correction against this fit's own covariance
-    (:func:`alignformer.abstain.wald_statistic`), computed from the points and
-    the weights the FINAL solve used -- the IRLS loop's re-weighted vector when
-    it ran, the inverse-variance one when it did not. It is read off the solve
-    and changes nothing about it: ``psi`` and ``t`` are bit-identical either
-    way, which is pinned by a test.
+    correction against this fit's own covariance, and the degrees of freedom
+    its reference is taken at (:func:`alignformer.abstain.wald_statistic`),
+    computed from the points and the weights the FINAL solve used -- the IRLS
+    loop's re-weighted vector when it ran, the inverse-variance one when it did
+    not. It is read off the solve and changes nothing about it: ``psi`` and
+    ``t`` are bit-identical either way, which is pinned by a test.
     """
     mass = correspondence.mass
 
@@ -287,16 +291,36 @@ def solve_pose(
             target, source, augmented_mass, evidence=confidence, config=robust
         )
         psi, t, solved_weights = solution.psi, solution.t, solution.weights
+
+    offset_statistic = offset_dof = None
+    if statistic:
+        # The DISAGREEMENT covariance, from the same fitted model the weights
+        # are built from -- not a second uncertainty model. It is needed in
+        # full because an object's two augmented points share their centre
+        # error, which is exactly what the sandwich accounts for.
+        variance_centre, variance_heading = variance_model.correspondence_variances(
+            batch["ego_scores"],
+            correspondence.cav_variance_centre,
+            correspondence.cav_variance_heading,
+            heading_lambda,
+        )
+        offset_statistic, offset_dof = wald_statistic(
+            target,
+            source,
+            solved_weights,
+            psi,
+            t,
+            variance_centre=variance_centre,
+            variance_heading=variance_heading,
+            heading_lambda=heading_lambda,
+        )
     return PoseEstimate(
         psi=psi,
         t=t,
         confidence=confidence,
         log_assignment=correspondence.log_assignment,
-        offset_statistic=(
-            wald_statistic(target, source, solved_weights, psi, t)
-            if statistic
-            else None
-        ),
+        offset_statistic=offset_statistic,
+        offset_dof=offset_dof,
     )
 
 

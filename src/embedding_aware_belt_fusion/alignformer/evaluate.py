@@ -945,6 +945,14 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     abstention = [
         AbstentionConfig.parse(spec) for spec in (args.abstain_arm or [])
     ]
+    # A disabled arm produces no rows, so recording one in the result file
+    # would advertise a condition nothing measured. Refuse it here rather than
+    # filtering it away silently.
+    disabled = [config.name for config in abstention if not config.enabled]
+    if disabled:
+        raise ValueError(
+            f"--abstain-arm none produces no arm; drop {disabled} or give it a mode"
+        )
     if len({config.name for config in abstention}) != len(abstention):
         raise ValueError(
             f"--abstain-arm names must be distinct, got "

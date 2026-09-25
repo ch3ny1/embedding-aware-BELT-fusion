@@ -282,14 +282,18 @@ class _PoseSubset:
         self.zero_translation = 0.0
         self.yaw = 0.0
         self.zero_yaw = 0.0
+        self.emitted = 0.0
         self.fallbacks = 0
         self.pairs = 0
 
-    def add(self, translation, zero_translation, yaw, zero_yaw, fell_back) -> None:
+    def add(
+        self, translation, zero_translation, yaw, zero_yaw, emitted, fell_back
+    ) -> None:
         self.translation += translation
         self.zero_translation += zero_translation
         self.yaw += yaw
         self.zero_yaw += zero_yaw
+        self.emitted += emitted
         self.fallbacks += int(fell_back)
         self.pairs += 1
 
@@ -303,6 +307,12 @@ class _PoseSubset:
             "predict_zero_translation_mae_m": mean(self.zero_translation),
             "yaw_mae_deg": mean(self.yaw),
             "predict_zero_yaw_mae_deg": mean(self.zero_yaw),
+            # How big the emitted correction WAS, as distinct from how often
+            # one was emitted at all. Coverage counts a pair as answered
+            # whenever (psi, t) is not exactly zero, so a shrinkage that left a
+            # third of a millimetre still counts; without this an arm that
+            # answers as often but corrects far less would look unchanged.
+            "emitted_translation_m": mean(self.emitted),
             "fallback_fraction": mean(float(self.fallbacks)),
         }
 
@@ -366,7 +376,8 @@ class _PoseStats:
         ))))
         zero_yaw = abs(float(np.degrees(np.arctan2(np.sin(psi_true), np.cos(psi_true)))))
 
-        terms = (translation, zero_translation, yaw, zero_yaw, fell_back)
+        emitted = float(np.hypot(t_hat[0], t_hat[1]))
+        terms = (translation, zero_translation, yaw, zero_yaw, emitted, fell_back)
         self.all.add(*terms)
         if shared_count == 0:
             self.unalignable.add(*terms)

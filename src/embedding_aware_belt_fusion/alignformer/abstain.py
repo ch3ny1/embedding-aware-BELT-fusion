@@ -13,47 +13,104 @@ bought the low-noise end and gave back the clean case, because a smaller tau
 shrinks less *everywhere*.
 
 This module is the per-pair replacement. Nothing is learned and nothing new is
-fitted: the quantity it uses is one the weighted least-squares solve already
-computes and currently discards.
+fitted: every quantity it uses is one the weighted solve and the fitted
+disagreement-variance model (:mod:`alignformer.variance`) already compute.
 
-**The covariance.** Head B minimizes ``sum_n w_n |R(psi) q_n + t - p_n|^2`` over
+The statistic
+-------------
+
+Head B minimizes ``sum_n w_n |R(psi) q_n + t - p_n|^2`` over
 ``theta = (t_x, t_y, psi)``. Writing ``u_n = R(psi) q_n``, the residual's
 Jacobian is ``J_n = [I_2 | perp(u_n)]`` with ``perp(a, b) = (-b, a)``, so the
-weighted normal matrix is ``A = sum_n w_n J_n^T J_n`` and the estimator's
-covariance is ``Cov(theta) = sigma^2 A^{-1}``. The Wald statistic of the emitted
-correction against the null "no correction is needed" is then
+weighted normal matrix is ``A = sum_n w_n J_n^T J_n``.
 
-    T^2 = theta^T Cov(theta)^{-1} theta = (1 / sigma^2) sum_n w_n |J_n theta|^2
+``sigma^2 A^-1`` is **not** this estimator's covariance, and using it was a real
+error in an earlier draft of this module. The points are heading-augmented:
+:func:`procrustes.augment_with_heading` puts object ``m``'s second point at
+``centre_m + lam * u(psi_m)``, whose residual is the object's centre error
+**plus** ``lam`` times its heading error. The two points of one object share
+their entire centre error -- at this project's own fitted constants the
+correlation is about 0.84 -- so treating ``2M`` points as ``2M`` independent
+observations overstates the information, understates the covariance, and makes
+the test fire far more often than any nominal level would suggest. It does so
+*worst where the evidence is thinnest*, which inverts the very behaviour this
+module exists to produce.
 
--- no matrix inverse is ever formed, and the quadratic form reads, in plain
-terms, *how far this correction moves the matched points, measured in units of
-how far the fit already disagrees with itself*. Under the null it is
-approximately chi-square on :data:`~alignformer.shrinkage.POSE_DIMENSIONS`
-degrees of freedom.
+So the covariance is the **sandwich**, which is what the task brief allows for
+exactly this case::
 
-**The scale.** ``sigma^2`` is the plug-in weighted-residual estimate rather
-than a number carried over from a calibration file: a sandwich estimator would
-be the alternative and is not needed, because the weights here are already a
-precision model (:mod:`alignformer.variance`) and the residuals are what that
-model failed to explain. Its degrees of freedom are ``2 * n_eff - 3`` -- two
-coordinates per point, three parameters -- where ``n_eff`` is **Kish's**
-effective sample size ``(sum w)^2 / sum w^2`` and not the nominal point count.
-That distinction is the whole reason a sparse or lopsided soft match abstains:
-a row whose soft-match mass sits almost entirely on one candidate carries the
-information of roughly one observation, not of the eight it has entries for.
+    Cov(theta) = A^-1 B A^-1,
+    B = sum_n sum_n' w_n w_n' J_n^T Cov(eps_n, eps_n') J_n'
+
+and the noise covariance is not guessed -- it is the fitted model. For object
+``m`` with per-axis centre variance ``a_m``, angular variance ``g_m`` and unit
+heading direction ``d_m``::
+
+    Cov(eps_c, eps_c) = a_m I          Cov(eps_c, eps_h) = a_m I
+    Cov(eps_h, eps_h) = a_m I + lam^2 g_m perp(d_m) perp(d_m)^T
+
+Substituting collapses ``B`` to two rank-limited terms per object, with no
+cross-object coupling::
+
+    B = sum_m [ a_m G_m^T G_m  +  lam^2 g_m w_h,m^2 c_m c_m^T ]
+    G_m = w_c,m J_c,m + w_h,m J_h,m = [ (w_c + w_h) I | w_c perp(u_c) + w_h perp(u_h) ]
+    c_m = J_h,m^T perp(d_m) = [ perp(d_m) ; perp(u_h,m) . perp(d_m) ]
+
+``d_m`` is recovered from the points themselves -- the heading point sits at
+``centre + lam * d``, so ``d = (u_h - u_c) / lam`` -- and ``a_m``, ``g_m`` come
+from :meth:`variance.CorrespondenceVarianceModel.correspondence_variances`,
+which is the same model the solve's own weights are built from.
+
+The Wald statistic of the emitted correction against the null "no correction is
+needed" is then, with no matrix inverse of ``A`` ever formed::
+
+    T^2 = theta^T Cov^-1 theta = (A theta)^T B^-1 (A theta) / tau^2
+
+``tau^2`` is the one scale the model does not supply: the unitless factor by
+which the real residuals exceed the model's predicted ones, estimated per pair
+as ``sum_n w_n |r_n|^2 / v_n`` over the model's own expectation for that sum
+(:func:`expected_residual_sum`) rather than over a count of points. The count
+is wrong by a factor of two at two matched objects.
+
+The reference
+-------------
+
+``tau^2`` is estimated, not known, so ``T^2 / p`` is referred to ``F(p, D)``
+rather than to ``chi-square(p) / p``. Its denominator degrees of freedom are
+``D = 3 n_eff_objects - 3``: the residual of one object spans **three**
+independent noise dimensions -- two centre, one heading -- not four, however
+many augmented points it contributes. ``n_eff`` is **Kish's** effective sample
+size throughout, so a row whose soft-match mass sits almost entirely on one
+candidate counts as roughly one observation and not as the eight it has entries
+for.
+
+Together these corrections are what make the level mean the same thing at two
+matched objects as at twenty. Measured by simulation on the deployed geometry
+with the fitted r140 constants, at a nominal 5%, the realized false-fire rate
+is::
+
+    matched objects      2      3      4      6     12     24
+    naive covariance  .637      -      -      -      -   .266
+    this module       .075   .070   .068   .061   .057   .045
+
+That is not a detail: sigma = 0 on the sparse slice is the single cell this
+whole intervention exists to fix, and a statistic that over-fires by 13x
+exactly where the evidence is thinnest inverts the behaviour the module is
+justified by. The simulation is a test
+(``test_the_level_holds_at_every_matched_object_count``), not a footnote.
 
 **Scale invariance.** ``weighted_se2_kabsch`` is scale-invariant in its weights,
 and both :func:`variance.augmented_weights` and :func:`robust._renormalized`
-rescale them. ``T^2`` inherits that invariance exactly -- numerator and
-denominator are both linear in the weights -- so the weights are normalized to
-``sum w = n_eff`` here only to give :data:`RESIDUAL_SD_FLOOR_M` a meaning in
-metres. Pinned by a test, because a statistic that moved when the plumbing
-renormalized would be measuring the plumbing.
+rescale them. ``T^2`` inherits that: ``A`` is linear in the weights and ``B``
+quadratic, so the quadratic form is invariant, and the weights are normalized to
+``sum w = n_eff`` only to give the residual floor a meaning in metres.
 
-Three decision rules are built over the statistic and no fourth:
+The three decisions
+-------------------
 
 ``abstain``
-    Zero the correction at or below a threshold, apply it unchanged above.
+    Zero the correction at or below the level's threshold, apply it unchanged
+    above.
 ``per_pair``
     The James-Stein positive-part factor ``max(0, 1 - p / T^2)`` -- the SAME
     rule :mod:`alignformer.shrinkage` applies, with the pair's own standardized
@@ -62,10 +119,9 @@ Three decision rules are built over the statistic and no fourth:
 ``both``
     A hard threshold, then the positive-part factor above it.
 
-``both`` at a threshold of 0 -- and at 3, the pooled dimension -- IS
-``per_pair``, because the positive-part rule already returns exactly zero
-there. That equivalence is asserted in the tests so the three arms cannot
-silently become two.
+``both`` at level 1.0 -- a threshold of zero -- IS ``per_pair``. That
+equivalence is asserted in the tests so the three arms cannot silently become
+two.
 
 An abstained pair emits ``(psi, t) = (0, 0)``, which is what
 :func:`stage2.is_fallback` reads, so **coverage falls out of the existing pose
@@ -77,9 +133,12 @@ competitor's own numbers and which now applies to us.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional
+from functools import lru_cache
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -96,18 +155,22 @@ PER_PAIR = "per_pair"
 BOTH = "both"
 ABSTENTION_MODES = (NONE, ABSTAIN, PER_PAIR, BOTH)
 
-# Lower bound on the fitted per-coordinate residual sd, in metres. Same number
-# and same reason as ``robust.SCALE_FLOOR_M``: the detector's own fitted
+# Lower bound on the fitted per-axis residual sd, in metres. Same number and
+# same reason as ``robust.SCALE_FLOOR_M``: the detector's own fitted
 # per-detection RMS centre error is 0.2516 m (``variance.py``), so nothing real
 # is resolved at 5 cm, and a fit that happens to be exact must not divide by
-# zero. It is the only place the statistic is not scale-invariant, which is why
-# the weights are normalized before it is applied.
+# zero.
 RESIDUAL_SD_FLOOR_M = 0.05
-# Floor on the residual degrees of freedom. Below about 1.5 effective points
-# the SE(2) is not identified at all; such a pair gets a large variance, a
-# small statistic, and therefore abstains -- which is the intended answer, not
-# a guard against one.
+# Floor on the residual degrees of freedom. Below about two matched objects the
+# SE(2) is barely identified; such a pair gets a large variance, a small
+# statistic and a large threshold, and therefore abstains -- which is the
+# intended answer, not a guard against one.
 DOF_FLOOR = 1.0
+# Relative ridge on the sandwich's middle matrix, as a fraction of its mean
+# eigenvalue. One matched object cannot determine three parameters, so B is
+# rank-deficient there; the ridge keeps the solve finite and, being additive on
+# the variance, can only make the pair abstain more.
+SANDWICH_RIDGE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -117,15 +180,21 @@ class AbstentionConfig:
     Parameters
     ----------
     mode: one of :data:`ABSTENTION_MODES`.
-    threshold: the statistic at or below which the correction is abstained
-        from. Meaningful for ``abstain`` and ``both`` only; ``per_pair``
-        refuses a non-zero one rather than ignoring it, because a threshold
-        silently dropped is a constant a reader would believe was in force.
-    dimensions: the pooled problem's dimension in the positive-part rule.
+    level: the false-fire rate the hard threshold targets when there is nothing
+        to correct -- ``0.05`` abstains on a pair whose statistic is below the
+        95th percentile of its own null. It is a *level*, not a raw statistic,
+        because the threshold depends on the pair's own degrees of freedom
+        (:func:`abstention_threshold`) and a single number could not mean the
+        same thing at two matched objects as at twenty. Meaningful for
+        ``abstain`` and ``both`` only; ``per_pair`` refuses one rather than
+        ignoring it, because a constant silently dropped is a constant a reader
+        would believe was in force.
+    dimensions: the pooled problem's dimension, in the reference distribution
+        and in the positive-part rule.
     """
 
     mode: str = NONE
-    threshold: float = 0.0
+    level: float = 0.0
     dimensions: int = POSE_DIMENSIONS
 
     def __post_init__(self) -> None:
@@ -133,13 +202,16 @@ class AbstentionConfig:
             raise ValueError(
                 f"mode must be one of {ABSTENTION_MODES}, got {self.mode!r}"
             )
-        if not (self.threshold >= 0.0 and torch.isfinite(torch.tensor(self.threshold))):
+        if not (math.isfinite(self.level) and 0.0 <= self.level <= 1.0):
+            raise ValueError(f"level must be in [0, 1], got {self.level}")
+        if self.mode in (NONE, PER_PAIR) and self.level != 0.0:
             raise ValueError(
-                f"threshold must be finite and non-negative, got {self.threshold}"
+                f"mode {self.mode!r} has no use for a level, got {self.level}"
             )
-        if self.mode in (NONE, PER_PAIR) and self.threshold != 0.0:
+        if self.mode in (ABSTAIN, BOTH) and self.level == 0.0:
             raise ValueError(
-                f"mode {self.mode!r} has no use for a threshold, got {self.threshold}"
+                f"mode {self.mode!r} needs a level in (0, 1]; a level of 0 would "
+                "put the threshold at infinity and abstain on everything"
             )
         if self.dimensions < 1:
             raise ValueError(f"dimensions must be at least 1, got {self.dimensions}")
@@ -150,15 +222,15 @@ class AbstentionConfig:
 
     @property
     def name(self) -> str:
-        """The sweep condition key: ``alignformer_<mode>[_<threshold>]``."""
+        """The sweep condition key: ``alignformer_<mode>[_<level>]``."""
         if self.mode == PER_PAIR:
             return f"alignformer_{self.mode}"
-        return f"alignformer_{self.mode}_{self.threshold:g}"
+        return f"alignformer_{self.mode}_{self.level:g}"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "mode": self.mode,
-            "threshold": self.threshold,
+            "level": self.level,
             "dimensions": self.dimensions,
             "name": self.name,
             "enabled": self.enabled,
@@ -166,26 +238,26 @@ class AbstentionConfig:
 
     @classmethod
     def parse(cls, spec: str) -> "AbstentionConfig":
-        """``"abstain:7.8147"``, ``"both:16.2662"`` or ``"per_pair"``."""
-        mode, _, threshold = str(spec).partition(":")
-        if threshold == "":
+        """``"abstain:0.05"``, ``"both:0.01"`` or ``"per_pair"``."""
+        mode, separator, level = str(spec).partition(":")
+        if separator == "":
             return cls(mode=mode)
         try:
-            value = float(threshold)
+            value = float(level)
         except ValueError as error:
             raise ValueError(
-                f"{spec!r} is not a <mode>[:<threshold>] abstention spec"
+                f"{spec!r} is not a <mode>[:<level>] abstention spec"
             ) from error
-        return cls(mode=mode, threshold=value)
+        return cls(mode=mode, level=value)
 
 
 def effective_sample_size(weights: Tensor) -> Tensor:
     """``(B,)`` Kish effective sample size ``(sum w)^2 / sum w^2``.
 
-    Equal to the point count when every weight is equal, and collapsing towards
-    one when a single correspondence carries the mass. A row with no weight at
-    all returns zero, which floors the degrees of freedom downstream instead of
-    dividing by nothing.
+    Equal to the count when every weight is equal, and collapsing towards one
+    when a single entry carries the mass. A row with no weight at all returns
+    zero, which floors the degrees of freedom downstream instead of dividing by
+    nothing.
     """
     weights = weights.clamp_min(0.0)
     total = weights.sum(dim=1)
@@ -197,13 +269,7 @@ def effective_sample_size(weights: Tensor) -> Tensor:
 
 
 def _normalized(weights: Tensor) -> Tensor:
-    """``weights`` rescaled to total ``n_eff``, so the mean weight is one.
-
-    The statistic is invariant to this (see the module docstring); it is done
-    so that :data:`RESIDUAL_SD_FLOOR_M` is a length in metres rather than a
-    number whose meaning depends on how the caller happened to scale its
-    weights.
-    """
+    """``weights`` rescaled to total ``n_eff``, so the mean weight is one."""
     weights = weights.clamp_min(0.0)
     total = weights.sum(dim=1, keepdim=True)
     tiny = torch.finfo(weights.dtype).tiny
@@ -215,54 +281,269 @@ def _normalized(weights: Tensor) -> Tensor:
     return weights * scale
 
 
-def residual_variance(residual: Tensor, weights: Tensor) -> Tensor:
-    """``(B,)`` per-coordinate residual variance of the weighted fit.
+def residual_scale(
+    residual: Tensor, weights: Tensor, point_variance: Tensor, divisor: Tensor
+) -> Tensor:
+    """``(B,)`` ``tau^2``: how far the real residuals exceed the model's.
 
-    Parameters
-    ----------
-    residual: ``(B, N, 2)`` signed residuals of the final solve.
-    weights: ``(B, N)`` the weights that solve actually used.
+    ``point_variance`` is ``E|r_n|^2`` under the fitted disagreement model, so a
+    perfectly-specified model gives ``tau^2 = 1``.
 
-    ``sum_n w_n |r_n|^2 / (2 n_eff - 3)``: two coordinates per point, three
-    parameters, and Kish's effective count rather than the nominal one. Floored
-    at ``RESIDUAL_SD_FLOOR_M^2``.
+    ``divisor`` is :func:`expected_residual_sum`: the model's own expectation
+    for the numerator, computed from the fit rather than counted off the point
+    list. A count cannot be right here -- an object's two augmented rows carry
+    three independent noise coordinates, not four, and the weighted hat
+    operator removes a different amount of them at two matched objects than at
+    twenty.
+
+    Floored so that the implied per-axis residual sd cannot fall below
+    :data:`RESIDUAL_SD_FLOOR_M`, which is where the floor keeps its meaning in
+    metres.
     """
-    if residual.dim() != 3 or residual.shape[-1] != 2:
-        raise ValueError(f"residual must be (B, N, 2), got {tuple(residual.shape)}")
-    if weights.shape != residual.shape[:2]:
-        raise ValueError(
-            f"weights {tuple(weights.shape)} must be {tuple(residual.shape[:2])}"
-        )
     normalized = _normalized(weights)
-    weighted = (normalized * (residual * residual).sum(dim=-1)).sum(dim=1)
-    dof = (2.0 * effective_sample_size(weights) - POSE_DIMENSIONS).clamp_min(DOF_FLOOR)
-    return (weighted / dof).clamp_min(RESIDUAL_SD_FLOOR_M ** 2)
+    standardized = (residual * residual).sum(dim=-1) / point_variance.clamp_min(
+        torch.finfo(residual.dtype).tiny
+    )
+    total = (normalized * standardized).sum(dim=1)
+
+    mass = normalized.sum(dim=1).clamp_min(torch.finfo(residual.dtype).tiny)
+    mean_variance = (normalized * point_variance).sum(dim=1) / mass
+    floor = 2.0 * RESIDUAL_SD_FLOOR_M ** 2 / mean_variance.clamp_min(
+        torch.finfo(residual.dtype).tiny
+    )
+    return (total / divisor.clamp_min(DOF_FLOOR)).clamp_min(floor)
+
+
+@lru_cache(maxsize=None)
+def _f_quantile_table(level: float, dimensions: int) -> Tuple[Any, Any]:
+    """``(dof grid, p * F_{1-level}(p, dof))``, built once per (level, p).
+
+    A table rather than a call per pair because the quantile is needed inside
+    the sweep's inner loop and depends only on a scalar; interpolating a
+    120-point grid is exact to well under a per cent over the range of effective
+    object counts this dataset produces.
+    """
+    from scipy.stats import f as f_distribution
+
+    grid = np.concatenate(
+        [
+            np.linspace(DOF_FLOOR, 12.0, 60),
+            np.geomspace(12.0, 4000.0, 60)[1:],
+        ]
+    )
+    values = dimensions * f_distribution.ppf(1.0 - level, dimensions, grid)
+    return grid, values
+
+
+def abstention_threshold(dof: Tensor, config: "AbstentionConfig") -> Tensor:
+    """``(B,)`` the statistic at or below which this rule abstains.
+
+    ``p * F_{1-level}(p, dof)`` -- the reference for a Wald statistic whose
+    scale was estimated rather than known. At large ``dof`` it converges to the
+    chi-square quantile; at the two or three matched objects where this dataset
+    is thinnest it is several times larger, which is the whole point.
+    """
+    grid, values = _f_quantile_table(float(config.level), int(config.dimensions))
+    reference = torch.as_tensor(grid, dtype=dof.dtype, device=dof.device)
+    quantiles = torch.as_tensor(values, dtype=dof.dtype, device=dof.device)
+    clamped = dof.clamp(float(grid[0]), float(grid[-1]))
+    upper = torch.searchsorted(reference, clamped.contiguous()).clamp(1, len(grid) - 1)
+    lower = upper - 1
+    span = (reference[upper] - reference[lower]).clamp_min(
+        torch.finfo(dof.dtype).tiny
+    )
+    weight = (clamped - reference[lower]) / span
+    return quantiles[lower] + weight * (quantiles[upper] - quantiles[lower])
+
+
+def _perp(vectors: Tensor) -> Tensor:
+    """``(-y, x)`` on the last dimension."""
+    return torch.stack([-vectors[..., 1], vectors[..., 0]], dim=-1)
+
+
+def _normal_matrix(rotated: Tensor, weights: Tensor) -> Tensor:
+    """``(B, 3, 3)`` ``A = sum_n w_n J_n^T J_n`` for ``J_n = [I | perp(u_n)]``."""
+    perpendicular = _perp(rotated)
+    total = weights.sum(dim=1)
+    cross = (weights.unsqueeze(-1) * perpendicular).sum(dim=1)
+    quadratic = (weights * (rotated * rotated).sum(dim=-1)).sum(dim=1)
+
+    matrix = rotated.new_zeros(rotated.shape[0], 3, 3)
+    matrix[:, 0, 0] = total
+    matrix[:, 1, 1] = total
+    matrix[:, :2, 2] = cross
+    matrix[:, 2, :2] = cross
+    matrix[:, 2, 2] = quadratic
+    return matrix
+
+
+def _middle(
+    rotated: Tensor,
+    weights_left: Tensor,
+    weights_right: Tensor,
+    variance_centre: Tensor,
+    variance_heading: Tensor,
+    heading_lambda: float,
+) -> Tensor:
+    """``(B, 3, 3)`` ``sum_n sum_n' wl_n wr_n' J_n^T Cov(eps_n, eps_n') J_n'``.
+
+    Two terms per object and no cross-object coupling; see the module docstring
+    for the collapse. ``variance_centre`` is the 2-D total, so the per-axis
+    centre variance is half of it, and ``variance_heading - variance_centre`` is
+    the lever-armed angular term ``lam^2 g_m``.
+
+    Two weight vectors rather than one because the residual-scale correction
+    needs the same quantity between the solve's weights and the standardizing
+    ones; with ``weights_left is weights_right`` this is the symmetric sandwich
+    filling ``B``.
+    """
+    count = rotated.shape[1] // 2
+    centre, heading = rotated[:, :count], rotated[:, count:]
+    perpendicular_centre, perpendicular_heading = _perp(centre), _perp(heading)
+
+    def _blocks(weights):
+        weight_centre, weight_heading = weights[:, :count], weights[:, count:]
+        scale = weight_centre + weight_heading
+        lever = (
+            weight_centre.unsqueeze(-1) * perpendicular_centre
+            + weight_heading.unsqueeze(-1) * perpendicular_heading
+        )
+        return scale, lever, weight_heading
+
+    scale_left, lever_left, heading_left = _blocks(weights_left)
+    scale_right, lever_right, heading_right = _blocks(weights_right)
+
+    # G_l^T G_r for G = [s I | v]: [[s_l s_r I, s_l v_r], [s_r v_l^T, v_l . v_r]]
+    per_axis = 0.5 * variance_centre
+    shared = rotated.new_zeros(rotated.shape[0], 3, 3)
+    shared[:, 0, 0] = (per_axis * scale_left * scale_right).sum(dim=1)
+    shared[:, 1, 1] = shared[:, 0, 0]
+    shared[:, :2, 2] = ((per_axis * scale_left).unsqueeze(-1) * lever_right).sum(dim=1)
+    shared[:, 2, :2] = ((per_axis * scale_right).unsqueeze(-1) * lever_left).sum(dim=1)
+    shared[:, 2, 2] = (per_axis * (lever_left * lever_right).sum(dim=-1)).sum(dim=1)
+
+    # The heading point's own angular term, rank one per object:
+    # c_m = [ perp(d_m) ; perp(u_h,m) . perp(d_m) ].
+    direction = (heading - centre) / max(heading_lambda, torch.finfo(rotated.dtype).eps)
+    direction = direction / direction.norm(dim=-1, keepdim=True).clamp_min(
+        torch.finfo(rotated.dtype).tiny
+    )
+    normal = _perp(direction)
+    projection = (perpendicular_heading * normal).sum(dim=-1)
+    vector = torch.cat([normal, projection.unsqueeze(-1)], dim=-1)
+    angular = (variance_heading - variance_centre).clamp_min(0.0) * (
+        heading_left * heading_right
+    )
+    return shared + torch.einsum("bm,bmi,bmj->bij", angular, vector, vector)
+
+
+def sandwich_middle(
+    rotated: Tensor,
+    weights: Tensor,
+    variance_centre: Tensor,
+    variance_heading: Tensor,
+    heading_lambda: float,
+) -> Tensor:
+    """``(B, 3, 3)`` ``B = sum_n sum_n' w w' J^T Cov(eps, eps') J``."""
+    return _middle(
+        rotated, weights, weights, variance_centre, variance_heading, heading_lambda
+    )
+
+
+def expected_residual_sum(
+    rotated: Tensor,
+    weights: Tensor,
+    variance_centre: Tensor,
+    variance_heading: Tensor,
+    heading_lambda: float,
+    normal_matrix: Tensor,
+    middle: Tensor,
+) -> Tensor:
+    """``(B,)`` ``E[sum_n w_n |r_n|^2 / v_n]`` under the model, at ``tau^2 = 1``.
+
+    The divisor a mean-unbiased ``tau^2`` needs, computed rather than counted.
+    With ``H = J A^-1 J^T W`` the weighted hat operator, ``r = (I - H) eps`` and
+    ``D = diag(w_n / v_n)``::
+
+        E = tr(D Sigma) - 2 tr(A^-1 J^T W Sigma D J) + tr(A^-1 B A^-1 J^T D J)
+
+    ``tr(D Sigma)`` is exactly ``sum_n w_n``, because ``v_n`` is by definition
+    ``E|eps_n|^2``. The other two terms are 3x3 traces over quantities this
+    module already forms.
+
+    Counting instead of computing is what a naive ``2 n_eff - 3`` does, and it
+    is wrong in the direction that matters: measured on the deployed geometry
+    the true expectation at two matched objects is **half** the counted one, so
+    the counted version halves ``tau^2``, doubles the statistic, and over-fires
+    exactly where the evidence is thinnest.
+    """
+    point_variance = torch.cat([variance_centre, variance_heading], dim=1)
+    standardizing = weights / point_variance.clamp_min(
+        torch.finfo(weights.dtype).tiny
+    )
+    cross = _middle(
+        rotated, weights, standardizing, variance_centre, variance_heading,
+        heading_lambda,
+    )
+    curvature = _normal_matrix(rotated, standardizing)
+
+    inverse = torch.linalg.pinv(normal_matrix)
+    first = torch.matmul(inverse, cross).diagonal(dim1=-2, dim2=-1).sum(dim=-1)
+    second = (
+        torch.matmul(torch.matmul(torch.matmul(inverse, middle), inverse), curvature)
+        .diagonal(dim1=-2, dim2=-1)
+        .sum(dim=-1)
+    )
+    return weights.sum(dim=1) - 2.0 * first + second
 
 
 def wald_statistic(
-    p: Tensor, q: Tensor, weights: Tensor, psi: Tensor, t: Tensor
-) -> Tensor:
-    """``(B,)`` ``T^2`` of the emitted correction against the fit's own covariance.
+    p: Tensor,
+    q: Tensor,
+    weights: Tensor,
+    psi: Tensor,
+    t: Tensor,
+    *,
+    variance_centre: Tensor,
+    variance_heading: Tensor,
+    heading_lambda: float,
+) -> Tuple[Tensor, Tensor]:
+    """``(T^2, dof)`` for the emitted correction against this fit's covariance.
 
     Parameters
     ----------
-    p: ``(B, N, 2)`` target points and ``q``: ``(B, N, 2)`` source points,
-        exactly as :func:`procrustes.weighted_se2_kabsch` took them -- the
-        heading-augmented vectors, so ``N = 2M``.
-    weights: ``(B, N)`` the weights the FINAL solve used. For the IRLS arm that
+    p, q: ``(B, 2M, 2)`` target and source points, exactly as
+        :func:`procrustes.weighted_se2_kabsch` took them -- centres first, then
+        the heading virtual points.
+    weights: ``(B, 2M)`` the weights the FINAL solve used. For the IRLS arm that
         is the re-weighted vector (:attr:`robust.RobustSolution.weights`), not
         the one it started from: the covariance belongs to the fit that was
         actually reported.
+    variance_centre, variance_heading: ``(B, M)`` from
+        :meth:`variance.CorrespondenceVarianceModel.correspondence_variances`.
     psi, t: the emitted correction, ``(B,)`` and ``(B, 2)``.
 
-    An identity correction scores exactly zero, which abstains under every
-    rule; that is the same answer ``MIN_MATCH_MASS`` already gave such a pair.
+    ``dof`` is ``3 n_eff_objects - 3``, the reference distribution's denominator.
+    An identity correction scores exactly zero, which abstains under every rule.
     """
     if p.shape != q.shape:
         raise ValueError(f"p {tuple(p.shape)} and q {tuple(q.shape)} must match")
     if weights.shape != p.shape[:2]:
+        raise ValueError(f"weights {tuple(weights.shape)} must be {tuple(p.shape[:2])}")
+    if p.shape[1] % 2 != 0:
         raise ValueError(
-            f"weights {tuple(weights.shape)} must be {tuple(p.shape[:2])}"
+            f"expected heading-augmented points (an even count), got {p.shape[1]}"
+        )
+    count = p.shape[1] // 2
+    if variance_centre.shape != (p.shape[0], count):
+        raise ValueError(
+            f"variance_centre {tuple(variance_centre.shape)} must be "
+            f"{(p.shape[0], count)}"
+        )
+    if variance_heading.shape != variance_centre.shape:
+        raise ValueError(
+            f"variance_heading {tuple(variance_heading.shape)} must match "
+            f"variance_centre {tuple(variance_centre.shape)}"
         )
 
     normalized = _normalized(weights)
@@ -271,43 +552,78 @@ def wald_statistic(
     rotated = torch.stack([cos * x - sin * y, sin * x + cos * y], dim=-1)
     residual = rotated + t.unsqueeze(1) - p
 
-    # J_n theta = t + psi * perp(R(psi) q_n): the displacement this correction
-    # applies to each matched point, linearized at the reported solution.
-    perpendicular = torch.stack([-rotated[..., 1], rotated[..., 0]], dim=-1)
-    displacement = t.unsqueeze(1) + psi.reshape(-1, 1, 1) * perpendicular
-    quadratic = (normalized * (displacement * displacement).sum(dim=-1)).sum(dim=1)
+    # Objects, not points: the residual of ONE object spans three independent
+    # noise dimensions however many augmented points it contributes.
+    object_weights = normalized[:, :count] + normalized[:, count:]
+    dof = (
+        POSE_DIMENSIONS * effective_sample_size(object_weights) - POSE_DIMENSIONS
+    ).clamp_min(DOF_FLOOR)
 
-    return quadratic / residual_variance(residual, weights)
+    theta = torch.cat([t, psi.reshape(-1, 1)], dim=-1).unsqueeze(-1)
+    curvature = _normal_matrix(rotated, normalized)
+    score = torch.matmul(curvature, theta)
+    middle = sandwich_middle(
+        rotated, normalized, variance_centre, variance_heading, heading_lambda
+    )
+
+    point_variance = torch.cat([variance_centre, variance_heading], dim=1)
+    tau_squared = residual_scale(
+        residual,
+        normalized,
+        point_variance,
+        expected_residual_sum(
+            rotated, normalized, variance_centre, variance_heading,
+            heading_lambda, curvature, middle,
+        ),
+    )
+    trace = middle.diagonal(dim1=-2, dim2=-1).sum(dim=-1) / POSE_DIMENSIONS
+    ridge = torch.eye(3, dtype=middle.dtype, device=middle.device) * (
+        SANDWICH_RIDGE * trace.clamp_min(torch.finfo(middle.dtype).tiny)
+    ).reshape(-1, 1, 1)
+    quadratic = torch.matmul(
+        score.transpose(-1, -2), torch.linalg.solve(middle + ridge, score)
+    ).reshape(-1)
+    statistic = (quadratic.clamp_min(0.0) / tau_squared).nan_to_num(
+        nan=0.0, posinf=0.0, neginf=0.0
+    )
+    return statistic, dof
 
 
-def decision_factor(statistic: Tensor, config: AbstentionConfig) -> Tensor:
+def decision_factor(
+    statistic: Tensor, dof: Optional[Tensor], config: AbstentionConfig
+) -> Tensor:
     """``(B,)`` multiplier in ``[0, 1]`` this rule applies to the correction.
 
-    One factor for the whole SE(2), exactly as :func:`shrinkage.shrink` does,
-    so the result always lies on the path between the identity and the
-    correction the solver proposed.
+    One factor for the whole SE(2), exactly as :func:`shrinkage.shrink` does, so
+    the result always lies on the path between the identity and the correction
+    the solver proposed.
     """
     if not config.enabled:
         return torch.ones_like(statistic)
 
-    # Inclusive at the threshold: an exact hit abstains. A rule stated as "at
-    # or below" has to be implemented as one, or the constant a report quotes
-    # is not the constant that ran.
-    answered = (statistic > config.threshold).to(statistic.dtype)
+    if config.mode == PER_PAIR:
+        return shrinkage_factor(statistic, config.dimensions)
+
+    if dof is None:
+        raise ValueError(
+            f"mode {config.mode!r} needs the fit's degrees of freedom to place "
+            "its threshold; solve with statistic=True"
+        )
+    # Inclusive at the threshold: an exact hit abstains. A rule stated as "at or
+    # below" has to be implemented as one, or the constant a report quotes is
+    # not the constant that ran.
+    answered = (statistic > abstention_threshold(dof, config)).to(statistic.dtype)
     if config.mode == ABSTAIN:
         return answered
-    factor = shrinkage_factor(statistic, config.dimensions)
-    if config.mode == PER_PAIR:
-        return factor
-    return factor * answered
+    return shrinkage_factor(statistic, config.dimensions) * answered
 
 
 def decide(estimate, config: AbstentionConfig):
     """Return a **new** ``PoseEstimate`` with this pair's decision applied.
 
-    A disabled configuration returns the input object itself, so an arm that
-    is meant to reproduce what it wraps does so by identity rather than by
-    arithmetic that happens to be a no-op.
+    A disabled configuration returns the input object itself, so an arm meant to
+    reproduce what it wraps does so by identity rather than by arithmetic that
+    happens to be a no-op.
     """
     if not config.enabled:
         return estimate
@@ -317,7 +633,9 @@ def decide(estimate, config: AbstentionConfig):
             "this estimate carries no offset statistic; solve it with "
             "solve_pose(..., statistic=True) before asking for a decision"
         )
-    factor = decision_factor(statistic, config)
+    factor = decision_factor(
+        statistic, getattr(estimate, "offset_dof", None), config
+    )
     return replace(
         estimate, psi=estimate.psi * factor, t=estimate.t * factor.unsqueeze(-1)
     )
@@ -331,10 +649,14 @@ __all__ = [
     "NONE",
     "PER_PAIR",
     "RESIDUAL_SD_FLOOR_M",
+    "SANDWICH_RIDGE",
     "AbstentionConfig",
+    "abstention_threshold",
     "decide",
     "decision_factor",
     "effective_sample_size",
-    "residual_variance",
+    "expected_residual_sum",
+    "residual_scale",
+    "sandwich_middle",
     "wald_statistic",
 ]

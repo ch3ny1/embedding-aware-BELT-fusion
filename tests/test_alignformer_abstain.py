@@ -4,35 +4,36 @@ Task 23 left one gap: at low sigma the correct action is to not correct, and we
 correct anyway. Neither existing guard has the right shape --
 ``MIN_MATCH_MASS`` reads evidence *volume* and never asks whether the estimated
 correction is meaningful, and a single global shrinkage ``tau`` cannot express
-that a dense 12-correspondence pair and a sparse 2-correspondence pair have
-wildly different estimator variance.
+that a dense twelve-correspondence pair and a sparse two-correspondence pair
+have wildly different estimator variance.
 
-This module tests the quantity that can: the weighted-least-squares estimator's
-**own** covariance, and the Wald statistic of the emitted correction against it.
-Four properties are load-bearing and each is pinned here.
+This module tests the quantity that can. Four properties are load-bearing and
+each is pinned here.
 
-1. **The statistic is a pure function of the fit, not of the weight scale.**
+1. **The statistic is calibrated ON THE GEOMETRY THE PIPELINE ACTUALLY
+   PRODUCES.** That geometry is heading-augmented: object ``m``'s two points
+   share their entire centre error (correlation about 0.84 at this project's
+   fitted constants), so a covariance that treats ``2M`` points as ``2M``
+   independent observations understates itself and the test over-fires -- worst
+   where the evidence is thinnest, which *inverts* the behaviour the module
+   exists to produce. ``_null_pair`` therefore builds pairs through
+   ``procrustes.augment_with_heading`` with the r140 constants, and the control
+   sweeps the matched-object count. An earlier draft of this module tested on
+   centre-only iid points, where the naive covariance IS calibrated, and was
+   blind to the defect by construction.
+2. **The level means the same thing at two matched objects as at twenty.**
+   Asserted per object count, not pooled, because a pooled false-fire rate can
+   sit on its nominal value while every individual count misses it.
+3. **The statistic is a pure function of the fit, not of the weight scale.**
    ``weighted_se2_kabsch`` is scale-invariant in its weights and so is this; a
-   statistic that moved when the weights were renormalized (``variance.py`` and
-   ``robust.py`` both renormalize) would be measuring the plumbing.
-2. **It is calibrated.** With no true offset the emitted correction is pure
-   estimator noise, and the statistic must then sit on its nominal chi-square
-   scale. This is the negative control: an implementation that forgot the
-   residual-variance division, or used the nominal point count where the
-   effective one belongs, still passes every "big offset gives a big number"
-   test and fails this one.
-3. **Sparse evidence abstains more readily than dense evidence for the same
-   correction**, which is FreeAlign's minimum-node behaviour arrived at from
-   the estimator rather than from a node count. If this failed, the whole
-   argument for going per-pair would be empty.
+   statistic that moved when ``variance.py`` or ``robust.py`` renormalized
+   would be measuring the plumbing.
 4. **A disabled decision changes nothing**, so ``alignformer_irls`` as deployed
    reproduces bit for bit in the very same run that measures the new arms.
 
-The equivalences between the three pre-registered variants are asserted rather
-than described: ``both`` at a threshold of 0 -- and at 3, the James-Stein
-dimension -- IS ``per_pair``, because the positive-part rule already returns
-exactly zero there. Stating that in a test is what keeps the three arms from
-silently being two.
+The equivalence between the three pre-registered variants is asserted rather
+than described: ``both`` at level 1.0 -- a threshold of zero -- IS ``per_pair``.
+Stating that in a test is what keeps the three arms from silently being two.
 """
 
 import math
@@ -48,21 +49,34 @@ from embedding_aware_belt_fusion.alignformer.abstain import (
     PER_PAIR,
     RESIDUAL_SD_FLOOR_M,
     AbstentionConfig,
+    abstention_threshold,
     decide,
     decision_factor,
     effective_sample_size,
-    residual_variance,
+    residual_scale,
     wald_statistic,
 )
 from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+from embedding_aware_belt_fusion.alignformer.procrustes import (
+    augment_with_heading,
+    weighted_se2_kabsch,
+)
 from embedding_aware_belt_fusion.alignformer.shrinkage import (
     POSE_DIMENSIONS,
     shrinkage_factor,
 )
 
-# chi-square(3) upper quantiles, the only thresholds used below.
-CHI2_3_95 = 7.8147
-CHI2_3_999 = 16.2662
+# configs/alignformer_r140.yaml, model.correspondence_variance: the fitted
+# per-detection disagreement at the reference confidence, and the deployed
+# heading offset. The calibration control has to run at these or it is testing
+# a geometry this project does not deploy.
+SIGMA_TRANSLATION_M = 0.2516
+SIGMA_YAW_RAD = math.radians(4.6392)
+HEADING_LAMBDA = 2.0
+# Two detections per correspondence, so the disagreement variance is twice the
+# per-detection one. `variance.correspondence_variances`' own arithmetic.
+VARIANCE_CENTRE = 2.0 * SIGMA_TRANSLATION_M ** 2
+VARIANCE_HEADING = VARIANCE_CENTRE + HEADING_LAMBDA ** 2 * 2.0 * SIGMA_YAW_RAD ** 2
 
 
 def _apply(psi, t, q):
@@ -75,14 +89,60 @@ def _scatter(count, generator, extent=60.0):
     return (torch.rand(count, 2, generator=generator) - 0.5) * extent
 
 
-def _noisy_pair(count, *, sd, generator, psi=0.0, t=(0.0, 0.0)):
-    """``(p, q, w)`` for a pair whose only disagreement is detector noise."""
-    q = _scatter(count, generator)
-    p = _apply(psi, t, q) + torch.randn(count, 2, generator=generator) * sd
-    return p.unsqueeze(0), q.unsqueeze(0), torch.ones(1, count)
+def _variances(count, batch=1):
+    return (
+        torch.full((batch, count), VARIANCE_CENTRE),
+        torch.full((batch, count), VARIANCE_HEADING),
+    )
 
 
-def _estimate(statistic, psi=0.3, t=(1.0, -2.0)):
+def _null_pair(objects, generator, *, psi=0.0, t=(0.0, 0.0)):
+    """``(p, q, w)`` for one pair in the DEPLOYED heading-augmented geometry.
+
+    Both agents detect the same objects and disagree only by the fitted
+    per-detection centre and heading noise; the true relative correction is
+    ``(psi, t)``, which the null uses as the identity. Points come out of
+    ``augment_with_heading`` so an object's two rows share its centre error
+    exactly as they do in the sweep.
+    """
+    centres = _scatter(objects, generator)
+    yaws = (torch.rand(objects, generator=generator) - 0.5) * 2 * math.pi
+
+    axis = SIGMA_TRANSLATION_M / math.sqrt(2.0)
+    ego_centres = centres + torch.randn(objects, 2, generator=generator) * axis
+    ego_yaws = yaws + torch.randn(objects, generator=generator) * SIGMA_YAW_RAD
+    cav_centres = centres + torch.randn(objects, 2, generator=generator) * axis
+    cav_yaws = yaws + torch.randn(objects, generator=generator) * SIGMA_YAW_RAD
+
+    # The CAV's boxes arrive already projected by the (possibly wrong) pose;
+    # the correction the solve looks for takes them back onto the ego's.
+    inverse = _apply(-psi, (0.0, 0.0), cav_centres - torch.tensor(t, dtype=torch.float))
+
+    p = augment_with_heading(
+        ego_centres.unsqueeze(0), ego_yaws.unsqueeze(0), HEADING_LAMBDA
+    )
+    q = augment_with_heading(
+        inverse.unsqueeze(0), (cav_yaws - psi).unsqueeze(0), HEADING_LAMBDA
+    )
+    return p, q, torch.ones(1, 2 * objects)
+
+
+def _statistic(p, q, w, psi, t):
+    centre, heading = _variances(p.shape[1] // 2)
+    return wald_statistic(
+        p, q, w, psi, t,
+        variance_centre=centre,
+        variance_heading=heading,
+        heading_lambda=HEADING_LAMBDA,
+    )
+
+
+def _solved_statistic(p, q, w):
+    psi, t = weighted_se2_kabsch(p, q, w)
+    return _statistic(p, q, w, psi, t)
+
+
+def _estimate(statistic, dof=1000.0, psi=0.3, t=(1.0, -2.0)):
     """A batch of identical corrections, one per supplied statistic."""
     values = torch.as_tensor(statistic, dtype=torch.float32)
     size = values.shape[0]
@@ -91,29 +151,106 @@ def _estimate(statistic, psi=0.3, t=(1.0, -2.0)):
         t=torch.tensor([list(t)]).expand(size, 2).clone(),
         confidence=torch.full((size,), 9.0),
         offset_statistic=values,
+        offset_dof=torch.full((size,), float(dof)),
     )
 
 
 # --------------------------------------------------------------------------
-# 1. The statistic is a property of the fit, not of the weight scale.
+# 1. THE NEGATIVE CONTROL: calibrated on the geometry the pipeline produces.
+# --------------------------------------------------------------------------
+
+
+def _false_fire_rate(objects, level, trials, seed):
+    """How often the rule answers when the truth is exactly the identity."""
+    config = AbstentionConfig(mode=ABSTAIN, level=level)
+    generator = torch.Generator().manual_seed(seed)
+    fired = 0
+    for _ in range(trials):
+        p, q, w = _null_pair(objects, generator)
+        statistic, dof = _solved_statistic(p, q, w)
+        fired += int(float(decision_factor(statistic, dof, config)[0]) > 0.0)
+    return fired / trials
+
+
+@pytest.mark.parametrize("objects", (2, 4, 12, 24))
+def test_the_level_holds_at_every_matched_object_count(objects):
+    """The control the earlier draft did not have, and the defect it hid.
+
+    A covariance that ignored the shared centre error fired on 64% of
+    two-object pairs and 27% of twenty-four-object pairs at a nominal 5%. With
+    the sandwich and the computed residual divisor the measured rate is 0.075
+    at two objects falling to 0.045 at twenty-four (2000 trials each). The bar
+    here is deliberately per-count: a pooled rate can sit on its nominal value
+    while every individual count misses it, and sigma = 0 on the sparse slice
+    is the one cell this whole intervention exists to fix.
+    """
+    measured = _false_fire_rate(objects, level=0.05, trials=400, seed=1000 + objects)
+    assert 0.02 < measured < 0.13, (objects, measured)
+
+
+def test_a_looser_level_answers_more_often_than_a_tighter_one():
+    loose = _false_fire_rate(12, level=0.5, trials=300, seed=77)
+    tight = _false_fire_rate(12, level=0.01, trials=300, seed=77)
+    assert loose > 0.25
+    assert tight < 0.06
+    assert loose > tight
+
+
+def test_a_real_offset_still_fires():
+    """The control's companion: a calibrated statistic must not be inert.
+
+    Without this, an implementation that returned a constant below every
+    threshold would pass the calibration test and abstain on everything.
+    """
+    config = AbstentionConfig(mode=ABSTAIN, level=0.05)
+    generator = torch.Generator().manual_seed(29)
+    fired = 0
+    for _ in range(60):
+        p, q, w = _null_pair(12, generator, t=(1.2, -0.9))
+        statistic, dof = _solved_statistic(p, q, w)
+        fired += int(float(decision_factor(statistic, dof, config)[0]) > 0.0)
+    assert fired == 60, fired
+
+
+def test_a_sparse_pair_needs_a_larger_offset_than_a_dense_one_to_fire():
+    """The mechanism the whole intervention is justified by, measured on the
+    SOLVED correction rather than on a supplied one -- the sweep never supplies
+    one, and a sparse pair solves a larger spurious correction."""
+    config = AbstentionConfig(mode=ABSTAIN, level=0.05)
+
+    def rate(objects, offset):
+        generator = torch.Generator().manual_seed(4242)
+        fired = 0
+        for _ in range(300):
+            p, q, w = _null_pair(objects, generator, t=(offset, 0.0))
+            statistic, dof = _solved_statistic(p, q, w)
+            fired += int(float(decision_factor(statistic, dof, config)[0]) > 0.0)
+        return fired / 300
+
+    dense = rate(16, 0.20)
+    sparse = rate(2, 0.20)
+    assert dense > sparse, (dense, sparse)
+
+
+# --------------------------------------------------------------------------
+# 2. The statistic is a property of the fit, not of the weight scale.
 # --------------------------------------------------------------------------
 
 
 def test_the_statistic_is_invariant_to_the_scale_of_the_weights():
     generator = torch.Generator().manual_seed(3)
-    p, q, w = _noisy_pair(12, sd=0.25, generator=generator, psi=0.02, t=(0.4, -0.3))
+    p, q, w = _null_pair(12, generator, t=(0.4, -0.3))
+    psi, t = torch.tensor([0.02]), torch.tensor([[0.4, -0.3]])
 
-    plain = wald_statistic(p, q, w, torch.tensor([0.02]), torch.tensor([[0.4, -0.3]]))
-    rescaled = wald_statistic(
-        p, q, w * 7.5, torch.tensor([0.02]), torch.tensor([[0.4, -0.3]])
-    )
+    plain, plain_dof = _statistic(p, q, w, psi, t)
+    rescaled, rescaled_dof = _statistic(p, q, w * 7.5, psi, t)
 
-    assert torch.allclose(plain, rescaled, rtol=1e-5, atol=1e-6)
+    assert torch.allclose(plain, rescaled, rtol=1e-4, atol=1e-6)
+    assert torch.allclose(plain_dof, rescaled_dof, rtol=1e-5, atol=1e-6)
 
 
 def test_the_effective_sample_size_is_the_count_for_equal_weights():
-    equal = torch.ones(1, 8)
-    assert float(effective_sample_size(equal)[0]) == pytest.approx(8.0)
+    assert float(effective_sample_size(torch.ones(1, 8))[0]) == pytest.approx(8.0)
 
     # One dominant weight carries almost all the information: Kish's effective
     # count collapses towards one, which is what makes a lopsided soft match
@@ -122,180 +259,168 @@ def test_the_effective_sample_size_is_the_count_for_equal_weights():
     assert float(effective_sample_size(lopsided)[0]) < 1.1
 
 
+def test_the_degrees_of_freedom_count_objects_and_not_points():
+    """Three independent noise dimensions per object -- two centre, one heading
+    -- however many augmented points it contributes."""
+    generator = torch.Generator().manual_seed(5)
+    p, q, w = _null_pair(8, generator)
+
+    _, dof = _solved_statistic(p, q, w)
+
+    assert float(dof[0]) == pytest.approx(POSE_DIMENSIONS * 8 - POSE_DIMENSIONS)
+    # Not the point count: that would be 3 * 16 - 3 = 45.
+    assert float(dof[0]) < 30.0
+
+
+def test_a_lopsided_soft_match_is_charged_for_the_evidence_it_actually_has():
+    generator = torch.Generator().manual_seed(6)
+    p, q, _ = _null_pair(8, generator)
+    lopsided = torch.tensor([[1.0, 1.0] + [1e-6] * 6] * 2).reshape(1, 16)
+
+    _, dof = _solved_statistic(p, q, lopsided)
+
+    # Two objects' worth of evidence, not eight.
+    assert float(dof[0]) == pytest.approx(POSE_DIMENSIONS * 2 - POSE_DIMENSIONS, abs=0.1)
+
+
 def test_an_all_zero_weight_row_yields_a_finite_statistic():
     generator = torch.Generator().manual_seed(5)
-    p, q, _ = _noisy_pair(6, sd=0.25, generator=generator)
-    zero = torch.zeros(1, 6)
+    p, q, _ = _null_pair(6, generator)
+    zero = torch.zeros(1, 12)
 
-    value = wald_statistic(p, q, zero, torch.tensor([0.0]), torch.tensor([[0.0, 0.0]]))
+    value, dof = _statistic(p, q, zero, torch.tensor([0.0]), torch.tensor([[0.0, 0.0]]))
 
     assert torch.isfinite(value).all()
     assert float(value[0]) == pytest.approx(0.0)
+    assert float(dof[0]) > 0.0
 
 
 def test_an_identity_correction_scores_exactly_zero():
     generator = torch.Generator().manual_seed(9)
-    p, q, w = _noisy_pair(10, sd=0.25, generator=generator)
+    p, q, w = _null_pair(10, generator)
 
-    value = wald_statistic(p, q, w, torch.tensor([0.0]), torch.tensor([[0.0, 0.0]]))
+    value, _ = _statistic(p, q, w, torch.tensor([0.0]), torch.tensor([[0.0, 0.0]]))
 
     assert float(value[0]) == 0.0
 
 
 def test_a_perfect_fit_with_a_real_offset_scores_far_outside_the_noise():
     generator = torch.Generator().manual_seed(13)
-    q = _scatter(10, generator).unsqueeze(0)
+    centres = _scatter(10, generator)
+    yaws = torch.rand(10, generator=generator) * 2 * math.pi
+    q = augment_with_heading(centres.unsqueeze(0), yaws.unsqueeze(0), HEADING_LAMBDA)
     psi, t = 0.05, (1.5, -2.0)
-    p = _apply(psi, t, q[0]).unsqueeze(0)
-
-    value = wald_statistic(
-        p, q, torch.ones(1, 10), torch.tensor([psi]), torch.tensor([list(t)])
+    p = augment_with_heading(
+        _apply(psi, t, centres).unsqueeze(0), (yaws + psi).unsqueeze(0), HEADING_LAMBDA
     )
 
-    # Zero residual, so the scale floors at RESIDUAL_SD_FLOOR_M and the
-    # correction is thousands of floored sigmas of displacement.
+    value, _ = _statistic(
+        p, q, torch.ones(1, 20), torch.tensor([psi]), torch.tensor([list(t)])
+    )
+
     assert float(value[0]) > 1e4
 
 
-def test_a_lopsided_soft_match_is_charged_for_the_evidence_it_actually_has():
-    """Kish's effective count, not the nominal one, sets the degrees of freedom.
-
-    Eight rows of which six carry negligible mass are two observations, not
-    eight. Using the nominal count here would divide the same residual sum by
-    ``2 * 8 - 3`` instead of the floored ``2 * 2 - 3``, understate the
-    estimator's variance by an order of magnitude, and make a lopsided match
-    look confident -- which is the failure this whole statistic exists to
-    avoid.
-    """
-    residual = torch.full((1, 8, 2), 0.3)
-    lopsided = torch.tensor([[1.0, 1.0] + [1e-6] * 6])
-
-    measured = float(residual_variance(residual, lopsided)[0])
-
-    n_eff = float(effective_sample_size(lopsided)[0])
-    assert n_eff == pytest.approx(2.0, abs=1e-3)
-    # sum_n w_n |r_n|^2 with the weights normalized to total n_eff, over the
-    # floored dof of max(2 * 2 - 3, 1) = 1.
-    assert measured == pytest.approx(n_eff * 2 * 0.3 ** 2, rel=1e-3)
-    # The nominal count would have been 13 degrees of freedom, i.e. 13x smaller.
-    assert measured > 5.0 * (n_eff * 2 * 0.3 ** 2) / (2 * 8 - POSE_DIMENSIONS)
-
-
-def test_the_residual_variance_floors_rather_than_dividing_by_zero():
+def test_the_residual_scale_floors_rather_than_dividing_by_zero():
     exact = torch.zeros(1, 6, 2)
-    value = residual_variance(exact, torch.ones(1, 6))
-    assert float(value[0]) == pytest.approx(RESIDUAL_SD_FLOOR_M ** 2)
+    variance = torch.full((1, 6), VARIANCE_CENTRE)
+    value = float(
+        residual_scale(exact, torch.ones(1, 6), variance, torch.tensor([6.0]))[0]
+    )
+    # The floor is on the IMPLIED per-axis residual sd, which is where it keeps
+    # its meaning in metres.
+    assert value == pytest.approx(2.0 * RESIDUAL_SD_FLOOR_M ** 2 / VARIANCE_CENTRE)
 
 
-# --------------------------------------------------------------------------
-# 2. THE NEGATIVE CONTROL: with no true offset the statistic is calibrated.
-# --------------------------------------------------------------------------
-
-
-def _null_statistics(count, trials, sd=0.25, seed=101):
-    """Wald statistics of the SOLVED correction when the truth is the identity.
-
-    The pose is solved, not supplied, so what is measured is the estimator's
-    own noise against its own covariance -- the sigma = 0 situation the whole
-    intervention exists for.
-    """
-    from embedding_aware_belt_fusion.alignformer.procrustes import weighted_se2_kabsch
+def _null_residual_scale(objects, trials, seed):
+    """``tau^2`` on pairs whose noise is exactly the model's, and its divisor."""
+    from embedding_aware_belt_fusion.alignformer.abstain import (
+        _normal_matrix,
+        expected_residual_sum,
+        residual_scale,
+        sandwich_middle,
+    )
 
     generator = torch.Generator().manual_seed(seed)
-    values = []
+    centre, heading = _variances(objects)
+    scales, sums, divisor = [], [], None
     for _ in range(trials):
-        p, q, w = _noisy_pair(count, sd=sd, generator=generator)
+        p, q, w = _null_pair(objects, generator)
         psi, t = weighted_se2_kabsch(p, q, w)
-        values.append(float(wald_statistic(p, q, w, psi, t)[0]))
-    return torch.tensor(values)
+        cos, sin = math.cos(float(psi[0])), math.sin(float(psi[0]))
+        rotated = (q[0] @ torch.tensor([[cos, -sin], [sin, cos]]).T).unsqueeze(0)
+        residual = rotated + t.unsqueeze(1) - p
+        variance = torch.cat([centre, heading], dim=1)
+
+        curvature = _normal_matrix(rotated, w)
+        middle = sandwich_middle(rotated, w, centre, heading, HEADING_LAMBDA)
+        divisor = expected_residual_sum(
+            rotated, w, centre, heading, HEADING_LAMBDA, curvature, middle
+        )
+        sums.append(
+            float(((residual * residual).sum(-1) / variance).sum())
+        )
+        scales.append(float(residual_scale(residual, w, variance, divisor)[0]))
+    return sum(scales) / len(scales), sum(sums) / len(sums), float(divisor[0])
 
 
-def test_under_the_null_the_statistic_sits_on_its_chi_square_scale():
-    values = _null_statistics(count=24, trials=400)
+@pytest.mark.parametrize("objects", (2, 4, 12, 24))
+def test_the_residual_scale_is_unbiased_at_every_object_count(objects):
+    """``tau^2`` is centred on 1 when the noise IS the model, at every count.
 
-    median = float(values.median())
-    tail = float((values > CHI2_3_95).to(torch.float32).mean())
-
-    # chi-square(3) has median 2.366 and 5% mass above 7.815. The plug-in
-    # variance makes this 3 * F(3, 2n - 3), slightly heavier in the tail.
-    assert 1.6 < median < 3.4, median
-    assert 0.02 < tail < 0.12, tail
-
-
-def test_a_real_offset_moves_the_same_statistic_off_that_scale():
-    """The control's companion: a calibrated statistic must still FIRE.
-
-    Without this, an implementation that returned a constant near 2.4 would
-    pass the calibration test and abstain on everything.
+    The derivation this pins is ``expected_residual_sum``: the divisor is the
+    model's own expectation for the numerator, computed from the fit. Counting
+    points instead -- ``2 n_eff - 3`` -- is wrong by a factor of two at two
+    matched objects, which halves tau^2, doubles the statistic and over-fires
+    exactly where the evidence is thinnest. The companion assertion compares the
+    computed divisor against the measured expectation directly, so a divisor
+    that happened to be wrong in a way tau^2 absorbed could not pass.
     """
-    from embedding_aware_belt_fusion.alignformer.procrustes import weighted_se2_kabsch
+    scale, measured_sum, divisor = _null_residual_scale(objects, 400, 300 + objects)
 
-    generator = torch.Generator().manual_seed(29)
-    fired = 0
-    for _ in range(50):
-        p, q, w = _noisy_pair(24, sd=0.25, generator=generator, t=(0.8, -0.6))
-        psi, t = weighted_se2_kabsch(p, q, w)
-        fired += int(float(wald_statistic(p, q, w, psi, t)[0]) > CHI2_3_95)
-
-    assert fired == 50, fired
+    assert 0.8 < scale < 1.25, (objects, scale)
+    assert divisor == pytest.approx(measured_sum, rel=0.12), (objects, divisor)
+    # And the naive point count is NOT the answer at the thin end.
+    if objects == 2:
+        assert divisor < 0.75 * (2 * 2 * objects - POSE_DIMENSIONS)
 
 
 # --------------------------------------------------------------------------
-# 3. Sparse evidence abstains more readily than dense, for the same correction.
+# 3. The threshold, and the decision rule.
 # --------------------------------------------------------------------------
 
 
-def test_sparse_evidence_scores_lower_than_dense_for_the_same_correction():
-    generator = torch.Generator().manual_seed(17)
-    psi, t = torch.tensor([0.004]), torch.tensor([[0.20, -0.15]])
+def test_the_threshold_falls_to_the_chi_square_quantile_at_large_dof():
+    from scipy.stats import chi2
 
-    dense_p, dense_q, dense_w = _noisy_pair(16, sd=0.25, generator=generator)
-    sparse_p, sparse_q, sparse_w = _noisy_pair(4, sd=0.25, generator=generator)
-
-    dense = float(wald_statistic(dense_p, dense_q, dense_w, psi, t)[0])
-    sparse = float(wald_statistic(sparse_p, sparse_q, sparse_w, psi, t)[0])
-
-    assert dense > 2.0 * sparse, (dense, sparse)
+    config = AbstentionConfig(mode=ABSTAIN, level=0.05)
+    large = abstention_threshold(torch.tensor([3500.0]), config)
+    assert float(large[0]) == pytest.approx(chi2.ppf(0.95, 3), rel=0.02)
 
 
-def test_a_noisier_pair_scores_lower_than_a_cleaner_one():
-    generator = torch.Generator().manual_seed(23)
-    psi, t = torch.tensor([0.004]), torch.tensor([[0.20, -0.15]])
-
-    clean_p, clean_q, w = _noisy_pair(16, sd=0.10, generator=generator)
-    noisy_p, noisy_q, _ = _noisy_pair(16, sd=0.60, generator=generator)
-
-    clean = float(wald_statistic(clean_p, clean_q, w, psi, t)[0])
-    noisy = float(wald_statistic(noisy_p, noisy_q, w, psi, t)[0])
-
-    assert clean > noisy, (clean, noisy)
-
-
-# --------------------------------------------------------------------------
-# 4. The decision rule, and the equivalences between its three variants.
-# --------------------------------------------------------------------------
+def test_the_threshold_is_far_larger_where_the_evidence_is_thin():
+    config = AbstentionConfig(mode=ABSTAIN, level=0.05)
+    thresholds = abstention_threshold(torch.tensor([3.0, 9.0, 69.0]), config)
+    assert thresholds[0] > 3.0 * thresholds[2]
+    assert thresholds[0] > thresholds[1] > thresholds[2]
 
 
 def test_a_disabled_decision_returns_the_estimate_untouched():
     estimate = _estimate([0.01])
-    decided = decide(estimate, AbstentionConfig())
-
-    assert decided is estimate
+    assert decide(estimate, AbstentionConfig()) is estimate
 
 
 @pytest.mark.parametrize("mode", ABSTENTION_MODES)
 def test_every_mode_is_constructible_and_reports_its_own_name(mode):
-    threshold = 0.0 if mode in (NONE, PER_PAIR) else CHI2_3_95
-    config = AbstentionConfig(mode=mode, threshold=threshold)
+    level = 0.0 if mode in (NONE, PER_PAIR) else 0.05
+    config = AbstentionConfig(mode=mode, level=level)
     assert config.enabled == (mode != NONE)
     assert config.to_dict()["mode"] == mode
 
 
 def test_hard_abstention_zeroes_below_the_threshold_and_is_exact_above_it():
     estimate = _estimate([1.0, 400.0])
-    config = AbstentionConfig(mode=ABSTAIN, threshold=CHI2_3_95)
-
-    decided = decide(estimate, config)
+    decided = decide(estimate, AbstentionConfig(mode=ABSTAIN, level=0.05))
 
     assert float(decided.psi[0]) == 0.0
     assert float(decided.t[0].abs().sum()) == 0.0
@@ -304,47 +429,56 @@ def test_hard_abstention_zeroes_below_the_threshold_and_is_exact_above_it():
 
 
 def test_the_threshold_is_inclusive_so_an_exact_hit_abstains():
-    estimate = _estimate([CHI2_3_95])
-    decided = decide(estimate, AbstentionConfig(mode=ABSTAIN, threshold=CHI2_3_95))
+    config = AbstentionConfig(mode=ABSTAIN, level=0.05)
+    exact = float(abstention_threshold(torch.tensor([1000.0]), config)[0])
+    decided = decide(_estimate([exact], dof=1000.0), config)
     assert float(decided.psi[0]) == 0.0
 
 
 def test_the_per_pair_factor_is_the_james_stein_rule_on_this_statistic():
     statistic = torch.tensor([0.5, 3.0, 12.0, 300.0])
-
-    factor = decision_factor(statistic, AbstentionConfig(mode=PER_PAIR))
-
+    factor = decision_factor(statistic, None, AbstentionConfig(mode=PER_PAIR))
     assert torch.equal(factor, shrinkage_factor(statistic, POSE_DIMENSIONS))
 
 
-def test_both_at_the_james_stein_dimension_is_exactly_the_per_pair_rule():
+def test_both_at_a_level_of_one_is_exactly_the_per_pair_rule():
     statistic = torch.tensor([0.5, 2.9, 3.0, 12.0, 300.0])
+    dof = torch.full((5,), 40.0)
 
-    per_pair = decision_factor(statistic, AbstentionConfig(mode=PER_PAIR))
-    at_zero = decision_factor(statistic, AbstentionConfig(mode=BOTH, threshold=0.0))
-    at_p = decision_factor(
-        statistic, AbstentionConfig(mode=BOTH, threshold=float(POSE_DIMENSIONS))
+    per_pair = decision_factor(statistic, dof, AbstentionConfig(mode=PER_PAIR))
+    at_one = decision_factor(
+        statistic, dof, AbstentionConfig(mode=BOTH, level=1.0)
     )
 
-    assert torch.equal(per_pair, at_zero)
-    assert torch.equal(per_pair, at_p)
+    assert torch.equal(per_pair, at_one)
 
 
-def test_both_above_the_dimension_abstains_where_per_pair_would_have_shrunk():
+def test_both_abstains_where_per_pair_would_have_shrunk():
     statistic = torch.tensor([5.0])
+    dof = torch.tensor([40.0])
 
-    per_pair = decision_factor(statistic, AbstentionConfig(mode=PER_PAIR))
-    both = decision_factor(
-        statistic, AbstentionConfig(mode=BOTH, threshold=CHI2_3_95)
-    )
+    per_pair = decision_factor(statistic, dof, AbstentionConfig(mode=PER_PAIR))
+    both = decision_factor(statistic, dof, AbstentionConfig(mode=BOTH, level=0.05))
 
     assert float(per_pair[0]) > 0.0
     assert float(both[0]) == 0.0
 
 
-def test_per_pair_refuses_a_threshold_because_it_has_no_use_for_one():
-    with pytest.raises(ValueError, match="threshold"):
-        AbstentionConfig(mode=PER_PAIR, threshold=5.0)
+def test_a_hard_rule_without_the_degrees_of_freedom_is_an_error():
+    with pytest.raises(ValueError, match="degrees of freedom"):
+        decision_factor(
+            torch.tensor([5.0]), None, AbstentionConfig(mode=ABSTAIN, level=0.05)
+        )
+
+
+def test_per_pair_refuses_a_level_because_it_has_no_use_for_one():
+    with pytest.raises(ValueError, match="level"):
+        AbstentionConfig(mode=PER_PAIR, level=0.05)
+
+
+def test_a_hard_rule_refuses_a_level_of_zero():
+    with pytest.raises(ValueError, match="level"):
+        AbstentionConfig(mode=ABSTAIN, level=0.0)
 
 
 def test_an_unknown_mode_is_refused():
@@ -352,9 +486,10 @@ def test_an_unknown_mode_is_refused():
         AbstentionConfig(mode="gate")
 
 
-def test_a_negative_threshold_is_refused():
-    with pytest.raises(ValueError, match="threshold"):
-        AbstentionConfig(mode=ABSTAIN, threshold=-1.0)
+@pytest.mark.parametrize("level", (-0.1, 1.5, float("nan")))
+def test_a_level_outside_the_unit_interval_is_refused(level):
+    with pytest.raises(ValueError, match="level"):
+        AbstentionConfig(mode=ABSTAIN, level=level)
 
 
 def test_deciding_without_a_statistic_is_an_error_rather_than_a_silent_pass():
@@ -364,51 +499,52 @@ def test_deciding_without_a_statistic_is_an_error_rather_than_a_silent_pass():
         confidence=torch.tensor([9.0]),
     )
     with pytest.raises(ValueError, match="statistic"):
-        decide(estimate, AbstentionConfig(mode=ABSTAIN, threshold=CHI2_3_95))
+        decide(estimate, AbstentionConfig(mode=ABSTAIN, level=0.05))
 
 
 def test_an_abstained_pair_is_counted_as_a_fallback_so_coverage_is_measurable():
     from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 
-    estimate = _estimate([1.0, 400.0])
-    decided = decide(estimate, AbstentionConfig(mode=ABSTAIN, threshold=CHI2_3_95))
-
+    decided = decide(
+        _estimate([1.0, 400.0]), AbstentionConfig(mode=ABSTAIN, level=0.05)
+    )
     assert is_fallback(decided).tolist() == [True, False]
 
 
 # --------------------------------------------------------------------------
-# 5. Specs, names and the sweep wiring.
+# 4. Specs, names and the sweep wiring.
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "spec, mode, threshold",
+    "spec, mode, level",
     (
-        ("abstain:7.8147", ABSTAIN, CHI2_3_95),
-        ("both:16.2662", BOTH, CHI2_3_999),
+        ("abstain:0.05", ABSTAIN, 0.05),
+        ("both:0.01", BOTH, 0.01),
         ("per_pair", PER_PAIR, 0.0),
     ),
 )
-def test_a_spec_parses_to_the_configuration_it_names(spec, mode, threshold):
+def test_a_spec_parses_to_the_configuration_it_names(spec, mode, level):
     config = AbstentionConfig.parse(spec)
     assert config.mode == mode
-    assert config.threshold == pytest.approx(threshold)
+    assert config.level == pytest.approx(level)
 
 
-def test_a_spec_with_a_nonsense_threshold_is_refused():
+@pytest.mark.parametrize("spec", ("abstain:wide", "abstain:", "per_pair:0.2"))
+def test_a_nonsense_spec_is_refused(spec):
     with pytest.raises(ValueError):
-        AbstentionConfig.parse("abstain:wide")
+        AbstentionConfig.parse(spec)
 
 
-def test_arm_names_are_distinct_and_carry_their_threshold():
+def test_arm_names_are_distinct_and_carry_their_level():
     names = {
         AbstentionConfig.parse(spec).name
-        for spec in ("abstain:3", "abstain:7.8147", "both:7.8147", "per_pair")
+        for spec in ("abstain:0.5", "abstain:0.05", "both:0.05", "per_pair")
     }
     assert names == {
-        "alignformer_abstain_3",
-        "alignformer_abstain_7.8147",
-        "alignformer_both_7.8147",
+        "alignformer_abstain_0.5",
+        "alignformer_abstain_0.05",
+        "alignformer_both_0.05",
         "alignformer_per_pair",
     }
 
@@ -422,7 +558,7 @@ def test_the_sweep_adds_one_arm_per_configuration_after_the_irls_arm():
     )
     from embedding_aware_belt_fusion.alignformer.robust import HUBER, RobustSolveConfig
 
-    arms = (AbstentionConfig.parse("abstain:7.8147"), AbstentionConfig.parse("per_pair"))
+    arms = (AbstentionConfig.parse("abstain:0.05"), AbstentionConfig.parse("per_pair"))
     names = sweep_estimators(
         [], True, RobustSolveConfig(mode=HUBER, iterations=2), abstention=arms
     )
@@ -451,7 +587,7 @@ def test_the_global_tau_never_reaches_an_abstention_arm():
         unshrunk_conditions,
     )
 
-    arms = (AbstentionConfig.parse("abstain:7.8147"), AbstentionConfig.parse("per_pair"))
+    arms = (AbstentionConfig.parse("abstain:0.05"), AbstentionConfig.parse("per_pair"))
     unshrunk = unshrunk_conditions(arms)
 
     assert FREEALIGN in unshrunk
@@ -485,7 +621,7 @@ def test_draw_aligned_leaves_an_unshrunk_arm_exactly_where_it_found_it():
 
 
 # --------------------------------------------------------------------------
-# 6. The solve carries the statistic without moving the pose it reports.
+# 5. The solve carries the statistic without moving the pose it reports.
 # --------------------------------------------------------------------------
 
 
@@ -532,16 +668,16 @@ def test_asking_for_the_statistic_does_not_move_the_pose_it_is_computed_from(
         else RobustSolveConfig(mode=robust_mode, iterations=2, min_evidence=3.0)
     )
 
-    without = solve_pose(correspondence, batch, 2.0, UNWEIGHTED, robust)
+    without = solve_pose(correspondence, batch, HEADING_LAMBDA, UNWEIGHTED, robust)
     with_statistic = solve_pose(
-        correspondence, batch, 2.0, UNWEIGHTED, robust, statistic=True
+        correspondence, batch, HEADING_LAMBDA, UNWEIGHTED, robust, statistic=True
     )
 
     assert torch.equal(without.psi, with_statistic.psi)
     assert torch.equal(without.t, with_statistic.t)
-    assert without.offset_statistic is None
-    assert with_statistic.offset_statistic is not None
+    assert without.offset_statistic is None and without.offset_dof is None
     assert torch.isfinite(with_statistic.offset_statistic).all()
+    assert torch.isfinite(with_statistic.offset_dof).all()
 
 
 def test_an_empty_object_set_carries_a_zero_statistic_rather_than_none():
@@ -563,8 +699,7 @@ def test_an_empty_object_set_carries_a_zero_statistic_rather_than_none():
 
     assert estimate.offset_statistic is not None
     assert float(estimate.offset_statistic[0]) == 0.0
-    # And it therefore abstains, which is the right answer for no evidence.
-    decided = decide(estimate, AbstentionConfig(mode=ABSTAIN, threshold=CHI2_3_95))
+    decided = decide(estimate, AbstentionConfig(mode=ABSTAIN, level=0.05))
     assert float(decided.psi[0]) == 0.0
 
 
@@ -579,10 +714,7 @@ def test_the_sweep_asks_the_solve_for_the_statistic_its_arms_need():
         ALIGNFORMER_IRLS,
         _alignformer_estimates,
     )
-    from embedding_aware_belt_fusion.alignformer.robust import (
-        HUBER,
-        RobustSolveConfig,
-    )
+    from embedding_aware_belt_fusion.alignformer.robust import HUBER, RobustSolveConfig
 
     torch.manual_seed(0)
     channels, output_size, dim, count = 3, 2, 8, 6
@@ -595,19 +727,15 @@ def test_the_sweep_asks_the_solve_for_the_statistic_its_arms_need():
         "pose": AlignFormerB(embed_dim=dim, model_dim=16, layers=1, heads=2),
     }
     robust = RobustSolveConfig(mode=HUBER, iterations=2, min_evidence=0.0)
-    arms = (
-        AbstentionConfig.parse("abstain:7.8147"),
-        AbstentionConfig.parse("per_pair"),
-    )
+    arms = (AbstentionConfig.parse("abstain:0.05"), AbstentionConfig.parse("per_pair"))
 
     estimates = _alignformer_estimates(modules, batch, False, robust, arms)
 
     assert set(estimates) == {ALIGNFORMER, ALIGNFORMER_IRLS} | {a.name for a in arms}
     irls = estimates[ALIGNFORMER_IRLS]
     assert irls.offset_statistic is not None
-    # Each arm is that ONE estimate with a decision applied, never a re-solve.
     for arm in arms:
-        factor = decision_factor(irls.offset_statistic, arm)
+        factor = decision_factor(irls.offset_statistic, irls.offset_dof, arm)
         assert torch.equal(estimates[arm.name].psi, irls.psi * factor)
         assert torch.equal(estimates[arm.name].t, irls.t * factor.unsqueeze(-1))
 
@@ -620,10 +748,7 @@ def test_the_deployed_arms_are_untouched_by_the_presence_of_abstention_arms():
         ALIGNFORMER_IRLS,
         _alignformer_estimates,
     )
-    from embedding_aware_belt_fusion.alignformer.robust import (
-        HUBER,
-        RobustSolveConfig,
-    )
+    from embedding_aware_belt_fusion.alignformer.robust import HUBER, RobustSolveConfig
 
     torch.manual_seed(0)
     channels, output_size, dim, count = 3, 2, 8, 6

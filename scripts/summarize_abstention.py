@@ -18,8 +18,11 @@ the deployed ``alignformer_irls`` arm **in the same run**, and reports:
   now applies to us;
 * the pre-registered decision rule, evaluated on VALIDATION only, over the arms
   **in the order the brief names them**: hard abstain, then per-pair shrinkage,
-  then both. The first arm that passes every clause ships. Scanning all of them
-  and keeping the best would be selecting on the same data that measures;
+  then both, and within a mode by ascending level -- least intervention first.
+  The first arm that passes every clause ships. Scanning all of them and keeping
+  the best would be selecting on the same data that measures, and the
+  within-mode tie-break is stated here rather than buried in a sort key because
+  it decides which arm ships when several pass;
 * the FreeAlign comparison, reported *after* the decision is frozen and never
   used as a criterion.
 
@@ -147,27 +150,74 @@ def _coverage_cell(result: Dict, condition: str, sigma: float) -> List[float]:
     return values[:1] if _drawn_once(result, sigma) else values
 
 
+def _translation_series(result: Dict, condition: str, sigma: float) -> List[float]:
+    """Mean magnitude of the correction this arm actually emitted, per seed.
+
+    Coverage is a count and this is a size; an arm can keep its coverage and
+    shrink every correction to nothing, or abstain on half its pairs and leave
+    the rest untouched. Reporting only the count would let those look alike.
+    """
+    values = []
+    for seed in _seeds(result):
+        stats = result["pose_by_condition_by_seed"][seed][condition]
+        values.append(float(stats[f"sigma_{sigma:g}m"]["emitted_translation_m"]))
+    return values
+
+
+def _translation_cell(result: Dict, condition: str, sigma: float) -> List[float]:
+    values = _translation_series(result, condition, sigma)
+    return values[:1] if _drawn_once(result, sigma) else values
+
+
 def _abstention_arms(result: Dict) -> List[Dict]:
-    """The arms a sweep carries, in the brief's order, then by threshold."""
+    """The arms a sweep carries, in the brief's order, then by level."""
     arms = list(result.get("abstention_arms") or [])
     return sorted(
         arms,
-        key=lambda arm: (MODE_ORDER.index(arm["mode"]), float(arm["threshold"])),
+        key=lambda arm: (MODE_ORDER.index(arm["mode"]), float(arm["level"])),
     )
 
 
 def _exceeds(difference: PairedDifference) -> bool:
-    """Improves by strictly more than one paired standard error."""
+    """Improves by strictly more than one paired standard error.
+
+    A single draw has no standard error, so the clause would degrade to "any
+    improvement at all" -- looser than what it is named after, and loose in the
+    direction that flatters the intervention while the clause that guards
+    (:func:`_not_worse`) would tighten. Multi-seed input is required up front
+    (:func:`_require_error_bars`) so this case cannot arise silently.
+    """
     if difference.sem is None:
         return difference.mean > 0.0
     return difference.mean > difference.sem
 
 
 def _not_worse(difference: PairedDifference) -> bool:
-    """Does not regress beyond one paired standard error."""
+    """Does not regress beyond one paired standard error.
+
+    ``sigma = 0`` legitimately has no standard error -- it is drawn once -- and
+    there the clause reads "does not regress", which is the strict reading and
+    is stated in the JSON beside the number.
+    """
     if difference.sem is None:
         return difference.mean >= 0.0
     return difference.mean >= -difference.sem
+
+
+def _require_error_bars(parser, result: Dict, label: str) -> None:
+    """Refuse a decision taken on one noise draw.
+
+    The headline clause is "improves by more than one paired standard error".
+    With one seed there is no standard error and the bar silently becomes "any
+    improvement at all", while the JSON still reads ``mean > sem``. Rejecting
+    the input is the only way that cannot be missed.
+    """
+    seeds = result.get("noise_seeds") or []
+    if len(seeds) < 2:
+        parser.error(
+            f"--{label} was run with {len(seeds)} noise seed(s); the decision "
+            "clauses are stated in paired standard errors and need at least two"
+        )
 
 
 def _arm_table(result: Dict, arm: str, sigmas: Sequence[float]) -> Dict:
@@ -179,6 +229,19 @@ def _arm_table(result: Dict, arm: str, sigmas: Sequence[float]) -> Dict:
             "coverage": spread(_coverage_cell(result, arm, sigma)).to_dict(),
             "baseline_coverage": spread(
                 _coverage_cell(result, ALIGNFORMER_IRLS, sigma)
+            ).to_dict(),
+            # Coverage counts a pair as answered whenever the emitted
+            # correction is not exactly zero. For the hard-abstain arm that is
+            # the decision; for the shrinking arms a factor of 3e-4 -- a
+            # third of a millimetre -- also counts. The mean correction
+            # magnitude is reported beside it so "answers less" and "corrects
+            # less" are not silently conflated in a comparison the rule turns
+            # on.
+            "mean_correction_m": spread(
+                _translation_cell(result, arm, sigma)
+            ).to_dict(),
+            "baseline_mean_correction_m": spread(
+                _translation_cell(result, ALIGNFORMER_IRLS, sigma)
             ).to_dict(),
             "ap": {},
             "ap_minus_baseline": {},
@@ -371,13 +434,44 @@ def _identity_check(new: Dict, published: Dict) -> Dict:
                         worst, abs(float(old[metric][sort]) - float(fresh[metric][sort]))
                     )
                     cells += 1
+    required = [
+        name for name in (ALIGNFORMER, ALIGNFORMER_IRLS)
+        if not any(entry.startswith(name + "_sigma") for entry in compared)
+    ]
     return {
         "seeds": seeds,
         "conditions_compared": compared,
         "cells_compared": cells,
         "max_abs_difference": worst,
-        "bit_identical": worst == 0.0 and cells > 0,
+        "deployed_arms_missing_from_the_comparison": required,
+        "bit_identical": worst == 0.0 and cells > 0 and not required,
     }
+
+
+def _enforce_identity(parser, check: Dict, label: str) -> None:
+    """A moved baseline invalidates every difference below it.
+
+    Every number this script reports is a difference against
+    ``alignformer_irls``. If that arm did not reproduce the published run bit
+    for bit, the abstention arms are being compared against something that is
+    not the deployed method, and no verdict from this file means anything.
+    Computing the check into the JSON and letting a reader find it is not
+    enough; it has to stop the report.
+    """
+    print(
+        f"  bit identity vs published {label}: "
+        f"{check['cells_compared']} cells, max |diff| = "
+        f"{check['max_abs_difference']:.3g}, "
+        f"{'IDENTICAL' if check['bit_identical'] else 'MOVED'}",
+        flush=True,
+    )
+    if not check["bit_identical"]:
+        parser.error(
+            f"the {label} baseline moved (max |difference| = "
+            f"{check['max_abs_difference']:.3g}, missing "
+            f"{check['deployed_arms_missing_from_the_comparison']}); every "
+            "difference in this report is taken against it"
+        )
 
 
 def _reject_one_split_reported_as_two(parser, left: Path, right: Path,
@@ -423,8 +517,15 @@ def _decide(validation: Dict, sigmas: Sequence[float]) -> Dict:
         ),
         "arms": evaluated,
         "chosen": chosen,
+        # PROVISIONAL until clause 4 -- test's 1-2 shared slice -- has actually
+        # been evaluated. Three of four clauses passing is not the rule, and a
+        # verdict that read SHIP after a validation-only run would be
+        # indistinguishable from a complete one.
+        "clause_4_evaluated": False,
         "verdict": (
-            "SHIP_" + chosen["name"].upper() if chosen else "NULL_KEEP_DEPLOYED_IRLS"
+            "PROVISIONAL_SHIP_" + chosen["name"].upper()
+            if chosen
+            else "NULL_KEEP_DEPLOYED_IRLS"
         ),
     }
 
@@ -443,21 +544,23 @@ def _difference_text(difference: Optional[Dict]) -> str:
 def _print_arm(name: str, table: Dict, means: Dict) -> None:
     print(f"\n== {name} vs {ALIGNFORMER_IRLS} ==", flush=True)
     print(
-        f"{'sigma':>5}{'coverage':>10}{'base cov':>10}"
-        f"{'AP@0.7':>12}{'delta AP@0.7':>25}{'delta AP@0.5':>25}",
+        f"{'sigma':>5}{'coverage':>10}{'base cov':>10}{'|t| m':>9}{'base |t|':>10}"
+        f"{'AP@0.7':>11}{'delta AP@0.7':>25}{'delta AP@0.5':>25}",
         flush=True,
     )
     for key, entry in table.items():
         row = f"{key.replace('sigma_', '').replace('m', ''):>5}"
         row += f"{entry['coverage']['mean']:>10.3f}"
         row += f"{entry['baseline_coverage']['mean']:>10.3f}"
-        row += f"{entry['ap']['ap_70']['mean']:>12.4f}"
+        row += f"{entry['mean_correction_m']['mean']:>9.3f}"
+        row += f"{entry['baseline_mean_correction_m']['mean']:>10.3f}"
+        row += f"{entry['ap']['ap_70']['mean']:>11.4f}"
         row += _difference_text(entry["ap_minus_baseline"]["ap_70"])
         row += _difference_text(entry["ap_minus_baseline"]["ap_50"])
         print(row, flush=True)
     print(
-        f"{'mean':>5}{means['coverage']['mean']:>10.3f}{'':>10}"
-        f"{means['ap_70']['value']['mean']:>12.4f}"
+        f"{'mean':>5}{means['coverage']['mean']:>10.3f}{'':>10}{'':>9}{'':>10}"
+        f"{means['ap_70']['value']['mean']:>11.4f}"
         + _difference_text(means["ap_70"]["minus_baseline"])
         + _difference_text(means["ap_50"]["minus_baseline"]),
         flush=True,
@@ -473,6 +576,9 @@ def main() -> None:
     parser.add_argument("--baseline-test", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+
+    if args.baseline_test is not None and args.test is None:
+        parser.error("--baseline-test is only meaningful with --test")
 
     validation = json.loads(args.validation.read_text())
     sigmas = [float(sigma) for sigma in validation["sweep_sigmas_m"]]
@@ -497,10 +603,13 @@ def main() -> None:
         "bit_identity": {},
         "validation_arms": {},
     }
+    _require_error_bars(parser, validation, "validation")
     if args.baseline_validation is not None:
-        report["bit_identity"]["validation"] = _identity_check(
+        check = _identity_check(
             validation, json.loads(args.baseline_validation.read_text())
         )
+        report["bit_identity"]["validation"] = check
+        _enforce_identity(parser, check, "validation")
 
     for arm in _abstention_arms(validation):
         name = arm["name"]
@@ -533,10 +642,13 @@ def main() -> None:
             "seeds": test.get("noise_seeds"),
             "arms": _abstention_arms(test),
         }
+        _require_error_bars(parser, test, "test")
         if args.baseline_test is not None:
-            report["bit_identity"]["test"] = _identity_check(
+            check = _identity_check(
                 test, json.loads(args.baseline_test.read_text())
             )
+            report["bit_identity"]["test"] = check
+            _enforce_identity(parser, check, "test")
         report["test_arms"] = {
             arm["name"]: {
                 "config": arm,
@@ -553,8 +665,12 @@ def main() -> None:
             report["decision"]["test_sparse_guard"] = _sparse_guard(
                 test, chosen["name"], sigmas
             )
-            if not report["decision"]["test_sparse_guard"]["pass"]:
-                report["decision"]["verdict"] = "NULL_VETOED_BY_TEST_SPARSE_SLICE"
+            report["decision"]["clause_4_evaluated"] = True
+            report["decision"]["verdict"] = (
+                "SHIP_" + chosen["name"].upper()
+                if report["decision"]["test_sparse_guard"]["pass"]
+                else "NULL_VETOED_BY_TEST_SPARSE_SLICE"
+            )
             print(
                 "\n  clause 4 (test 1-2 shared slice, veto only): "
                 f"{'PASS' if report['decision']['test_sparse_guard']['pass'] else 'FAIL'}"
