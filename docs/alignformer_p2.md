@@ -2041,6 +2041,178 @@ done
 python scripts/summarize_robust_solve.py   --validation $O/robust_solve_val_result.json   --test $O/robust_solve_test_result.json   --deployed $O/freealign_test_result.json   --deployed-validation $O/freealign_val_result.json   --calibration $O/robust_solve_calibration_result.json   --output $O/robust_solve_result.json
 ```
 
+## Error bars: what the AP head-to-head actually supports
+
+Every AP cell above this section was **one noise seed**. That was never a
+problem while the differences read off them were 0.020-0.040 wide -- the IRLS
+arm's gain over the deployed arm, for instance. It became the blocking problem
+for the comparison against FreeAlign, which at AP@0.7 turns on differences of
+0.0005-0.011. Task 22's own limitations section said so.
+
+The sweep was re-run under **five independent noise seeds** per sigma, on both
+splits, all five conditions, on the full eight-sigma grid.
+
+**The comparison is paired, and that is not a detail.** Every condition inside
+one draw sees the *same* perturbed poses: `draws.sweep_noisy_poses` is called
+once per (sigma, seed, frame) and its result reaches `uncorrected` and every
+estimator through one `noisy_detections` object (`draws.draw_aligned`). The
+statistic is the **per-seed difference**; its standard error is the sample
+standard deviation of those differences over `sqrt(5)`.
+
+**A difference no larger than its own standard error is a draw** -- written as
+one in the direction that flatters this project as readily as in the one that
+does not. `alignformer/seedstats.py` is the single place that rule lives.
+
+**sigma = 0 has no draw in it.** It perturbs nothing, so every seed would
+produce byte-identical predictions; it is run once and reported as
+`deterministic`. A standard deviation of 0.0 there would be a fabricated error
+bar on the one cell the clean-case damage is read from.
+
+**One standard error is a weak bar, and these tables say which bar they used.**
+With five seeds, "exceeds its own standard error" is |t| > 1 on 4 degrees of
+freedom -- roughly p = 0.19 two-sided, not significance at any conventional
+level. A 95% interval would need |t| > 2.78. Every per-seed value is in the
+result JSON so a stricter reading can be applied without re-running anything.
+Where a verdict below rests on |t| barely above 1, it is flagged.
+
+**How much the pairing bought, measured rather than assumed.** The premise is
+that the conditions are strongly correlated through the shared draw. On
+validation AP@0.7 that is true of our own two arms -- the naive independent
+standard error is 2.0-3.1x the paired one at sigma 0.2-0.8, because the two
+AlignFormer arms share a checkpoint, a correspondence and every weight but the
+solve. It is **false** of the comparison against the competitor: FreeAlign's AP
+is almost invariant to the draw (sd 0.0001-0.0002 against 0.0014-0.0031 for
+ours), so there is no covariance to recover and pairing buys 0.96-1.12x. It
+changes no verdict, but "pairing tightens the FreeAlign comparison" would have
+been false and is not claimed.
+
+### What the error bars support, and what they retract
+
+Both splits reproduce the published single-seed runs exactly at seed 0 --
+**198 cells each, max |difference| = 0** -- so what follows is a sharper
+reading of the same experiment, not a different one.
+
+**Survives, overwhelmingly.** The IRLS loop's win over the deployed arm, at
+every threshold on both splits, 7 of 7 drawn sigmas each:
+
+| sweep-mean paired difference | validation | test |
+|---|---:|---:|
+| AP@0.3 | +0.0008 ±0.0001 | +0.0034 ±0.0001 |
+| AP@0.5 | +0.0054 ±0.0002 | +0.0117 ±0.0001 |
+| AP@0.7 | +0.0228 ±0.0002 | +0.0299 ±0.0004 |
+
+**Survives.** AP@0.3 and AP@0.5 against FreeAlign are ours: +0.0026 ±0.0001 and
++0.0032 ±0.0001 on validation, +0.0123 ±0.0001 and +0.0116 ±0.0002 on test.
+
+**Does not survive: "the robust solve wins the AP@0.7 head-to-head."** The
+section above reports that the IRLS loop "turns the AP@0.7 head-to-head from
+0-8 into 5-3" on test. The **cell count reproduces exactly**, and the cell
+count is the wrong statistic. Test AP@0.7, IRLS minus FreeAlign:
+
+| sigma | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| delta | +0.0051 | **-0.0235** | -0.0076 | +0.0030 | +0.0071 | +0.0097 | +0.0065 | -0.0036 |
+
+Five cells ours worth **+0.0314**; three cells theirs worth **-0.0347**. The
+sigma = 0.2 cell alone outweighs every cell we win. On the sweep mean the sign
+is negative on **both** splits -- **-0.0035 ±0.0003 on validation (|t| = 11.4)
+and -0.0004 ±0.0002 on test (|t| = 2.4)**. The two splits were thought to
+disagree; with error bars they agree in sign and differ only in size.
+
+The test margin is one to flag rather than lean on: |t| = 2.4 clears the
+one-standard-error bar this document uses but not a 95% interval. The honest
+statement is that **at AP@0.7 the loop closes almost all of a gap that was 0-8
+against us and wins the middle of the sweep outright (sigma 0.6-1.5, four
+cells, |t| = 3.3 to 13.9) -- and does not win the head-to-head.**
+
+**Also retracted.** FreeAlign against the *deployed* AlignFormer at AP@0.5 on
+test is **+0.0001 ±0.0002, |t| = 0.7 -- a draw**, 3-4 per sigma. The earlier
+section quotes it as an ordering; it is not one.
+
+**Where the structural advantage does survive, enormously.** Test, the 1-2
+shared-object slice, AP@0.7, IRLS minus FreeAlign: **+0.1651 ±0.0032** at
+sigma = 1.0 and **+0.1509 ±0.0035** at sigma = 2.0. A relative-distance graph is
+degenerate below three shared objects; heading virtual points are not. The
+slice is 9.7% of pairs, so it is invisible in the aggregate. At sigma = 0 the
+same slice runs **-0.2042** the other way, which is ruling R44's clean-case
+regression concentrated exactly where the evidence is thinnest.
+
+### Shrinkage for the IRLS arm: the refit works and is still declined
+
+`tau` was re-measured by the same procedure, on validation at sigma = 0, with
+the IRLS solve in the loop: **0.1225 m** against the deployed **0.1510 m**
+(yaw 0.1638 deg against 0.2212). The arm's residuals really are ~19% tighter,
+so the deployed tau over-shrinks it.
+
+It does what it was predicted to do, largest exactly where predicted -- AP@0.7,
+validation, refitted minus deployed tau: **+0.0087 ±0.0005** at sigma = 0.2,
++0.0068 at 0.4, decaying to +0.0002 at 2.0; sweep mean **+0.0029 ±0.0002**.
+
+And it is **not shipped**, because the pre-registered rule's second criterion
+fails: AP@0.7 at sigma = 0 regresses by **-0.0012**, larger than any error bar
+in that comparison. A smaller tau shrinks less, and at sigma = 0 the true
+correction is the identity, so shrinking less necessarily does more damage.
+That is the trade the rule was written to refuse.
+
+Shipping it would have shrunk the validation AP@0.7 deficit to FreeAlign from
+-0.0035 to **-0.0006** -- a 5.5x improvement that is *still* a deficit at 2.9
+standard errors. **The rule's output does not change the head-to-head verdict
+on either split**, which is worth knowing about a rule that could otherwise be
+suspected of deciding it.
+
+The follow-up is not a third tau. The cost is confined to sigma = 0 and the
+benefit to the low-noise end, which is the shape ruling R44 already identified:
+a pose-uncertainty gate that declines to correct when there is nothing to
+correct would keep both ends. That needs its own pre-registration.
+
+```bash
+# Task 23 in full. Roughly 4.5 h on an RTX 4090; the ordering matters and is
+# not an accident -- every validation-side input to the part B decision exists
+# before test is read at all.
+O=outputs/alignformer/r140
+DET=configs/alignformer_detector_r140.yaml
+AF=configs/alignformer_r140.yaml
+VAL=/media/chenyi/basement2/cache/opv2v_splits/val
+TEST=/media/chenyi/Elements1/Dataset/OPV2V/test
+CKPT=$O/stage2_B_ivw_scalar/best.pth
+TAU=$O/shrinkage_ivw_scalar_calibration_result.json
+E="python -m embedding_aware_belt_fusion.alignformer.evaluate"
+R="--robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0"
+
+# 1. Part A, validation (~55 min).
+$E --metric noisy_ap --config $DET --alignformer-config $AF --split $VAL   --checkpoint $CKPT --shrinkage $TAU --freealign $R --ap-seeds 5   --output $O/seeds_val_result.json
+
+# 2. Part B's tau, VALIDATION ONLY, before any test number exists (~2 min).
+$E --metric shrinkage --config $AF --checkpoint $CKPT $R   --output $O/shrinkage_irls_calibration_result.json
+REFIT=$O/shrinkage_irls_calibration_result.json
+
+# 3. Part B, validation (~60 min). No --freealign: FreeAlign takes no
+#    shrinkage, so its rows are bit-identical to step 1's under the same draws.
+$E --metric noisy_ap --config $DET --alignformer-config $AF --split $VAL   --checkpoint $CKPT --shrinkage $REFIT $R --ap-seeds 5   --output $O/seeds_refit_val_result.json
+
+# 4-5. Test, read once, after everything on validation is settled (~2.5 h, ~2 h).
+$E --metric noisy_ap --config $DET --alignformer-config $AF --split $TEST   --checkpoint $CKPT --shrinkage $TAU --freealign $R --ap-seeds 5   --output $O/seeds_test_result.json
+$E --metric noisy_ap --config $DET --alignformer-config $AF --split $TEST   --checkpoint $CKPT --shrinkage $REFIT $R --ap-seeds 5   --output $O/seeds_refit_test_result.json
+
+# 6. Every table above, plus the pre-registered rule. Refuses to be handed one
+#    split twice, and records which file each side came from.
+python scripts/summarize_seed_error_bars.py   --validation $O/seeds_val_result.json --test $O/seeds_test_result.json   --single-seed-validation $O/robust_solve_val_result.json   --single-seed-test $O/robust_solve_test_result.json   --refit-validation $O/seeds_refit_val_result.json   --refit-test $O/seeds_refit_test_result.json   --refit-calibration $REFIT   --output $O/seed_error_bars_result.json
+```
+
+### The AP scorer had to be made affordable first
+
+At five seeds the *scoring* became longer than the sweep.
+`fusion.average_precision` re-ran the rotated-IoU **matching** for each of three
+IoU thresholds, each of two sort orders, and again for each shared-object slice
+-- eighteen passes over the same polygons per condition. The matching depends on
+none of those things, so `fusion.match_frames` now does it once and
+`average_precision_from_matches` replays the greedy assignment from it;
+`average_precision` is a thin wrapper over the two so the definition and the
+fast path cannot drift. Published numbers were taken on this path, so it is
+pinned by exact-equality tests and was verified on real data to change nothing:
+**11,448 cells -- AP, the three slices, the intermediate-convention GT and every
+pose statistic -- max |difference| = 0.**
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.
@@ -2127,7 +2299,13 @@ Five things follow, in priority order:
   it is a little small where it is applied. Diagnosed in
   [alignformer_pose_floor.md](alignformer_pose_floor.md) section 6; not
   corrected, because correcting it would mean calibrating on test.
-- One noise seed for the AP sweep, three for the pose sweep.
+- **Resolved in task 23.** The AP sweep now runs **five** independent noise
+  seeds per sigma on both splits, paired across conditions; see [Error bars:
+  what the AP head-to-head actually supports](#error-bars-what-the-ap-head-to-head-actually-supports).
+  What it changed: the AP@0.7 head-to-head against FreeAlign is **theirs** on
+  both splits, not ours, and FreeAlign vs the deployed arm at AP@0.5 on test
+  is a **draw**. Both were quoted as orderings above on one seed. The pose
+  sweep is still three seeds.
 - The `match_weight 0` ablation, the shrinkage on/off table and the per-epoch
   training curve are all `r70`. **Head A was also run at +/-140.8 m** (task 19,
   `p2_r140_ablations_result.json`) and the conclusion strengthens there: its yaw

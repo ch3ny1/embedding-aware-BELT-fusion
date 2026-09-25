@@ -201,3 +201,130 @@ def test_a_negative_tau_is_rejected():
         ShrinkageCalibration(
             tau_translation_m=-1.0, tau_yaw_rad=0.005, pairs=10, split="x", sigma_m=0.0
         )
+
+
+# --- Task 23 part B: calibrating tau for the IRLS arm ------------------------
+#
+# The deployed tau (0.151 m) was fitted on the *un*-robust solve's residuals.
+# The IRLS arm is a different estimator with a different residual distribution,
+# and scoring it through the old calibration under-corrects it by an unmeasured
+# amount. Refitting means running the very same estimator the sweep runs when
+# the residuals are collected, so the calibration path needs the same
+# `robust=` switch the sweep has -- and must reproduce the deployed calibration
+# exactly when that switch is off, or the old number stops being reproducible.
+
+
+def _residual_modules_and_loader(outlier_index=None):
+    """A head-B model, a frozen-shaped embedding stub, and a one-batch loader.
+
+    The embedding head is the identity on the ROI stack so the test controls
+    the correspondence exactly: the residual then depends on the pose solve
+    alone, which is the thing `robust=` changes.
+    """
+    from torch import nn
+
+    from embedding_aware_belt_fusion.alignformer.model import AlignFormerB
+
+    from test_alignformer_model import _boxes_from_centres
+
+    class _FlattenEmbedding(nn.Module):
+        """Sums each ROI channel away, so a one-hot stack stays one-hot."""
+
+        def __init__(self, dim: int):
+            super().__init__()
+            self.dim = dim
+
+        def forward(self, roi):  # (N, C, H, W) -> (N, C)
+            return roi.flatten(start_dim=1).reshape(roi.shape[0], self.dim, -1).sum(-1)
+
+    torch.manual_seed(0)
+    count = 8
+    centres = torch.tensor([[[0.0, 0.0], [12.0, 3.0], [-8.0, 5.0], [20.0, -7.0],
+                             [4.0, 9.0], [-15.0, -2.0], [7.0, -12.0], [-3.0, 16.0]]])
+    yaws = torch.rand(1, count) * 2 * math.pi
+    cav_boxes = _boxes_from_centres(centres, yaws)
+
+    true_psi, true_t = 0.15, torch.tensor([[1.2, -0.8]])
+    cos, sin = math.cos(true_psi), math.sin(true_psi)
+    rotation = torch.tensor([[cos, -sin], [sin, cos]])
+    ego_boxes = cav_boxes.clone()
+    ego_boxes[..., :2] = centres @ rotation.T + true_t
+    ego_boxes[..., 6] = yaws + true_psi
+    if outlier_index is not None:
+        cav_boxes[0, outlier_index, :2] += torch.tensor([14.0, -17.0])
+
+    # One-hot ROI stacks: the flattening stub turns them into one-hot embeddings.
+    roi = torch.eye(count).reshape(1, count, count, 1, 1)
+    model = AlignFormerB(embed_dim=count).eval()
+    model.use_raw_embedding_scores = True
+    modules = nn.ModuleDict({"embedding": _FlattenEmbedding(count), "pose": model})
+    batch = {
+        "ego_boxes": ego_boxes,
+        "ego_scores": torch.ones(1, count),
+        "ego_roi": roi.clone(),
+        "ego_mask": torch.ones(1, count, dtype=torch.bool),
+        "cav_boxes": cav_boxes,
+        "cav_scores": torch.ones(1, count),
+        "cav_roi": roi.clone(),
+        "cav_mask": torch.ones(1, count, dtype=torch.bool),
+        "psi_true": torch.tensor([true_psi]),
+        "t_true": true_t.clone(),
+    }
+    return modules, [batch]
+
+
+def test_residual_collection_without_a_robust_config_is_the_deployed_one():
+    """The published tau = 0.151 m must stay reproducible after this change."""
+    from embedding_aware_belt_fusion.alignformer.robust import RobustSolveConfig
+    from embedding_aware_belt_fusion.alignformer.stage2 import collect_pose_residuals
+
+    modules, loader = _residual_modules_and_loader(outlier_index=0)
+    device = torch.device("cpu")
+
+    plain_t, plain_psi = collect_pose_residuals(modules, loader, device)
+    disabled_t, disabled_psi = collect_pose_residuals(
+        modules, loader, device, robust=RobustSolveConfig()
+    )
+
+    assert torch.equal(plain_t, disabled_t)
+    assert torch.equal(plain_psi, disabled_psi)
+
+
+def test_the_irls_arm_is_calibrated_on_its_own_residuals_not_the_deployed_ones():
+    from embedding_aware_belt_fusion.alignformer.robust import (
+        HUBER,
+        RobustSolveConfig,
+    )
+    from embedding_aware_belt_fusion.alignformer.stage2 import collect_pose_residuals
+
+    modules, loader = _residual_modules_and_loader(outlier_index=0)
+    device = torch.device("cpu")
+    loop = RobustSolveConfig(mode=HUBER, iterations=3, min_evidence=3.0)
+
+    plain_t, _ = collect_pose_residuals(modules, loader, device)
+    robust_t, _ = collect_pose_residuals(modules, loader, device, robust=loop)
+
+    assert not torch.equal(plain_t, robust_t)
+    # The loop rejects the blunder, so its residual is the smaller one -- which
+    # is exactly why a tau fitted on the deployed arm over-shrinks it.
+    assert float(torch.linalg.norm(robust_t)) < float(torch.linalg.norm(plain_t))
+
+
+def test_the_calibration_helper_threads_the_loop_through_to_the_solve():
+    from embedding_aware_belt_fusion.alignformer.robust import (
+        HUBER,
+        RobustSolveConfig,
+    )
+    from embedding_aware_belt_fusion.alignformer.stage2 import calibrate_from_loader
+
+    modules, loader = _residual_modules_and_loader(outlier_index=0)
+    device = torch.device("cpu")
+
+    deployed, _ = calibrate_from_loader(modules, loader, device, split="unit")
+    refitted, _ = calibrate_from_loader(
+        modules, loader, device, split="unit",
+        robust=RobustSolveConfig(mode=HUBER, iterations=3, min_evidence=3.0),
+    )
+
+    assert refitted.tau_translation_m < deployed.tau_translation_m
+    assert refitted.pairs == deployed.pairs

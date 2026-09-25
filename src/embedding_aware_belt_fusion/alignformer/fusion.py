@@ -29,9 +29,10 @@ full by the task brief; the P0 gate depends on this exact implementation.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import List, Sequence, Tuple
+from dataclasses import dataclass, replace
+from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -104,22 +105,35 @@ def late_fuse(
     return all_boxes[in_range], all_scores[in_range]
 
 
-def average_precision(
-    predictions: List[Tuple[Tensor, Tensor]],
-    ground_truth: List[Tensor],
-    iou_threshold: float,
-    *,
-    global_sort: bool = True,
-) -> float:
-    """VOC-style AP over rotated BEV IoU.
+@dataclass(frozen=True)
+class FrameMatches:
+    """One frame's rotated-BEV IoU of every detection against every truth box.
 
-    Parameters
-    ----------
-    predictions: one ``(boxes, scores)`` pair per frame.
-    ground_truth: one ``boxes`` tensor per frame, same ordering.
-    global_sort: sort every detection in the dataset by confidence before
-        building the precision-recall curve. Required for a valid dataset-level
-        comparison; per-frame accumulation silently inflates AP.
+    The rows of ``ious`` are in DESCENDING score order and ``scores`` is in the
+    matching order records are emitted in, so replaying the greedy assignment
+    from this is the same computation the polygons were used for -- for any IoU
+    threshold, in any sort order, over any subset of frames. ``ious`` is
+    ``None`` for a frame with no detections or no truth boxes, which are the
+    two cases that never reach the polygon code at all.
+    """
+
+    scores: Tuple[float, ...]
+    ious: Optional[np.ndarray]
+    truth_count: int
+
+
+def match_frames(
+    predictions: List[Tuple[Tensor, Tensor]], ground_truth: List[Tensor]
+) -> List[FrameMatches]:
+    """The rotated-IoU matching, done ONCE, for every frame.
+
+    The polygon intersection is what AP costs; the IoU matrix it produces does
+    not depend on the IoU threshold, on the sort order, or on which subset of
+    frames is being scored. Computing it once and replaying the greedy
+    assignment from it is what makes a multi-seed sweep's scoring affordable --
+    eighteen passes per condition become one. :func:`average_precision` is
+    still the definition and is now a thin wrapper over this, so the two cannot
+    drift.
     """
     from opencood.utils import box_utils, common_utils
 
@@ -128,15 +142,20 @@ def average_precision(
             f"{len(predictions)} predicted frames vs {len(ground_truth)} truth frames"
         )
 
-    records: List[Tuple[float, int]] = []  # (score, is_true_positive)
-    total_truth = 0
-
+    frames: List[FrameMatches] = []
     for (boxes, scores), truth in zip(predictions, ground_truth):
-        total_truth += int(truth.shape[0])
+        truth_count = int(truth.shape[0])
         if boxes.shape[0] == 0:
+            frames.append(FrameMatches(scores=(), ious=None, truth_count=truth_count))
             continue
-        if truth.shape[0] == 0:
-            records.extend((float(s), 0) for s in scores)
+        if truth_count == 0:
+            # No truth to match against: every detection is a false positive,
+            # emitted in the frame's own order, exactly as before.
+            frames.append(
+                FrameMatches(
+                    scores=tuple(float(s) for s in scores), ious=None, truth_count=0
+                )
+            )
             continue
 
         predicted_polygons = common_utils.convert_format(
@@ -147,16 +166,56 @@ def average_precision(
             box_utils.boxes_to_corners_3d(truth, order="hwl")[:, :4, :2]
             .detach().cpu().numpy()
         )
+        order = torch.argsort(scores, descending=True).tolist()
+        frames.append(
+            FrameMatches(
+                scores=tuple(float(scores[index]) for index in order),
+                ious=np.stack(
+                    [
+                        common_utils.compute_iou(
+                            predicted_polygons[index], truth_polygons
+                        )
+                        for index in order
+                    ]
+                ),
+                truth_count=truth_count,
+            )
+        )
+    return frames
+
+
+def average_precision_from_matches(
+    frames: Sequence[FrameMatches],
+    iou_threshold: float,
+    *,
+    global_sort: bool = True,
+    indices: Optional[Sequence[int]] = None,
+) -> float:
+    """VOC-style AP replayed from :func:`match_frames`.
+
+    ``indices`` scores a subset of the frames -- the shared-object slices --
+    without re-matching them; the truth total is summed over the subset alone,
+    so the result is identical to having matched only those frames.
+    """
+    selected = frames if indices is None else [frames[index] for index in indices]
+
+    records: List[Tuple[float, int]] = []  # (score, is_true_positive)
+    total_truth = 0
+    for frame in selected:
+        total_truth += frame.truth_count
+        if frame.ious is None:
+            # No detections emits nothing; no truth emits a miss per detection.
+            records.extend((score, 0) for score in frame.scores)
+            continue
 
         # Greedy highest-confidence-first matching, one truth box per detection.
         claimed = set()
-        for index in torch.argsort(scores, descending=True).tolist():
-            iou = common_utils.compute_iou(predicted_polygons[index], truth_polygons)
-            best = int(iou.argmax())
-            hit = iou[best] >= iou_threshold and best not in claimed
+        for row, score in zip(frame.ious, frame.scores):
+            best = int(row.argmax())
+            hit = row[best] >= iou_threshold and best not in claimed
             if hit:
                 claimed.add(best)
-            records.append((float(scores[index]), int(hit)))
+            records.append((score, int(hit)))
 
     if total_truth == 0 or not records:
         return 0.0
@@ -174,3 +233,32 @@ def average_precision(
     precision = torch.flip(torch.cummax(torch.flip(precision, [0]), dim=0).values, [0])
     recall = torch.cat([torch.zeros(1, dtype=torch.float64), recall])
     return float(((recall[1:] - recall[:-1]) * precision).sum())
+
+
+def average_precision(
+    predictions: List[Tuple[Tensor, Tensor]],
+    ground_truth: List[Tensor],
+    iou_threshold: float,
+    *,
+    global_sort: bool = True,
+) -> float:
+    """VOC-style AP over rotated BEV IoU.
+
+    Parameters
+    ----------
+    predictions: one ``(boxes, scores)`` pair per frame.
+    ground_truth: one ``boxes`` tensor per frame, same ordering.
+    global_sort: sort every detection in the dataset by confidence before
+        building the precision-recall curve. Required for a valid dataset-level
+        comparison; per-frame accumulation silently inflates AP.
+
+    A caller scoring the same predictions at several thresholds, in both sort
+    orders, or over several frame subsets should call :func:`match_frames` once
+    and :func:`average_precision_from_matches` per reading instead; this is
+    exactly that, with the matching thrown away after one use.
+    """
+    return average_precision_from_matches(
+        match_frames(predictions, ground_truth),
+        iou_threshold,
+        global_sort=global_sort,
+    )

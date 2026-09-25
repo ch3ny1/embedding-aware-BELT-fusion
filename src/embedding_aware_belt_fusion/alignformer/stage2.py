@@ -65,6 +65,7 @@ from embedding_aware_belt_fusion.alignformer.losses import (
     match_nll,
 )
 from embedding_aware_belt_fusion.alignformer.model import AlignFormerA, AlignFormerB
+from embedding_aware_belt_fusion.alignformer.robust import RobustSolveConfig
 from embedding_aware_belt_fusion.alignformer.shrinkage import (
     ShrinkageCalibration,
     calibrate_shrinkage,
@@ -365,6 +366,7 @@ def collect_pose_residuals(
     device: torch.device,
     *,
     ablate_embeddings: bool = False,
+    robust: Optional[RobustSolveConfig] = None,
 ) -> Tuple[Tensor, Tensor]:
     """Signed ``(N, 2)`` translation and ``(N,)`` yaw residuals over a loader.
 
@@ -373,6 +375,13 @@ def collect_pose_residuals(
     absolute value destroys exactly that distinction. Yaw is wrapped onto
     ``(-pi, pi]`` so a residual either side of the branch cut is not counted as
     a full turn.
+
+    ``robust`` selects WHICH estimator's residuals are being measured. A
+    shrinkage calibration is a property of one estimator's noise, so an arm
+    with its own pose solve (``alignformer.robust``) has its own tau, and
+    scoring it through another arm's is a silent mis-specification. ``None``
+    and a disabled configuration both reproduce the deployed solve bit for
+    bit, so the published calibration stays reproducible.
     """
     modules.eval()
     translations: List[Tensor] = []
@@ -380,7 +389,11 @@ def collect_pose_residuals(
     for batch in loader:
         batch = _to_device(batch, device)
         enriched = embed_batch(modules["embedding"], batch, ablate=ablate_embeddings)
-        estimate = modules["pose"](enriched)
+        estimate = (
+            modules["pose"](enriched)
+            if robust is None or not robust.enabled
+            else modules["pose"](enriched, robust=robust)
+        )
         residual = estimate.psi - batch["psi_true"]
         yaws.append(torch.atan2(torch.sin(residual), torch.cos(residual)).cpu())
         translations.append((estimate.t - batch["t_true"]).cpu())
@@ -395,6 +408,7 @@ def calibrate_from_loader(
     ablate_embeddings: bool = False,
     split: str,
     sigma_m: float = 0.0,
+    robust: Optional[RobustSolveConfig] = None,
 ) -> Tuple[ShrinkageCalibration, Dict[str, float]]:
     """Calibrate shrinkage on a loader, and report the residual's signed mean beside it.
 
@@ -402,9 +416,12 @@ def calibrate_from_loader(
     evidence for treating the floor as noise at all: shrinkage is the right
     treatment for an unbiased-but-imprecise estimator, and a calibration whose
     own diagnostic says the residual is biased should not be trusted.
+
+    ``robust`` names the estimator being calibrated; see
+    :func:`collect_pose_residuals`.
     """
     residual_t, residual_psi = collect_pose_residuals(
-        modules, loader, device, ablate_embeddings=ablate_embeddings
+        modules, loader, device, ablate_embeddings=ablate_embeddings, robust=robust
     )
     calibration = calibrate_shrinkage(
         residual_t,

@@ -49,7 +49,7 @@ import json
 import math
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -64,8 +64,10 @@ from embedding_aware_belt_fusion.alignformer.freealign import (
 )
 from embedding_aware_belt_fusion.alignformer.fusion import (
     average_precision,
+    average_precision_from_matches,
     correct_detections,
     late_fuse,
+    match_frames,
 )
 from embedding_aware_belt_fusion.alignformer.robust import (
     DEFAULT_ITERATIONS,
@@ -187,7 +189,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--robust-solve", choices=ROBUST_MODES, default=ROBUST_NONE,
-        help="--metric noisy_ap only: also fuse the alignformer_irls condition, "
+        help="--metric shrinkage: calibrate tau on the IRLS arm's own residuals "
+             "instead of the deployed solve's. --metric noisy_ap: also fuse the "
+             "alignformer_irls condition, "
              "i.e. the deployed estimator with an IRLS re-weighting loop wrapped "
              "around its closed-form solve (alignformer.robust). The deployed "
              "alignformer arm is produced unchanged in the same run, so the two "
@@ -204,6 +208,17 @@ def parse_args() -> argparse.Namespace:
              "slice is where AlignFormer beats a distance-graph method, and a "
              "robust loop with three effective points will trim its way to "
              "nonsense; chosen on validation, never on test.",
+    )
+    parser.add_argument(
+        "--ap-seeds", type=int, default=1,
+        help="--metric noisy_ap only: how many INDEPENDENT noise draws to run "
+             "per sigma. Every condition inside one draw sees the same "
+             "perturbed poses, so the per-seed difference between conditions "
+             "is paired and the error bar on it is far tighter than either "
+             "condition's own spread. The first seed is the model config's own "
+             "train seed, so 1 reproduces every single-seed sweep on this "
+             "branch bit for bit. sigma = 0 perturbs nothing and is drawn once "
+             "however many seeds are asked for.",
     )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -396,6 +411,78 @@ def _ap_report(predictions, ground_truth) -> Dict[str, Dict[str, float]]:
         }
         for threshold in _AP_IOU_THRESHOLDS
     }
+
+
+def _ap_report_from_matches(matches, *, indices=None) -> Dict[str, Dict[str, float]]:
+    """:func:`_ap_report`, replayed from one :func:`match_frames` pass.
+
+    Same keys, same numbers; the rotated-IoU matching is simply not redone for
+    each threshold, sort order and frame slice.
+    """
+    return {
+        f"ap_{int(threshold * 100):02d}": {
+            "global_sorted": average_precision_from_matches(
+                matches, threshold, global_sort=True, indices=indices
+            ),
+            "frame_order": average_precision_from_matches(
+                matches, threshold, global_sort=False, indices=indices
+            ),
+        }
+        for threshold in _AP_IOU_THRESHOLDS
+    }
+
+
+def _score_by_seed(predictions, seeds, ground_truth, buckets):
+    """AP per seed, full and sliced, with ONE rotated-IoU matching per condition.
+
+    The matching is replayed for the three thresholds, the two sort orders and
+    the three shared-object slices; matching per reading instead would be
+    eighteen passes over the same polygons and, at five seeds, would cost more
+    than the sweep did.
+
+    A cell aliased across seeds -- the oracle, and every condition at sigma = 0,
+    which perturbs nothing -- is the SAME list object under every seed, so
+    ``seen`` scores it once. Identity is the right key precisely because the
+    aliasing is deliberate: two seeds collide only when they are literally the
+    same run, never when they merely agree.
+    """
+    ap_by_seed: Dict[str, Dict] = {str(seed): {} for seed in seeds}
+    ap_by_shared_by_seed: Dict[str, Dict] = {
+        str(seed): {
+            bucket: {"frames": len(indices), "conditions": {}}
+            for bucket, indices in buckets.items()
+        }
+        for seed in seeds
+    }
+    seen: Dict[int, Tuple[Any, Dict, Dict]] = {}
+    for seed in seeds:
+        for name, frames in predictions[seed].items():
+            scored = seen.get(id(frames))
+            if scored is None:
+                matches = match_frames(frames, ground_truth)
+                scored = (
+                    frames,  # held so the id cannot be recycled under the cache
+                    _ap_report_from_matches(matches),
+                    {
+                        bucket: _ap_report_from_matches(matches, indices=indices)
+                        for bucket, indices in buckets.items()
+                    },
+                )
+                seen[id(frames)] = scored
+            _, full, sliced = scored
+            ap_by_seed[str(seed)][name] = full
+            for bucket in buckets:
+                ap_by_shared_by_seed[str(seed)][bucket]["conditions"][name] = sliced[
+                    bucket
+                ]
+            print(
+                f"  seed {seed}  {name:<32} "
+                f"AP@0.3={full['ap_30']['global_sorted']:.4f} "
+                f"AP@0.5={full['ap_50']['global_sorted']:.4f} "
+                f"AP@0.7={full['ap_70']['global_sorted']:.4f}",
+                flush=True,
+            )
+    return ap_by_seed, ap_by_shared_by_seed
 
 
 def _sigma_key(sigma: float) -> str:
@@ -750,11 +837,22 @@ def run_shrinkage(args: argparse.Namespace, device) -> Dict:
         dataset, batch_size=_TOP1_BATCH_SIZE, num_workers=args.num_workers,
         collate_fn=collate, pin_memory=True,
     )
+    # Which estimator is being calibrated. tau is a property of ONE arm's
+    # residual distribution: the deployed closed-form solve and the IRLS arm
+    # (alignformer.robust) have different ones, and scoring the second through
+    # the first's tau over-shrinks it by an unmeasured amount. 'none' keeps the
+    # deployed calibration reproducible.
+    robust = RobustSolveConfig(
+        mode=args.robust_solve,
+        iterations=args.robust_iterations,
+        min_evidence=args.robust_min_evidence,
+    )
     calibration, diagnostics = calibrate_from_loader(
         modules, loader, device,
         ablate_embeddings=checkpoint["message_content"] == "boxes_only",
         split=split,
         sigma_m=0.0,
+        robust=robust,
     )
 
     for name in ("dx_m", "dy_m", "dpsi_deg"):
@@ -780,6 +878,9 @@ def run_shrinkage(args: argparse.Namespace, device) -> Dict:
         "val_scenarios": val_scenarios,
         "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_provenance": _pose_provenance(checkpoint),
+        # WHICH arm's residuals this tau was measured on. A calibration without
+        # this field is ambiguous the moment a second estimator exists.
+        "robust_solve_config": robust.to_dict(),
         "calibration": calibration.to_dict(),
         "residual_diagnostics": diagnostics,
     }
@@ -801,6 +902,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         SHARED_BUCKETS,
         UNCORRECTED,
         condition_key,
+        draw_seeds,
         run_noise_sweep,
     )
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
@@ -829,6 +931,15 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         min_evidence=args.robust_min_evidence,
     )
 
+    # Independent noise draws of the same frames. The FIRST seed is the config's
+    # own -- the one every single-seed sweep on this branch was run under -- so
+    # `--ap-seeds 1` reproduces those files bit for bit and a longer run carries
+    # the published draw as its first row rather than replacing it.
+    base_seed = int(model_config["train"]["seed"])
+    if args.ap_seeds < 1:
+        raise ValueError(f"--ap-seeds must be at least 1, got {args.ap_seeds}")
+    seeds = [base_seed + offset for offset in range(args.ap_seeds)]
+
     (
         predictions,
         ground_truth,
@@ -842,7 +953,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         lidar_range=hypes["preprocess"]["cav_lidar_range"],
         output_size=int(model_config["model"]["output_size"]),
         sigmas=list(args.sweep),
-        seed=int(model_config["train"]["seed"]),
+        seeds=seeds,
         training_comm_range_m=float(model_config["data"]["comm_range_m"]),
         max_frames=args.max_frames,
         shrinkage=shrinkage,
@@ -851,38 +962,34 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         robust=robust,
     )
 
-    ap, ap_intermediate_gt = {}, {}
-    for name, frames in predictions.items():
-        ap[name] = _ap_report(frames, ground_truth)
-        ap_intermediate_gt[name] = _ap_report(frames, intermediate_truth)
-        print(
-            f"  {name:<32} AP@0.3={ap[name]['ap_30']['global_sorted']:.4f} "
-            f"AP@0.5={ap[name]['ap_50']['global_sorted']:.4f} "
-            f"AP@0.7={ap[name]['ap_70']['global_sorted']:.4f} "
-            f"(intermediate-GT AP@0.7="
-            f"{ap_intermediate_gt[name]['ap_70']['global_sorted']:.4f})",
-            flush=True,
-        )
-
     # AP sliced by how many ground-truth objects the frame's agents share --
     # the row the FreeAlign comparison turns on, because a relative-distance
     # graph is structurally degenerate below three and AlignFormer's heading
     # virtual points are not. Averaged over the whole split that slice is
     # diluted eightfold and the difference disappears into noise.
-    buckets = _frames_by_shared_bucket(frame_shared_counts)
-    ap_by_shared = {
-        bucket: {
-            "frames": len(indices),
-            "conditions": {
-                name: _ap_report(
-                    [frames[i] for i in indices], [ground_truth[i] for i in indices]
-                )
-                for name, frames in predictions.items()
-            },
-        }
-        for bucket, indices in buckets.items()
-        if indices
+    grouped = _frames_by_shared_bucket(frame_shared_counts)
+    buckets = {bucket: indices for bucket, indices in grouped.items() if indices}
+
+    ap_by_seed, ap_by_shared_by_seed = _score_by_seed(
+        predictions, seeds, ground_truth, buckets
+    )
+
+    # The ground truth OpenCOOD's IntermediateFusionDataset would report is a
+    # second matching pass over the same predictions, and it exists to say how
+    # much the CHOICE OF CONVENTION is worth -- a question about the dataset,
+    # not about the noise draw. It is therefore scored for the primary seed
+    # only: five copies of it would double the scoring cost of every sweep to
+    # put an error bar on a number nothing reads one from.
+    ap_intermediate_gt = {
+        name: _ap_report_from_matches(match_frames(frames, intermediate_truth))
+        for name, frames in predictions[seeds[0]].items()
     }
+
+    # The primary seed reproduces the single-seed runs this branch published,
+    # under exactly the keys those files carry. `..._by_seed` is the new
+    # measurement; these three stay the rows a reader already knows how to find.
+    ap = ap_by_seed[str(seeds[0])]
+    ap_by_shared = ap_by_shared_by_seed[str(seeds[0])]
 
     return {
         "method": "alignformer_noisy_late_fusion",
@@ -915,6 +1022,17 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # a result file states what it was measured under.
         "robust_solve_config": robust.to_dict(),
         "ap": ap,
+        # The multi-seed measurement (task 23). Independent noise draws of the
+        # same frames, shared across conditions within a draw, so the per-seed
+        # difference between two conditions is paired; see
+        # alignformer.seedstats. `ap` above is seed `noise_seeds[0]`, unchanged.
+        "noise_seeds": seeds,
+        # sigma = 0 perturbs nothing, so it is drawn ONCE and every seed's entry
+        # for it is the same run. Reporting a spread there would be fabricated.
+        "sigmas_drawn_once_m": [
+            sigma for sigma in args.sweep if len(draw_seeds(sigma, seeds)) == 1
+        ],
+        "ap_by_seed": ap_by_seed,
         # The same predictions scored against the ground truth OpenCOOD's
         # IntermediateFusionDataset would report, so the head-to-head table
         # against intermediate-fusion baselines can say how much the choice of
@@ -931,11 +1049,15 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # Unchanged in shape and meaning: the deployed estimator's own pose
         # error per sigma, which every earlier result file carries under this
         # key. The oracle conditions are reported beside it, never folded in.
-        "pose": pose_stats[ALIGNFORMER],
-        "pose_by_condition": pose_stats,
+        "pose": pose_stats[seeds[0]][ALIGNFORMER],
+        "pose_by_condition": pose_stats[seeds[0]],
+        "pose_by_condition_by_seed": {
+            str(seed): pose_stats[seed] for seed in seeds
+        },
         "ap_by_shared_objects": ap_by_shared,
+        "ap_by_shared_objects_by_seed": ap_by_shared_by_seed,
         "shared_object_buckets": list(SHARED_BUCKETS),
-        "frames_with_mixed_shared_object_buckets": len(buckets["mixed"]),
+        "frames_with_mixed_shared_object_buckets": len(grouped["mixed"]),
         "pairs_by_shared_object_bucket": _pairs_by_shared_bucket(frame_shared_counts),
     }
 

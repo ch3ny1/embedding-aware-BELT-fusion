@@ -305,3 +305,242 @@ def test_the_irls_condition_only_joins_the_sweep_when_a_robust_config_is_given()
     assert with_loop == [ALIGNFORMER, ALIGNFORMER_IRLS]
     assert disabled == [ALIGNFORMER]
     assert condition_key(ALIGNFORMER_IRLS, 1.0) != condition_key(ALIGNFORMER, 1.0)
+
+
+# --- Task 23: multi-seed draws, and the pairing they depend on ----------------
+#
+# Every AP cell on this branch was one noise draw, and the FreeAlign head-to-head
+# at AP@0.7 turns on differences one draw cannot resolve. The sweep now runs
+# several independent draws per sigma. Two properties make the resulting error
+# bars mean anything, and neither is visible in the multi-hour output:
+#
+# - a draw is reproducible from its seed alone, so a rerun is the same
+#   experiment and the single-seed rows still reproduce the published files;
+# - every condition inside one draw sees the SAME perturbed poses, so the
+#   per-seed difference between two conditions is a paired statistic. Unpaired
+#   draws would leave the conditions varying independently and the error bar
+#   would be several times too wide.
+
+
+def test_the_same_seed_reproduces_the_same_draw():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_noisy_poses
+
+    poses = {"cav0": [10.0, -4.0, 1.0, 0.0, 30.0, 0.0], "cav1": [1.0, 2.0, 1.0, 0.0, -5.0, 0.0]}
+    keys = ["cav0", "cav1"]
+
+    first = sweep_noisy_poses(poses, keys, sigma=0.8, seed=1000, frame=7)
+    again = sweep_noisy_poses(poses, keys, sigma=0.8, seed=1000, frame=7)
+
+    assert first == again
+    # and it actually moved the pose, or the test above is vacuous.
+    assert first["cav0"] != poses["cav0"]
+
+
+def test_independent_seeds_draw_independent_noise():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_noisy_poses
+
+    poses = {"cav0": [10.0, -4.0, 1.0, 0.0, 30.0, 0.0]}
+
+    first = sweep_noisy_poses(poses, ["cav0"], sigma=0.8, seed=1000, frame=7)
+    second = sweep_noisy_poses(poses, ["cav0"], sigma=0.8, seed=1001, frame=7)
+
+    assert first["cav0"] != second["cav0"]
+
+
+def test_every_agent_in_one_draw_gets_its_own_perturbation():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_noisy_poses
+
+    # Two agents at the SAME pose: only a per-agent key can separate them.
+    poses = {"cav0": [1.0, 2.0, 1.0, 0.0, 3.0, 0.0], "cav1": [1.0, 2.0, 1.0, 0.0, 3.0, 0.0]}
+
+    drawn = sweep_noisy_poses(poses, ["cav0", "cav1"], sigma=1.0, seed=1000, frame=0)
+
+    assert drawn["cav0"] != drawn["cav1"]
+
+
+def test_at_sigma_zero_every_seed_draws_the_identical_unperturbed_pose():
+    """Which is why sigma = 0 is run once and reported without a spread."""
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_noisy_poses
+
+    poses = {"cav0": [10.0, -4.0, 1.0, 0.0, 30.0, 0.0]}
+
+    drawn = [
+        sweep_noisy_poses(poses, ["cav0"], sigma=0.0, seed=seed, frame=3)["cav0"]
+        for seed in (1000, 1001, 1002, 1003, 1004)
+    ]
+
+    assert all(pose == drawn[0] for pose in drawn)
+    assert drawn[0] == pytest.approx(poses["cav0"])
+
+
+def test_sigma_zero_is_drawn_once_and_every_other_sigma_once_per_seed():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        draw_seeds,
+        sweep_draws,
+    )
+
+    seeds = [1000, 1001, 1002]
+
+    assert draw_seeds(0.0, seeds) == [1000]
+    assert draw_seeds(0.2, seeds) == seeds
+
+    draws = sweep_draws([0.0, 0.2], seeds)
+    assert draws == [(0.0, 1000), (0.2, 1000), (0.2, 1001), (0.2, 1002)]
+
+
+def test_a_sweep_needs_at_least_one_seed():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_draws
+
+    with pytest.raises(ValueError, match="at least one seed"):
+        sweep_draws([0.0, 1.0], [])
+
+
+def test_a_sweep_refuses_a_repeated_seed():
+    """Two identical draws reported as two seeds would halve the error bar."""
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_draws
+
+    with pytest.raises(ValueError, match="distinct"):
+        sweep_draws([1.0], [1000, 1000])
+
+
+def _estimate(psi: float, tx: float, ty: float):
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+
+    return PoseEstimate(
+        psi=torch.tensor([psi]),
+        t=torch.tensor([[tx, ty]]),
+        confidence=torch.tensor([10.0]),
+    )
+
+
+def test_every_condition_in_one_draw_corrects_the_same_perturbed_detections():
+    """The pairing, at the one place it could be broken.
+
+    Each condition's fused boxes must be its own estimate applied to the *one*
+    perturbed set the draw produced. If any condition re-drew, or was handed a
+    different agent's set, the per-seed difference between conditions would stop
+    being paired and every error bar downstream would be wrong.
+    """
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        ALIGNFORMER,
+        ALIGNFORMER_IRLS,
+        FREEALIGN,
+        UNSHRUNK_CONDITIONS,
+        draw_aligned,
+    )
+
+    noisy = _detections([0.9, 0.5, 0.3])
+    estimates = {
+        ALIGNFORMER: _estimate(0.10, 1.0, 2.0),
+        ALIGNFORMER_IRLS: _estimate(0.05, 0.5, 1.0),
+        FREEALIGN: _estimate(-0.02, -0.25, 0.75),
+    }
+
+    aligned = draw_aligned(
+        noisy, estimates, shrinkage=None, unshrunk=UNSHRUNK_CONDITIONS
+    )
+
+    assert set(aligned) == set(estimates)
+    for name, estimate in estimates.items():
+        expected = correct_detections(noisy, estimate.psi[0], estimate.t[0])
+        assert torch.equal(aligned[name].detections.boxes, expected.boxes)
+        # Same scores, same features, same ids: one perturbed set, three views.
+        assert torch.equal(aligned[name].detections.scores, noisy.scores)
+        assert aligned[name].detections.gt_ids == list(noisy.gt_ids)
+        # And the estimate carried alongside is the one the boxes were moved by,
+        # so the pose statistics and the AP cannot diverge.
+        assert aligned[name].estimate is estimate
+
+
+def test_the_draw_leaves_the_perturbed_detections_untouched():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        ALIGNFORMER,
+        UNSHRUNK_CONDITIONS,
+        draw_aligned,
+    )
+
+    noisy = _detections([0.9, 0.5])
+    before = noisy.boxes.clone()
+
+    draw_aligned(
+        noisy, {ALIGNFORMER: _estimate(0.3, 4.0, 5.0)},
+        shrinkage=None, unshrunk=UNSHRUNK_CONDITIONS,
+    )
+
+    assert torch.equal(noisy.boxes, before)
+
+
+def test_shrinkage_reaches_every_arm_of_ours_and_never_the_competitor():
+    """FreeAlign has no such step; scoring it through our calibration would be
+    scoring the competitor through our method."""
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        ALIGNFORMER,
+        ALIGNFORMER_IRLS,
+        FREEALIGN,
+        UNSHRUNK_CONDITIONS,
+        draw_aligned,
+    )
+    from embedding_aware_belt_fusion.alignformer.shrinkage import (
+        ShrinkageCalibration,
+        shrink,
+    )
+
+    noisy = _detections([0.9, 0.5])
+    calibration = ShrinkageCalibration(
+        tau_translation_m=0.15, tau_yaw_rad=0.004, pairs=10, split="unit", sigma_m=0.0
+    )
+    estimates = {
+        ALIGNFORMER: _estimate(0.01, 0.20, 0.10),
+        ALIGNFORMER_IRLS: _estimate(0.01, 0.20, 0.10),
+        FREEALIGN: _estimate(0.01, 0.20, 0.10),
+    }
+
+    aligned = draw_aligned(
+        noisy, estimates, shrinkage=calibration, unshrunk=UNSHRUNK_CONDITIONS
+    )
+
+    for name in (ALIGNFORMER, ALIGNFORMER_IRLS):
+        shrunk = shrink(estimates[name], calibration)
+        expected = correct_detections(noisy, shrunk.psi[0], shrunk.t[0])
+        assert torch.equal(aligned[name].detections.boxes, expected.boxes)
+        assert torch.equal(aligned[name].estimate.t, shrunk.t)
+    untouched = correct_detections(
+        noisy, estimates[FREEALIGN].psi[0], estimates[FREEALIGN].t[0]
+    )
+    assert torch.equal(aligned[FREEALIGN].detections.boxes, untouched.boxes)
+    assert aligned[FREEALIGN].estimate is estimates[FREEALIGN]
+    # And the shrinkage did something, or the first assertion is vacuous.
+    assert not torch.equal(aligned[ALIGNFORMER].detections.boxes, untouched.boxes)
+
+
+def test_the_shrinkage_exemption_cannot_be_forgotten():
+    """`unshrunk` is keyword-only and required, because a default of "shrink
+    everything" would silently score the competitor through our calibration and
+    nothing in the output would show it."""
+    from embedding_aware_belt_fusion.alignformer.draws import draw_aligned
+
+    with pytest.raises(TypeError):
+        draw_aligned(_detections([0.9]), {}, None)  # type: ignore[call-arg]
+
+
+def test_a_sigma_with_no_draw_gets_ONE_accumulator_shared_by_every_seed():
+    """The layout behind both the predictions and the pose statistics."""
+    from embedding_aware_belt_fusion.alignformer.draws import draw_slots
+
+    slots = draw_slots(["a", "b"], [0.0, 1.0], [10, 11, 12], list)
+
+    # sigma = 0 has no draw: one object, three references.
+    assert slots[("a", 0.0, 10)] is slots[("a", 0.0, 11)] is slots[("a", 0.0, 12)]
+    # sigma = 1 does: three independent accumulators.
+    assert len({id(slots[("a", 1.0, seed)]) for seed in (10, 11, 12)}) == 3
+    # and the two conditions never share one.
+    assert slots[("a", 0.0, 10)] is not slots[("b", 0.0, 10)]
+
+
+def test_an_append_to_a_shared_slot_reaches_every_seed_exactly_once():
+    from embedding_aware_belt_fusion.alignformer.draws import draw_slots
+
+    slots = draw_slots(["a"], [0.0], [10, 11], list)
+    slots[("a", 0.0, 10)].append("frame")
+
+    assert slots[("a", 0.0, 11)] == ["frame"]

@@ -193,3 +193,118 @@ def test_late_fuse_returns_empty_when_every_agent_has_no_detections():
 
     assert boxes.shape == (0, 7)
     assert scores.shape == (0,)
+
+
+# --- Task 23: one matching pass, reused by every threshold and every slice ----
+#
+# `average_precision` recomputed the rotated-IoU matching for each of the three
+# IoU thresholds, each of the two sort orders, and again for each shared-object
+# slice -- eighteen passes over the same polygons per condition. At one noise
+# seed that was invisible; at five it made the AP scoring longer than the sweep
+# itself. The matching does not depend on the threshold, the sort order or the
+# frame subset, so it is now done once and reused. That is only safe if the
+# reused form is EXACTLY the old one, which is what these pin.
+
+
+def _ap_scenario():
+    """Frames that exercise every branch: hits, misses, no truth, no detections."""
+    torch.manual_seed(0)
+    frames, truth = [], []
+    for _ in range(6):
+        count = int(torch.randint(0, 6, (1,)))
+        centres = torch.randn(count, 2) * 30.0
+        boxes = torch.zeros(count, 7)
+        boxes[:, :2] = centres
+        boxes[:, 3:6] = torch.tensor([1.5, 2.0, 4.0])
+        boxes[:, 6] = torch.rand(count) * math.pi
+        scores = torch.rand(count)
+        # Truth: some of the same boxes, jittered, plus one that was never found.
+        keep = boxes[: max(count - 1, 0)].clone()
+        keep[:, :2] += torch.randn(keep.shape[0], 2) * 0.3
+        extra = torch.tensor([[60.0, 60.0, 0.0, 1.5, 2.0, 4.0, 0.0]])
+        frames.append((boxes, scores))
+        truth.append(torch.cat([keep, extra], dim=0))
+    # A frame with detections but no truth, and a frame with truth but none found.
+    frames.append((torch.tensor([[1.0, 1.0, 0.0, 1.5, 2.0, 4.0, 0.0]]), torch.tensor([0.4])))
+    truth.append(torch.zeros(0, 7))
+    frames.append((torch.zeros(0, 7), torch.zeros(0)))
+    truth.append(torch.tensor([[3.0, 3.0, 0.0, 1.5, 2.0, 4.0, 0.0]]))
+    return frames, truth
+
+
+@pytest.mark.parametrize("threshold", (0.3, 0.5, 0.7))
+@pytest.mark.parametrize("global_sort", (True, False))
+def test_the_reused_matching_reproduces_average_precision_exactly(threshold, global_sort):
+    from embedding_aware_belt_fusion.alignformer.fusion import (
+        average_precision_from_matches,
+        match_frames,
+    )
+
+    predictions, ground_truth = _ap_scenario()
+
+    direct = average_precision(
+        predictions, ground_truth, iou_threshold=threshold, global_sort=global_sort
+    )
+    reused = average_precision_from_matches(
+        match_frames(predictions, ground_truth),
+        iou_threshold=threshold,
+        global_sort=global_sort,
+    )
+
+    # Exactly, not approximately: this replaces a published scoring path.
+    assert reused == direct
+
+
+def test_a_frame_subset_scores_as_if_it_had_been_matched_alone():
+    """The shared-object slices are subsets of the same frames; reusing the
+    parent's matching must give the same answer as matching the subset."""
+    from embedding_aware_belt_fusion.alignformer.fusion import (
+        average_precision_from_matches,
+        match_frames,
+    )
+
+    predictions, ground_truth = _ap_scenario()
+    indices = [0, 2, 4, 6]
+
+    alone = average_precision(
+        [predictions[i] for i in indices],
+        [ground_truth[i] for i in indices],
+        iou_threshold=0.5,
+    )
+    from_parent = average_precision_from_matches(
+        match_frames(predictions, ground_truth), iou_threshold=0.5, indices=indices
+    )
+
+    assert from_parent == alone
+
+
+def test_matching_once_is_cheaper_than_matching_per_threshold():
+    """The whole point: one pass, then three thresholds for free."""
+    from embedding_aware_belt_fusion.alignformer.fusion import (
+        average_precision_from_matches,
+        match_frames,
+    )
+
+    predictions, ground_truth = _ap_scenario()
+    matches = match_frames(predictions, ground_truth)
+
+    values = [
+        average_precision_from_matches(matches, iou_threshold=t) for t in (0.3, 0.5, 0.7)
+    ]
+    direct = [
+        average_precision(predictions, ground_truth, iou_threshold=t)
+        for t in (0.3, 0.5, 0.7)
+    ]
+
+    assert values == direct
+    # A lower threshold cannot score worse, or the scenario is degenerate and
+    # the equality above would be vacuous.
+    assert values[0] >= values[2]
+    assert values[0] > 0.0
+
+
+def test_matching_rejects_mismatched_frame_counts_like_the_function_it_replaces():
+    from embedding_aware_belt_fusion.alignformer.fusion import match_frames
+
+    with pytest.raises(ValueError, match="frames"):
+        match_frames([(torch.zeros(0, 7), torch.zeros(0))], [])

@@ -34,9 +34,20 @@ the learned correspondence replaced by the ground-truth assignment. They are
 not a method, they are a ceiling -- the most any improvement to cross-agent
 matching, by camera or by anything else, could be worth on this data.
 
-The detector runs once per agent per frame and every condition and sigma reuses
-those detections. Without that the sweep would be a detector benchmark: the
-forward pass dominates everything else here by two orders of magnitude.
+The detector runs once per agent per frame and every condition, sigma and noise
+seed reuses those detections. Without that the sweep would be a detector
+benchmark: the forward pass dominates everything else here by two orders of
+magnitude.
+
+Each sigma is drawn under several independent noise **seeds** (task 23), and
+every condition inside one draw sees the *same* perturbed poses -- one call to
+:func:`sweep_noisy_poses` per (sigma, seed, frame), consumed by
+:func:`draw_aligned`. That pairing is what makes the per-seed difference
+between two conditions the statistic to put an error bar on
+(:mod:`alignformer.seedstats`); independent draws per condition would inflate
+every bar and hide real orderings as readily as invent them. ``sigma = 0``
+perturbs nothing, so it is drawn once and reported without a spread rather than
+with a fabricated one.
 
 The per-agent object sets fed to AlignFormer are built exactly as
 ``alignformer.dataset`` builds them for training -- top-``MAX_OBJECTS`` by
@@ -49,6 +60,7 @@ that looks like a modelling result.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -56,7 +68,15 @@ import torch
 from torch import Tensor
 
 from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections, detect_agent
-from embedding_aware_belt_fusion.alignformer.dataset import YAW_STD_PER_XY_STD
+from embedding_aware_belt_fusion.alignformer.draws import (
+    DrawnCondition,
+    draw_aligned,
+    draw_seeds,
+    draw_slots,
+    sweep_draws,
+    sweep_noisy_poses,
+    sweep_rng,
+)
 from embedding_aware_belt_fusion.alignformer.embedding import rotated_roi_align
 from embedding_aware_belt_fusion.alignformer.freealign import (
     FreeAlignConfig,
@@ -81,7 +101,7 @@ from embedding_aware_belt_fusion.alignformer.variance import (
     UNWEIGHTED,
     CorrespondenceVarianceModel,
 )
-from embedding_aware_belt_fusion.coloca.geometry import perturb_pose_2d, relative_pose_error
+from embedding_aware_belt_fusion.coloca.geometry import relative_pose_error
 
 # A FIXED reporting boundary, independent of whatever range the pair index was
 # built at. Every measurement in docs/alignformer_pose_floor.md is reported
@@ -115,6 +135,11 @@ ORACLE_MATCH_CONDITIONS = (ORACLE_MATCH_UNIFORM, ORACLE_MATCH_IVW)
 # arm changed nothing else" a measurement instead of a claim. See
 # alignformer.robust.
 ALIGNFORMER_IRLS = "alignformer_irls"
+# The conditions the shrinkage calibration must never reach. FreeAlign is
+# scored as published: the calibration is fitted on AlignFormer's own
+# residuals and their method has no such step, so applying it would be
+# scoring the competitor through our calibration.
+UNSHRUNK_CONDITIONS = (FREEALIGN,)
 
 # Slices by how many ground-truth objects the two agents both detected. The
 # boundary at 3 is not arbitrary: it is exactly where a relative-distance graph
@@ -125,6 +150,10 @@ SHARED_DENSE = "shared_3plus"
 SHARED_BUCKETS = (SHARED_NONE, SHARED_SPARSE, SHARED_DENSE)
 
 _PROGRESS_INTERVAL = 100
+
+# Re-exported: the draw mechanics live in alignformer.draws, but this module
+# is the sweep and is where a reader looks for them.
+_sweep_rng = sweep_rng
 
 
 def condition_key(condition: str, sigma: float) -> str:
@@ -153,17 +182,6 @@ def sweep_estimators(
     if freealign:
         names.append(FREEALIGN)
     return names
-
-
-def _sweep_rng(seed: int, sigma: float, frame: int, agent: int) -> np.random.Generator:
-    """Deterministic per-(sigma, frame, agent) noise draw.
-
-    Keyed on sigma as well as on the frame so that the sweep's levels are
-    independent draws rather than one draw rescaled -- a rescaled draw would
-    make every level's error point in the same direction and turn the sweep
-    into a single sample.
-    """
-    return np.random.default_rng([seed, int(round(sigma * 1000)), frame, agent])
 
 
 def _truncate_by_score(
@@ -411,7 +429,7 @@ def run_noise_sweep(
     lidar_range: Sequence[float],
     output_size: int,
     sigmas: Sequence[float],
-    seed: int,
+    seeds: Sequence[int],
     training_comm_range_m: float,
     max_frames: Optional[int] = None,
     shrinkage: Optional[ShrinkageCalibration] = None,
@@ -419,17 +437,29 @@ def run_noise_sweep(
     freealign: Optional[FreeAlignConfig] = None,
     robust: Optional[RobustSolveConfig] = None,
 ) -> Tuple[
-    Dict[str, List[Tuple[Tensor, Tensor]]],
+    Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]],
     List[Tensor],
-    Dict[str, Dict[str, Dict[str, float]]],
+    Dict[int, Dict[str, Dict[str, Dict[str, float]]]],
     List[Tensor],
     List[List[int]],
 ]:
     """Fuse every frame under every condition; return predictions, truth and pose stats.
 
-    Returns ``(predictions_by_condition, ground_truth, pose_stats_by_condition,
+    Returns ``(predictions_by_seed, ground_truth, pose_stats_by_seed,
     intermediate_convention_ground_truth, shared_object_counts_per_frame)``.
-    ``pose_stats_by_condition`` is ``{estimator: {sigma key: metrics}}``.
+    ``predictions_by_seed`` is ``{seed: {condition key: frames}}`` and
+    ``pose_stats_by_seed`` is ``{seed: {estimator: {sigma key: metrics}}}``;
+    the inner keys are exactly the ones every earlier single-seed result file
+    carries, so one seed's sub-dict is directly comparable to those files.
+
+    ``seeds`` are independent noise draws of the SAME frames, sharing the same
+    detections and the same ground truth, so the per-seed difference between
+    two conditions is paired (see :mod:`alignformer.seedstats`). ``sigma = 0``
+    perturbs nothing and is therefore drawn once; every seed's entry for that
+    level is the *same list object*, which is both the honest reading and the
+    reason the cost is ``1 + (len(sigmas) - 1) * len(seeds)`` draws rather than
+    ``len(sigmas) * len(seeds)``. The detector runs once per frame regardless.
+
     ``ground_truth`` is shared by every condition -- the frames and their
     labels do not change, only the correction applied to the CAV boxes does --
     and the last entry carries, per frame, how many ground-truth objects each
@@ -487,12 +517,27 @@ def run_noise_sweep(
         getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA)
     )
 
-    conditions = [ORACLE] + [
-        condition_key(name, sigma)
-        for sigma in sigmas
-        for name in [UNCORRECTED] + estimators
-    ]
-    predictions: Dict[str, List[Tuple[Tensor, Tensor]]] = {key: [] for key in conditions}
+    seeds = list(seeds)
+    draws = sweep_draws(sigmas, seeds)
+
+    # One prediction list per (seed, condition). The oracle is independent of
+    # the noise entirely, and sigma = 0 is independent of the seed, so those
+    # entries are the SAME list object under every seed rather than a copy:
+    # one append reaches all of them, nothing is recomputed, and no seed can
+    # silently disagree with another about a cell that has no draw in it.
+    prediction_slots = draw_slots([UNCORRECTED] + estimators, sigmas, seeds, list)
+    oracle_frames: List[Tuple[Tensor, Tensor]] = []
+    predictions: Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]] = {
+        seed: {
+            ORACLE: oracle_frames,
+            **{
+                condition_key(name, sigma): prediction_slots[(name, sigma, seed)]
+                for name in [UNCORRECTED] + estimators
+                for sigma in sigmas
+            },
+        }
+        for seed in seeds
+    }
     ground_truth: List[Tensor] = []
     intermediate_ground_truth: List[Tensor] = []
     # One entry per frame: how many ground-truth objects each of the frame's
@@ -500,9 +545,17 @@ def run_noise_sweep(
     # with the noise), and the key that lets AP be sliced the way the pose
     # error already is.
     frame_shared_counts: List[List[int]] = []
-    stats = {
-        name: {sigma: _PoseStats(training_comm_range_m) for sigma in sigmas}
-        for name in estimators
+    # Pose statistics are aliased across seeds wherever the predictions are,
+    # by the same function, so the two layouts cannot come apart.
+    stat_slots = draw_slots(
+        estimators, sigmas, seeds, lambda: _PoseStats(training_comm_range_m)
+    )
+    stats: Dict[int, Dict[str, Dict[float, _PoseStats]]] = {
+        seed: {
+            name: {sigma: stat_slots[(name, sigma, seed)] for sigma in sigmas}
+            for name in estimators
+        }
+        for seed in seeds
     }
     nms_threshold = postprocessor.params["nms_thresh"]
 
@@ -532,7 +585,7 @@ def run_noise_sweep(
         for key, found in detections.items():
             psi, translation = _pose_correction(transforms[key])
             oracle.append(correct_detections(found, psi, translation))
-        predictions[ORACLE].append(_fuse(oracle, nms_threshold))
+        oracle_frames.append(_fuse(oracle, nms_threshold))
 
         ego_pack = packs["ego"]
         cav_keys = sorted(key for key in detections if key != "ego")
@@ -542,16 +595,18 @@ def run_noise_sweep(
             shared_object_count(ego_pack["gt_ids"], packs[key]["gt_ids"])
             for key in cav_keys
         ]
-        for sigma in sigmas:
+        for sigma, seed in draws:
             uncorrected = [detections["ego"]]  # ego's own transform is the identity
             # Every estimator corrects the SAME noisy detections, so the fused
             # sets differ by the estimate alone.
             aligned = {name: [detections["ego"]] for name in estimators}
+            # One draw for the whole frame, shared by every condition below --
+            # this is the pairing the error bars rest on. See sweep_noisy_poses.
+            drawn_poses = sweep_noisy_poses(
+                poses, cav_keys, sigma=sigma, seed=seed, frame=index
+            )
             for agent, key in enumerate(cav_keys):
-                rng = _sweep_rng(seed, sigma, index, agent)
-                noisy_pose = perturb_pose_2d(
-                    poses[key], sigma, sigma * YAW_STD_PER_XY_STD, rng
-                )
+                noisy_pose = drawn_poses[key]
                 noisy_transform = torch.as_tensor(
                     x1_to_x2(noisy_pose, ego_pose), dtype=torch.float32, device=device
                 )
@@ -587,17 +642,16 @@ def run_noise_sweep(
 
                 dx, dy, dpsi_deg = relative_pose_error(ego_pose, poses[key], noisy_pose)
                 shared = shared_this_frame[agent]
-                for name, estimate in estimates.items():
-                    # FreeAlign is scored as published: no shrinkage, which is
-                    # AlignFormer's calibration and not part of their method.
-                    if shrinkage is not None and name != FREEALIGN:
-                        estimate = shrink(estimate, shrinkage)
-                    aligned[name].append(
-                        correct_detections(
-                            noisy_detections, estimate.psi[0], estimate.t[0]
-                        )
-                    )
-                    stats[name][sigma].update(
+                # One perturbed set in, one scored estimate and one corrected
+                # set per condition out -- the same shrunk estimate feeding the
+                # fused boxes and the pose statistics.
+                for name, drawn in draw_aligned(
+                    noisy_detections, estimates, shrinkage,
+                    unshrunk=UNSHRUNK_CONDITIONS,
+                ).items():
+                    aligned[name].append(drawn.detections)
+                    estimate = drawn.estimate
+                    stats[seed][name][sigma].update(
                         float(estimate.psi[0].item()),
                         (float(estimate.t[0, 0]), float(estimate.t[0, 1])),
                         float(np.radians(dpsi_deg)),
@@ -609,11 +663,11 @@ def run_noise_sweep(
                         )),
                     )
 
-            predictions[condition_key(UNCORRECTED, sigma)].append(
+            predictions[seed][condition_key(UNCORRECTED, sigma)].append(
                 _fuse(uncorrected, nms_threshold)
             )
             for name, corrected in aligned.items():
-                predictions[condition_key(name, sigma)].append(
+                predictions[seed][condition_key(name, sigma)].append(
                     _fuse(corrected, nms_threshold)
                 )
 
@@ -635,8 +689,14 @@ def run_noise_sweep(
         predictions,
         ground_truth,
         {
-            name: {f"sigma_{sigma:g}m": tally.compute() for sigma, tally in by_sigma.items()}
-            for name, by_sigma in stats.items()
+            seed: {
+                name: {
+                    f"sigma_{sigma:g}m": tally.compute()
+                    for sigma, tally in by_sigma.items()
+                }
+                for name, by_sigma in by_estimator.items()
+            }
+            for seed, by_estimator in stats.items()
         },
         intermediate_ground_truth,
         frame_shared_counts,
