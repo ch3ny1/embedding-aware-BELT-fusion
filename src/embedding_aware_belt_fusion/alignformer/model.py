@@ -33,6 +33,10 @@ from embedding_aware_belt_fusion.alignformer.procrustes import (
     heading_orientation,
     weighted_se2_kabsch,
 )
+from embedding_aware_belt_fusion.alignformer.robust import (
+    RobustSolveConfig,
+    robust_se2_kabsch,
+)
 from embedding_aware_belt_fusion.alignformer.trunk import AlignFormerTrunk, tokenize
 from embedding_aware_belt_fusion.alignformer.variance import (
     UNWEIGHTED,
@@ -205,12 +209,20 @@ def solve_pose(
     batch: Mapping[str, Tensor],
     heading_lambda: float,
     variance_model: CorrespondenceVarianceModel,
+    robust: Optional[RobustSolveConfig] = None,
 ) -> PoseEstimate:
     """Head B's closed-form SE(2) solve over an already-reduced correspondence.
 
     Split out of :meth:`AlignFormerB.forward` for the same reason
     :func:`reduce_correspondence` was: whatever produced the correspondence,
     the pose that follows from it is solved by exactly this code.
+
+    ``robust``, when given, wraps that solve in the IRLS loop of
+    :mod:`alignformer.robust`: solve, re-weight by the residuals, re-solve.
+    ``None`` -- and a disabled configuration -- run the single weighted Kabsch
+    every measurement before task 22 was taken under, bit for bit. The loop's
+    evidence gate reads ``mass.sum(dim=1)``, which is the same quantity
+    reported as ``PoseEstimate.confidence``.
     """
     mass = correspondence.mass
 
@@ -234,11 +246,18 @@ def solve_pose(
         heading_lambda,
     )
 
-    psi, t = weighted_se2_kabsch(target, source, augmented_mass)
+    confidence = mass.sum(dim=1)
+    if robust is None:
+        psi, t = weighted_se2_kabsch(target, source, augmented_mass)
+    else:
+        solution = robust_se2_kabsch(
+            target, source, augmented_mass, evidence=confidence, config=robust
+        )
+        psi, t = solution.psi, solution.t
     return PoseEstimate(
         psi=psi,
         t=t,
-        confidence=mass.sum(dim=1),
+        confidence=confidence,
         log_assignment=correspondence.log_assignment,
     )
 
@@ -350,7 +369,11 @@ class AlignFormerB(_Base):
             weights, batch, self.variance_model, log_assignment=log_assignment
         )
 
-    def forward(self, batch: Mapping[str, Tensor]) -> PoseEstimate:
+    def forward(
+        self,
+        batch: Mapping[str, Tensor],
+        robust: Optional[RobustSolveConfig] = None,
+    ) -> PoseEstimate:
         # Guard BEFORE the trunk call: see _is_empty's docstring. With an empty
         # object set there is no correspondence to build anyway, so the zero
         # correction below is not just a crash-avoidance shortcut - it is the
@@ -362,4 +385,8 @@ class AlignFormerB(_Base):
         ego, cav = self._encode(batch)
 
         correspondence = self._soft_correspondence(batch, ego, cav, ego_mask, cav_mask)
-        return solve_pose(correspondence, batch, self.heading_lambda, self.variance_model)
+        # `robust=None` is the deployed path and is bit-identical to what this
+        # returned before task 22; see solve_pose.
+        return solve_pose(
+            correspondence, batch, self.heading_lambda, self.variance_model, robust
+        )

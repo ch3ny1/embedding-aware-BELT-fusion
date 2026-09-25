@@ -67,6 +67,13 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     correct_detections,
     late_fuse,
 )
+from embedding_aware_belt_fusion.alignformer.robust import (
+    DEFAULT_ITERATIONS,
+    DEFAULT_MIN_EVIDENCE,
+    ROBUST_MODES,
+    ROBUST_NONE,
+    RobustSolveConfig,
+)
 
 # AP is reported at all three; only AP@0.7 is the P0 gate.
 _AP_IOU_THRESHOLDS = (0.3, 0.5, 0.7)
@@ -177,6 +184,26 @@ def parse_args() -> argparse.Namespace:
         help="FreeAlign discards a collaborative message whose common subgraph "
              "has fewer nodes than this; 3 is their shipped default and the "
              "count below which a distance graph cannot determine SE(2).",
+    )
+    parser.add_argument(
+        "--robust-solve", choices=ROBUST_MODES, default=ROBUST_NONE,
+        help="--metric noisy_ap only: also fuse the alignformer_irls condition, "
+             "i.e. the deployed estimator with an IRLS re-weighting loop wrapped "
+             "around its closed-form solve (alignformer.robust). The deployed "
+             "alignformer arm is produced unchanged in the same run, so the two "
+             "differ in the pose solve alone. 'none' adds nothing.",
+    )
+    parser.add_argument(
+        "--robust-iterations", type=int, default=DEFAULT_ITERATIONS,
+        help="re-weight/re-solve rounds in --robust-solve; chosen on validation",
+    )
+    parser.add_argument(
+        "--robust-min-evidence", type=float, default=DEFAULT_MIN_EVIDENCE,
+        help="effective matched correspondences below which --robust-solve is "
+             "suppressed and the single solve is kept untouched. The sparse "
+             "slice is where AlignFormer beats a distance-graph method, and a "
+             "robust loop with three effective points will trim its way to "
+             "nonsense; chosen on validation, never on test.",
     )
     parser.add_argument("--output", type=Path, required=True, help="destination JSON result file")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
@@ -767,6 +794,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     from embedding_aware_belt_fusion.alignformer.freealign import FreeAlignConfig
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
         ALIGNFORMER,
+        ALIGNFORMER_IRLS,
         FREEALIGN,
         ORACLE,
         ORACLE_MATCH_CONDITIONS,
@@ -795,6 +823,11 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         if args.freealign
         else None
     )
+    robust = RobustSolveConfig(
+        mode=args.robust_solve,
+        iterations=args.robust_iterations,
+        min_evidence=args.robust_min_evidence,
+    )
 
     (
         predictions,
@@ -815,6 +848,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         shrinkage=shrinkage,
         oracle_match=args.oracle_match,
         freealign=freealign,
+        robust=robust,
     )
 
     ap, ap_intermediate_gt = {}, {}
@@ -870,11 +904,16 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "alignformer": ALIGNFORMER,
             "oracle_match": list(ORACLE_MATCH_CONDITIONS) if args.oracle_match else [],
             "freealign": FREEALIGN if freealign is not None else None,
+            "robust_solve": ALIGNFORMER_IRLS if robust.enabled else None,
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the
         # published method, on our detections, never the authors' code.
         "freealign_config": None if freealign is None else freealign.to_dict(),
+        # The IRLS arm's frozen configuration. Chosen on the scenario-disjoint
+        # validation slice (scripts/calibrate_robust_solve.py); recorded here so
+        # a result file states what it was measured under.
+        "robust_solve_config": robust.to_dict(),
         "ap": ap,
         # The same predictions scored against the ground truth OpenCOOD's
         # IntermediateFusionDataset would report, so the head-to-head table

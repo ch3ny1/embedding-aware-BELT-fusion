@@ -72,6 +72,7 @@ from embedding_aware_belt_fusion.alignformer.oracle import (
     oracle_assignment,
     oracle_pose_estimate,
 )
+from embedding_aware_belt_fusion.alignformer.robust import RobustSolveConfig
 from embedding_aware_belt_fusion.alignformer.shrinkage import ShrinkageCalibration, shrink
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 from embedding_aware_belt_fusion.alignformer.train import embed_batch
@@ -106,6 +107,14 @@ FREEALIGN = "freealign"
 ORACLE_MATCH_UNIFORM = "oracle_match_uniform"
 ORACLE_MATCH_IVW = "oracle_match_ivw"
 ORACLE_MATCH_CONDITIONS = (ORACLE_MATCH_UNIFORM, ORACLE_MATCH_IVW)
+# The robust re-weighted solve (task 22): the SAME checkpoint, the SAME
+# correspondence, the SAME inverse-variance weights, with an IRLS loop wrapped
+# around the closed-form Kabsch that produces the pose from them. It is a
+# separate condition rather than a replacement so that the deployed arm keeps
+# reproducing bit for bit in the very same run, which is what makes "the new
+# arm changed nothing else" a measurement instead of a claim. See
+# alignformer.robust.
+ALIGNFORMER_IRLS = "alignformer_irls"
 
 # Slices by how many ground-truth objects the two agents both detected. The
 # boundary at 3 is not arbitrary: it is exactly where a relative-distance graph
@@ -121,6 +130,29 @@ _PROGRESS_INTERVAL = 100
 def condition_key(condition: str, sigma: float) -> str:
     """Result-dict key for one (condition, sigma) cell; the oracle has no sigma."""
     return condition if condition == ORACLE else f"{condition}_sigma_{sigma:g}m"
+
+
+def sweep_estimators(
+    oracle_match: Sequence[str],
+    freealign: bool,
+    robust: Optional[RobustSolveConfig],
+) -> List[str]:
+    """The correction arms one sweep invocation produces, in a fixed order.
+
+    :data:`ALIGNFORMER` is always first and is always the deployed estimator,
+    untouched: every optional arm is *added* beside it rather than replacing
+    it, which is what lets one run carry both the new measurement and the
+    bit-identity check against the published one. A disabled robust
+    configuration adds nothing, so passing one by accident cannot silently
+    produce an arm that is a copy of the deployed one under another name.
+    """
+    names = [ALIGNFORMER]
+    if robust is not None and robust.enabled:
+        names.append(ALIGNFORMER_IRLS)
+    names.extend(oracle_match)
+    if freealign:
+        names.append(FREEALIGN)
+    return names
 
 
 def _sweep_rng(seed: int, sigma: float, frame: int, agent: int) -> np.random.Generator:
@@ -385,6 +417,7 @@ def run_noise_sweep(
     shrinkage: Optional[ShrinkageCalibration] = None,
     oracle_match: bool = False,
     freealign: Optional[FreeAlignConfig] = None,
+    robust: Optional[RobustSolveConfig] = None,
 ) -> Tuple[
     Dict[str, List[Tuple[Tensor, Tensor]]],
     List[Tensor],
@@ -422,6 +455,14 @@ def run_noise_sweep(
     ``shrinkage`` is deliberately NOT applied to it: the calibration is fitted
     on AlignFormer's own residuals and FreeAlign has no such step, so applying
     it would be scoring the competitor through our calibration.
+
+    ``robust``, when enabled, adds :data:`ALIGNFORMER_IRLS`: the deployed
+    estimator with an IRLS loop wrapped around its closed-form solve
+    (``alignformer.robust``). It shares the frame's detections, noise draws,
+    correspondence and shrinkage with ``alignformer`` -- shrinkage included,
+    because it is a candidate REPLACEMENT for the deployed arm rather than a
+    competitor, so it has to be scored the way the deployed arm is scored --
+    and the two therefore differ in the pose solve alone.
     """
     from opencood.utils import box_utils
     from opencood.utils.transformation_utils import x1_to_x2
@@ -434,9 +475,14 @@ def run_noise_sweep(
     )
 
     variance_models = _oracle_variance_models(modules) if oracle_match else {}
-    estimators = [ALIGNFORMER] + list(variance_models)
-    if freealign is not None:
-        estimators.append(FREEALIGN)
+    estimators = sweep_estimators(
+        list(variance_models), freealign is not None, robust
+    )
+    if ALIGNFORMER_IRLS in estimators and not hasattr(modules["pose"], "variance_model"):
+        raise ValueError(
+            "the robust re-weighted solve needs head B; the loaded checkpoint's "
+            "pose head solves no least-squares problem to re-weight"
+        )
     heading_lambda = float(
         getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA)
     )
@@ -520,9 +566,9 @@ def run_noise_sweep(
                 cav_pack["boxes"] = correct_boxes(packs[key]["boxes"], psi_noisy, t_noisy)
 
                 pair = _object_set(ego_pack, cav_pack)
-                estimates = {
-                    ALIGNFORMER: _estimate(modules, pair, ablate_embeddings)
-                }
+                estimates = _alignformer_estimates(
+                    modules, pair, ablate_embeddings, robust
+                )
                 if freealign is not None:
                     estimates[FREEALIGN] = freealign_estimate(pair, freealign)
                 if variance_models:
@@ -661,6 +707,26 @@ def _estimate(modules, batch: Mapping[str, Tensor], ablate: bool):
     """Run the frozen embedding head and the pose head over one ego-CAV pair."""
     enriched = embed_batch(modules["embedding"], batch, ablate=ablate)
     return modules["pose"](enriched)
+
+
+def _alignformer_estimates(
+    modules,
+    batch: Mapping[str, Tensor],
+    ablate: bool,
+    robust: Optional[RobustSolveConfig],
+) -> Dict[str, Any]:
+    """Every AlignFormer arm for one pair, from ONE pass of the embedding head.
+
+    The deployed arm is produced by the same call it always was, with no
+    ``robust`` argument at all, so it cannot be perturbed by the presence of
+    the second arm. Sharing ``enriched`` between them is not an optimization
+    alone: it makes the two arms provably see identical inputs.
+    """
+    enriched = embed_batch(modules["embedding"], batch, ablate=ablate)
+    estimates = {ALIGNFORMER: modules["pose"](enriched)}
+    if robust is not None and robust.enabled:
+        estimates[ALIGNFORMER_IRLS] = modules["pose"](enriched, robust=robust)
+    return estimates
 
 
 def _fuse(

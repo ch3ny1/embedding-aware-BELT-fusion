@@ -277,3 +277,31 @@ def test_the_pose_stats_also_split_at_the_fixed_40m_diagnostic_boundary():
     assert metrics["within_40m_translation_mae_m"] == pytest.approx(1.0)
     assert metrics["beyond_40m_translation_mae_m"] == pytest.approx(3.0)
     assert metrics["beyond_40m_fraction"] == 0.5
+
+
+def test_the_irls_condition_only_joins_the_sweep_when_a_robust_config_is_given():
+    # Task 22. A fifth correction arm whose condition keys collide with, or
+    # silently replace, the deployed arm's would make the bit-identity check
+    # that proves nothing else moved impossible to run.
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
+        ALIGNFORMER_IRLS,
+        sweep_estimators,
+    )
+    from embedding_aware_belt_fusion.alignformer.robust import (
+        HUBER,
+        RobustSolveConfig,
+    )
+
+    without = sweep_estimators(oracle_match=[], freealign=False, robust=None)
+    with_loop = sweep_estimators(
+        oracle_match=[], freealign=False,
+        robust=RobustSolveConfig(mode=HUBER, iterations=2),
+    )
+    disabled = sweep_estimators(
+        oracle_match=[], freealign=False, robust=RobustSolveConfig(),
+    )
+
+    assert without == [ALIGNFORMER]
+    assert with_loop == [ALIGNFORMER, ALIGNFORMER_IRLS]
+    assert disabled == [ALIGNFORMER]
+    assert condition_key(ALIGNFORMER_IRLS, 1.0) != condition_key(ALIGNFORMER, 1.0)

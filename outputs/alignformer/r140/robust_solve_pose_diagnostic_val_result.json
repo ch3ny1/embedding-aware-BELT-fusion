@@ -1,0 +1,135 @@
+{
+  "method": "alignformer_robust_solve",
+  "metric": "robust_solve_measurement",
+  "note": "A MEASUREMENT of one frozen configuration against the deployed arm on the same pairs; nothing is selected here, which is why it may point at the test split.",
+  "measure_only": true,
+  "split": "/media/chenyi/basement2/cache/opv2v_splits/val",
+  "stride": 8,
+  "seed": 0,
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth",
+  "checkpoint_head": "B",
+  "checkpoint_variance_weighting": "scalar",
+  "shrinkage": "outputs/alignformer/r140/shrinkage_ivw_scalar_calibration_result.json",
+  "grid_axes": null,
+  "configurations": [
+    {
+      "mode": "huber",
+      "iterations": 2,
+      "min_evidence": 3.0,
+      "huber_constant": 1.345,
+      "scale_floor_m": 0.05,
+      "enabled": true
+    }
+  ],
+  "by_sigma": {
+    "sigma_1m": {
+      "pairs": 234,
+      "grid": [
+        {
+          "config": {
+            "mode": "none",
+            "iterations": 1,
+            "min_evidence": 3.0,
+            "huber_constant": 1.345,
+            "scale_floor_m": 0.05,
+            "enabled": false
+          },
+          "deployed_baseline": true,
+          "pairs": 234,
+          "translation_mae_m": 0.12414027215867685,
+          "translation_median_m": 0.09429038215862107,
+          "yaw_mae_deg": 0.1590803590854396,
+          "yaw_median_deg": 0.10186766589229919,
+          "coverage": 1.0,
+          "error_rate_over_3m": 0.0,
+          "answered_translation_mae_m": 0.12414027215867685,
+          "answered_translation_median_m": 0.09429038215862107,
+          "answered_yaw_median_deg": 0.10186766589229919,
+          "engaged_fraction": 0.0,
+          "moved_fraction": 0.0,
+          "shared_1_2": {
+            "pairs": 4,
+            "translation_mae_m": 0.309064907824678,
+            "translation_median_m": 0.3380216224287005,
+            "yaw_mae_deg": 0.3657503030148984,
+            "yaw_median_deg": 0.2861343851200373,
+            "coverage": 1.0,
+            "error_rate_over_3m": 0.0,
+            "answered_translation_mae_m": 0.309064907824678,
+            "answered_translation_median_m": 0.3380216224287005,
+            "answered_yaw_median_deg": 0.2861343851200373,
+            "engaged_fraction": 0.0,
+            "moved_fraction": 0.0
+          },
+          "shared_3plus": {
+            "pairs": 230,
+            "translation_mae_m": 0.12092419153839858,
+            "translation_median_m": 0.09372254576252453,
+            "yaw_mae_deg": 0.15548609919101422,
+            "yaw_median_deg": 0.10100854048977845,
+            "coverage": 1.0,
+            "error_rate_over_3m": 0.0,
+            "answered_translation_mae_m": 0.12092419153839858,
+            "answered_translation_median_m": 0.09372254576252453,
+            "answered_yaw_median_deg": 0.10100854048977845,
+            "engaged_fraction": 0.0,
+            "moved_fraction": 0.0
+          }
+        },
+        {
+          "config": {
+            "mode": "huber",
+            "iterations": 2,
+            "min_evidence": 3.0,
+            "huber_constant": 1.345,
+            "scale_floor_m": 0.05,
+            "enabled": true
+          },
+          "deployed_baseline": false,
+          "delta_translation_mae_m": -0.01896521582012828,
+          "delta_translation_median_m": -0.008742801120710408,
+          "pairs": 234,
+          "translation_mae_m": 0.10517505633854857,
+          "translation_median_m": 0.08554758103791066,
+          "yaw_mae_deg": 0.12024558297086542,
+          "yaw_median_deg": 0.08387622015173668,
+          "coverage": 1.0,
+          "error_rate_over_3m": 0.0,
+          "answered_translation_mae_m": 0.10517505633854857,
+          "answered_translation_median_m": 0.08554758103791066,
+          "answered_yaw_median_deg": 0.08387622015173668,
+          "engaged_fraction": 0.9957264957264957,
+          "moved_fraction": 0.9957264957264957,
+          "shared_1_2": {
+            "pairs": 4,
+            "translation_mae_m": 0.22602555843663039,
+            "translation_median_m": 0.2500138566632426,
+            "yaw_mae_deg": 0.2886490465905317,
+            "yaw_median_deg": 0.2540279736886949,
+            "coverage": 1.0,
+            "error_rate_over_3m": 0.0,
+            "answered_translation_mae_m": 0.22602555843663039,
+            "answered_translation_median_m": 0.2500138566632426,
+            "answered_yaw_median_deg": 0.2540279736886949,
+            "engaged_fraction": 0.75,
+            "moved_fraction": 0.75
+          },
+          "shared_3plus": {
+            "pairs": 230,
+            "translation_mae_m": 0.10307330847597321,
+            "translation_median_m": 0.08511391995825575,
+            "yaw_mae_deg": 0.11731682708182777,
+            "yaw_median_deg": 0.0822415858337025,
+            "coverage": 1.0,
+            "error_rate_over_3m": 0.0,
+            "answered_translation_mae_m": 0.10307330847597321,
+            "answered_translation_median_m": 0.08511391995825575,
+            "answered_yaw_median_deg": 0.0822415858337025,
+            "engaged_fraction": 1.0,
+            "moved_fraction": 1.0
+          }
+        }
+      ]
+    }
+  }
+}

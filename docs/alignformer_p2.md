@@ -1822,6 +1822,225 @@ The AlignFormer, uncorrected and oracle rows of this run reproduce
 `p2_r140_ivw_scalar_noisy_ap_result.json` exactly at every sigma and every IoU
 threshold, so adding the condition changed nothing about the deployed arm.
 
+## The robust re-weighted solve: closing the AP@0.7 gap to FreeAlign
+
+Task 20 left the comparison unordered: FreeAlign won AP@0.7 at every sigma and
+AlignFormer won AP@0.3, and the pose diagnostic said why. **It was not the
+tail.** On the 90.3% of test pairs that share three or more objects -- the
+slice that drives aggregate AP -- FreeAlign's answered translation median was
+0.0984 m against AlignFormer's 0.1024 m, and its yaw median 0.0747 deg against
+0.1007. AlignFormer owned the mean (0.2203 m against 1.2984 m), the tail (0.93%
+beyond 3 m against 2.55%) and the coverage (0.988 against 0.907), but AP@0.7
+rewards the *typical* pair and the typical pair went to FreeAlign.
+
+The only structural difference in that regime is how the pose is solved.
+FreeAlign fits **hard**: LMedS over a matched subgraph, where an outlier
+correspondence is discarded. Head B fits **once**, by weighted least squares
+over soft Sinkhorn mass times inverse-variance precision -- and least squares
+has no redescending influence function, so a wrong correspondence with
+small-but-nonzero mass biases the fit in proportion to its residual and nothing
+ever removes it.
+
+`alignformer/robust.py` is the intervention that difference suggests: solve
+exactly as now, compute per-point residuals over the 2M heading-augmented
+points, re-weight, re-solve, a bounded number of times. It **wraps**
+`weighted_se2_kabsch`; it does not replace it. It is applied at **inference
+only**, on the deployed `stage2_B_ivw_scalar/best.pth`; nothing was retrained.
+
+Four things about the design are load-bearing.
+
+**The scale is fitted per sample, not fixed in metres.** A fixed threshold
+cannot transfer across a sweep whose pose error spans 0 to 2 m. It is the
+mass-weighted median residual divided by `sqrt(2 ln 2)` (the Rayleigh
+median/sigma ratio, so Huber's 1.345 keeps its textbook meaning), floored at
+0.05 m -- well below the detector's own 0.2516 m per-detection RMS, so nothing
+real is trimmed by the floor. The weighted median is the same statistic
+FreeAlign's LMedS selects on. It is re-estimated from the **original** weights
+every iteration; re-estimating from the already-trimmed ones makes each round
+trim harder than the last.
+
+**The guard.** Below `min_evidence` effective correspondences the loop is
+skipped and the single solve is returned untouched, per sample. AlignFormer's
+structural advantage over a distance-graph method lives in the pairs sharing
+one or two objects, and a robust loop handed three effective points will trim
+its way to nonsense. The threshold was chosen on validation and is 3.0 -- the
+count below which a relative-distance graph is degenerate, i.e. the boundary
+the `shared_1_2` slice is drawn at.
+
+**The weights are renormalized** to the total the input vector had, exactly as
+`variance.augmented_weights` does, so `MIN_MATCH_MASS` fires on exactly the
+pairs it fired on before and the loop cannot change *which* pairs are answered.
+
+**The residual weights are detached**, so the autograd path is still one
+weighted Kabsch rather than an unrolled fixed point. Pinned by gradient
+equality, not by inspection.
+
+### Choosing psi, n_irls and the guard -- validation only
+
+A full sweep costs ~1.5 h per configuration, so a 30-point grid was run on pose
+error instead, at four sigmas on the scenario-disjoint validation slice, stride
+8, 234 pairs (`scripts/calibrate_robust_solve.py`). Mean change in translation
+median, best rows:
+
+| psi | n_irls | guard | mean delta median (m) |
+|---|---:|---:|---:|
+| **Huber** | **2** | **3.0** | **-0.0095** |
+| Huber | 3 | 3.0 | -0.0094 |
+| Huber | 1 | 3.0 | -0.0080 |
+| Geman-McClure | 1 | 3.0 | -0.0054 |
+| Geman-McClure | 3 | 0.0 | +0.0010 |
+
+Huber beats Geman-McClure on every axis, and Geman-McClure at three iterations
+is *worse than doing nothing*: it is redescending, so it trims harder, and the
+bounded-influence function is the right one on this data. `huber`,
+`n_irls = 2`, `min_evidence = 3.0` was frozen before either AP sweep ran.
+
+### The headline: AP@0.7 improves at every sigma, on both splits
+
+Test split, 2170 frames, global-sorted AP, shrinkage as deployed on both
+AlignFormer arms and none on FreeAlign.
+
+| sigma (m) | uncorrected | AlignFormer | **+ robust solve** | FreeAlign | gain |
+|---|---:|---:|---:|---:|---:|
+| 0 | 0.8964 | 0.8310 | **0.8512** | 0.8461 | +0.0202 |
+| 0.2 | 0.5978 | 0.7841 | 0.8060 | **0.8334** | +0.0219 |
+| 0.4 | 0.3158 | 0.7835 | 0.8114 | **0.8164** | +0.0280 |
+| 0.6 | 0.2154 | 0.7819 | **0.8099** | 0.8094 | +0.0281 |
+| 0.8 | 0.1844 | 0.7850 | **0.8151** | 0.8069 | +0.0301 |
+| 1.0 | 0.1763 | 0.7851 | **0.8164** | 0.8054 | +0.0313 |
+| 1.5 | 0.1799 | 0.7756 | **0.8106** | 0.8048 | +0.0350 |
+| 2.0 | 0.1898 | 0.7600 | 0.7995 | **0.8047** | +0.0396 |
+
+Mean gain **+0.0293**, at 8 of 8 sigmas. **The AP@0.7 head-to-head against
+FreeAlign goes from 0-8 to 5-3.** At AP@0.3 it is now **8-0** in our favour and
+at AP@0.5 **6-2**, so task 20's "which one wins is a choice of IoU threshold"
+no longer holds in FreeAlign's favour. The three cells FreeAlign still takes
+are sigma 0.2 (by 0.027) and 0.4 and 2.0 (by 0.005 each) -- and 0.005 is below
+what one noise seed per AP cell resolves, so only the 0.2 m cell is a real
+ordering.
+
+Validation, 958 frames: the gain is +0.0126 to +0.0360, again at 8 of 8 sigmas,
+mean +0.0224.
+
+**Nothing else moved.** The `uncorrected`, `alignformer`, `freealign` and
+`oracle` rows of both runs are bit-identical to the published
+`freealign_{val,test}_result.json` at all three IoU thresholds -- 75 cells per
+split, max |difference| **0.0**, on both splits.
+
+### The mechanism, measured: the dense-regime deficit is closed and reversed
+
+Paired diagnostic, test, 431 pairs, sigma = 1.0 m, identical detections:
+
+| | FreeAlign | AlignFormer | **+ robust solve** |
+|---|---:|---:|---:|
+| answered translation median | **0.0992 m** | 0.1147 m | 0.1013 m |
+| answered translation mean | 1.2984 m | 0.2203 m | **0.2064 m** |
+| **3+ slice answered median** | 0.0984 m | 0.1024 m | **0.0932 m** |
+| 3+ slice answered yaw median | **0.0747 deg** | 0.1007 deg | 0.0793 deg |
+| >3 m error rate | 2.55% | **0.93%** | **0.93%** |
+| coverage | 0.907 | **0.988** | **0.988** |
+
+**On the slice that drives aggregate AP we are now the more precise method in
+the typical case**, which is the exact quantity that cost us AP@0.7, and we get
+there without giving up the tail or the coverage. The overall answered median
+is still marginally behind FreeAlign's, because FreeAlign declines the sparse
+pairs that drag ours; conditioned on the pairs both answer, we are ahead.
+
+### The guard works, and it is selective rather than global
+
+A guard set too high would disable the loop everywhere, reproduce the deployed
+arm exactly, and read as a clean null. It does not:
+
+| slice | pairs | loop engaged | pose actually moved |
+|---|---:|---:|---:|
+| all | 431 | 88.2% | 87.9% |
+| 1-2 shared | 39 | **5.1%** | 5.1% |
+| 3+ shared | 388 | **97.4%** | 97.2% |
+
+AP@0.7 by slice, sigma = 1.0 m, test:
+
+| slice | frames | pairs | uncorrected | AlignFormer | **+ robust** | FreeAlign |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 shared | 30 | 34 | 0.1173 | 0.1188 | 0.1188 | 0.1173 |
+| 1-2 shared | 290 | 300 | 0.3348 | 0.5185 | **0.5191** | 0.3456 |
+| 3+ shared | 1731 | 3111 | 0.1521 | 0.8119 | **0.8478** | 0.8513 |
+
+The `shared_0` slice is **exactly unchanged at every sigma** -- the loop never
+engages where there is no evidence. The sparse slice moves by +0.0007, +0.0000,
++0.0006, -0.0001, +0.0012, +0.0006, +0.0012, +0.0012 across the sweep, and its
+pose MAE is unchanged to three decimals. **The structural advantage on sparse
+pairs is preserved, not traded away.**
+
+### The clean case
+
+The sigma = 0 regression (ruling R44) is reduced by a third without being
+targeted:
+
+| | AP@0.7 at sigma = 0 | damage against uncorrected |
+|---|---:|---:|
+| uncorrected | 0.8964 | -- |
+| AlignFormer | 0.8310 | -0.0654 |
+| FreeAlign | 0.8461 | -0.0503 |
+| **AlignFormer + robust solve** | **0.8512** | **-0.0452** |
+
+We now damage the clean case **less than FreeAlign does**, which was not true
+before. On validation the damage falls from -0.0214 to -0.0089. The mechanism is
+visible in the pose: the sigma = 0 residual, which *is* the error there, falls
+from 0.1610 to 0.1485 m overall and from 0.0555 to 0.0416 m on the dense slice.
+This is a side effect, not a fix; R44's recommendation of a pose-uncertainty
+gate stands.
+
+### Caveats
+
+- **One noise seed per AP cell.** The robust-minus-deployed deltas
+  (0.020-0.040) clear that comfortably; the robust-minus-FreeAlign deltas at
+  sigma 0, 0.4, 0.6 and 2.0 (0.0005-0.0052) do **not** and must not be quoted
+  as orderings.
+- `min_evidence` is in units of Sinkhorn soft-match mass, not the number of
+  *true* shared objects, which is why 5% of the `shared_1_2` slice still
+  engages. The guard and the slice boundary are not the same cut.
+- Huber and Geman-McClure are separated by 0.004 m of median on 234 validation
+  pairs. The choice is supported, not decisive.
+- The robust arm is scored through shrinkage calibrated on the **deployed**
+  arm's residuals. A recalibration would probably help it further and was
+  deliberately not tried, because it would be a second intervention.
+- FreeAlign is still ported without EdgeGAT, which their own ablation prices at
+  ~1.4x on the error rate, so a full-model FreeAlign would narrow these margins
+  by an unmeasured amount.
+
+### Reproducing
+
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
+export PYTHONPATH=src:external/OpenCOOD
+O=outputs/alignformer/r140
+DET=configs/alignformer_detector_r140.yaml
+AF=configs/alignformer_r140.yaml
+VAL=/media/chenyi/basement2/cache/opv2v_splits/val
+TEST=/media/chenyi/Elements1/Dataset/OPV2V/test
+CKPT=$O/stage2_B_ivw_scalar/best.pth
+SHRINK=$O/shrinkage_ivw_scalar_calibration_result.json
+E="python -m embedding_aware_belt_fusion.alignformer.evaluate"
+
+# 1. Choose psi, n_irls and the guard on VALIDATION only (~40 min).
+python scripts/calibrate_robust_solve.py --config $DET --alignformer-config $AF   --split $VAL --checkpoint $CKPT --shrinkage $SHRINK   --stride 8 --sigma 0 0.4 1.0 2.0   --output $O/robust_solve_calibration_result.json
+
+# 2. One evaluator pass per split produces ALL five arms (~1.5 h val, ~3.5 h test).
+for SPLIT_NAME in val test; do
+  [ $SPLIT_NAME = val ] && SPLIT=$VAL || SPLIT=$TEST
+  $E --config $DET --split $SPLIT --metric noisy_ap --alignformer-config $AF      --checkpoint $CKPT --sweep 0 0.2 0.4 0.6 0.8 1.0 1.5 2.0      --shrinkage $SHRINK --freealign      --robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0      --output $O/robust_solve_${SPLIT_NAME}_result.json
+done
+
+# 3. Paired medians and engagement. A MEASUREMENT, so it may point at test.
+for SPLIT_NAME in val test; do
+  [ $SPLIT_NAME = val ] && SPLIT=$VAL || SPLIT=$TEST
+  python scripts/calibrate_robust_solve.py --config $DET --alignformer-config $AF     --split $SPLIT --checkpoint $CKPT --shrinkage $SHRINK     --stride 8 --sigma 1.0 --measure-only     --mode huber --iterations 2 --min-evidence 3.0     --output $O/robust_solve_pose_diagnostic_${SPLIT_NAME}_result.json
+done
+
+# 4. The pre-registered decision rule and every table above.
+python scripts/summarize_robust_solve.py   --validation $O/robust_solve_val_result.json   --test $O/robust_solve_test_result.json   --deployed $O/freealign_test_result.json   --deployed-validation $O/freealign_val_result.json   --calibration $O/robust_solve_calibration_result.json   --output $O/robust_solve_result.json
+```
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.
