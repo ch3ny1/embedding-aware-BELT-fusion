@@ -50,12 +50,17 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
 import torch
 from torch import Tensor
 
-from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+if TYPE_CHECKING:  # pragma: no cover - imported for annotations only
+    # Deferred: alignformer.model imports alignformer.abstain, which imports
+    # the positive-part rule from here. `from __future__ import annotations`
+    # above makes every annotation a string, so nothing below needs the class
+    # at runtime and the cycle does not have to exist.
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
 
 
 @dataclass(frozen=True)
@@ -144,7 +149,9 @@ def shrinkage_factor(
     return (1.0 - ratio).clamp_min(0.0)
 
 
-def shrink(estimate: PoseEstimate, calibration: "ShrinkageCalibration") -> PoseEstimate:
+def shrink(
+    estimate: "PoseEstimate", calibration: "ShrinkageCalibration"
+) -> "PoseEstimate":
     """Return a **new** :class:`PoseEstimate` with the correction shrunk.
 
     One factor for the whole SE(2): the translation's direction and the yaw's

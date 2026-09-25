@@ -69,6 +69,7 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     late_fuse,
     match_frames,
 )
+from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig
 from embedding_aware_belt_fusion.alignformer.robust import (
     DEFAULT_ITERATIONS,
     DEFAULT_MIN_EVIDENCE,
@@ -208,6 +209,17 @@ def parse_args() -> argparse.Namespace:
              "slice is where AlignFormer beats a distance-graph method, and a "
              "robust loop with three effective points will trim its way to "
              "nonsense; chosen on validation, never on test.",
+    )
+    parser.add_argument(
+        "--abstain-arm", action="append", default=None, metavar="MODE[:THRESHOLD]",
+        help="--metric noisy_ap only, repeatable: add one per-pair abstention "
+             "arm (alignformer.abstain) built on the --robust-solve arm. "
+             "'abstain:C' zeroes the correction at or below Wald statistic C; "
+             "'per_pair' applies the James-Stein positive-part factor with the "
+             "pair's own covariance in place of the global tau; 'both:C' does "
+             "both. Each arm REPLACES the --shrinkage calibration rather than "
+             "stacking on it, so the deployed arms in the same run still "
+             "reproduce bit for bit.",
     )
     parser.add_argument(
         "--ap-seeds", type=int, default=1,
@@ -930,6 +942,14 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         iterations=args.robust_iterations,
         min_evidence=args.robust_min_evidence,
     )
+    abstention = [
+        AbstentionConfig.parse(spec) for spec in (args.abstain_arm or [])
+    ]
+    if len({config.name for config in abstention}) != len(abstention):
+        raise ValueError(
+            f"--abstain-arm names must be distinct, got "
+            f"{[config.name for config in abstention]}"
+        )
 
     # Independent noise draws of the same frames. The FIRST seed is the config's
     # own -- the one every single-seed sweep on this branch was run under -- so
@@ -960,6 +980,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         oracle_match=args.oracle_match,
         freealign=freealign,
         robust=robust,
+        abstention=abstention,
     )
 
     # AP sliced by how many ground-truth objects the frame's agents share --
@@ -1012,6 +1033,11 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "oracle_match": list(ORACLE_MATCH_CONDITIONS) if args.oracle_match else [],
             "freealign": FREEALIGN if freealign is not None else None,
             "robust_solve": ALIGNFORMER_IRLS if robust.enabled else None,
+            # One name per per-pair abstention arm (task 24). Each is the IRLS
+            # solve with a decision applied, and each carries its own
+            # calibration instead of the global tau, so `shrinkage` above does
+            # NOT describe them.
+            "abstention": [config.name for config in abstention],
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the
@@ -1021,6 +1047,9 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # validation slice (scripts/calibrate_robust_solve.py); recorded here so
         # a result file states what it was measured under.
         "robust_solve_config": robust.to_dict(),
+        # Every constant each abstention arm ran under, so a result file states
+        # what it was measured with rather than leaving it to a shell history.
+        "abstention_arms": [config.to_dict() for config in abstention],
         "ap": ap,
         # The multi-seed measurement (task 23). Independent noise draws of the
         # same frames, shared across conditions within a draw, so the per-seed

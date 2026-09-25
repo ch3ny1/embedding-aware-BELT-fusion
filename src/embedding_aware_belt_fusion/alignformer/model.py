@@ -23,6 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from embedding_aware_belt_fusion.alignformer.abstain import wald_statistic
 from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
 from embedding_aware_belt_fusion.alignformer.head_match import (
     DEFAULT_SINKHORN_ITERATIONS,
@@ -56,12 +57,20 @@ _MIN_MASS = 1e-6
 
 @dataclass(frozen=True)
 class PoseEstimate:
-    """A CAV's estimated SE(2) correction, with the evidence behind it."""
+    """A CAV's estimated SE(2) correction, with the evidence behind it.
+
+    ``offset_statistic`` is the Wald statistic of ``(psi, t)`` against the
+    weighted least-squares fit's OWN covariance (:mod:`alignformer.abstain`).
+    It is ``None`` unless the solve was asked for it, so every estimate
+    produced before task 24 -- and every one produced today by a caller that
+    does not want a per-pair decision -- is unchanged in shape and in value.
+    """
 
     psi: Tensor
     t: Tensor
     confidence: Tensor
     log_assignment: Optional[Tensor] = None
+    offset_statistic: Optional[Tensor] = None
 
 
 @dataclass(frozen=True)
@@ -104,14 +113,27 @@ def _is_empty(batch: Mapping[str, Tensor]) -> bool:
     return batch["ego_boxes"].shape[1] == 0 or batch["cav_boxes"].shape[1] == 0
 
 
-def _zero_estimate(batch: Mapping[str, Tensor]) -> PoseEstimate:
-    """The identity correction with zero confidence, for an empty object set."""
+def _zero_estimate(
+    batch: Mapping[str, Tensor], statistic: bool = False
+) -> PoseEstimate:
+    """The identity correction with zero confidence, for an empty object set.
+
+    ``statistic`` fills ``offset_statistic`` with zeros rather than leaving it
+    ``None``: a pair with no objects has emitted no correction, so its Wald
+    statistic IS zero, and a caller applying a per-pair decision should get the
+    abstention that implies rather than an error about a missing field.
+    """
     reference = batch["ego_boxes"]
     batch_size, device, dtype = reference.shape[0], reference.device, reference.dtype
     psi = torch.zeros(batch_size, device=device, dtype=dtype)
     t = torch.zeros(batch_size, 2, device=device, dtype=dtype)
     confidence = torch.zeros(batch_size, device=device, dtype=dtype)
-    return PoseEstimate(psi=psi, t=t, confidence=confidence)
+    return PoseEstimate(
+        psi=psi,
+        t=t,
+        confidence=confidence,
+        offset_statistic=torch.zeros_like(psi) if statistic else None,
+    )
 
 
 def reduce_correspondence(
@@ -210,6 +232,8 @@ def solve_pose(
     heading_lambda: float,
     variance_model: CorrespondenceVarianceModel,
     robust: Optional[RobustSolveConfig] = None,
+    *,
+    statistic: bool = False,
 ) -> PoseEstimate:
     """Head B's closed-form SE(2) solve over an already-reduced correspondence.
 
@@ -223,6 +247,14 @@ def solve_pose(
     every measurement before task 22 was taken under, bit for bit. The loop's
     evidence gate reads ``mass.sum(dim=1)``, which is the same quantity
     reported as ``PoseEstimate.confidence``.
+
+    ``statistic`` additionally reports the Wald statistic of the emitted
+    correction against this fit's own covariance
+    (:func:`alignformer.abstain.wald_statistic`), computed from the points and
+    the weights the FINAL solve used -- the IRLS loop's re-weighted vector when
+    it ran, the inverse-variance one when it did not. It is read off the solve
+    and changes nothing about it: ``psi`` and ``t`` are bit-identical either
+    way, which is pinned by a test.
     """
     mass = correspondence.mass
 
@@ -249,16 +281,22 @@ def solve_pose(
     confidence = mass.sum(dim=1)
     if robust is None:
         psi, t = weighted_se2_kabsch(target, source, augmented_mass)
+        solved_weights = augmented_mass
     else:
         solution = robust_se2_kabsch(
             target, source, augmented_mass, evidence=confidence, config=robust
         )
-        psi, t = solution.psi, solution.t
+        psi, t, solved_weights = solution.psi, solution.t, solution.weights
     return PoseEstimate(
         psi=psi,
         t=t,
         confidence=confidence,
         log_assignment=correspondence.log_assignment,
+        offset_statistic=(
+            wald_statistic(target, source, solved_weights, psi, t)
+            if statistic
+            else None
+        ),
     )
 
 
@@ -373,13 +411,14 @@ class AlignFormerB(_Base):
         self,
         batch: Mapping[str, Tensor],
         robust: Optional[RobustSolveConfig] = None,
+        statistic: bool = False,
     ) -> PoseEstimate:
         # Guard BEFORE the trunk call: see _is_empty's docstring. With an empty
         # object set there is no correspondence to build anyway, so the zero
         # correction below is not just a crash-avoidance shortcut - it is the
         # correct answer.
         if _is_empty(batch):
-            return _zero_estimate(batch)
+            return _zero_estimate(batch, statistic)
 
         ego_mask, cav_mask = batch["ego_mask"], batch["cav_mask"]
         ego, cav = self._encode(batch)
@@ -388,5 +427,10 @@ class AlignFormerB(_Base):
         # `robust=None` is the deployed path and is bit-identical to what this
         # returned before task 22; see solve_pose.
         return solve_pose(
-            correspondence, batch, self.heading_lambda, self.variance_model, robust
+            correspondence,
+            batch,
+            self.heading_lambda,
+            self.variance_model,
+            robust,
+            statistic=statistic,
         )
