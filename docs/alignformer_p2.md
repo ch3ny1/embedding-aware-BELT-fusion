@@ -2148,11 +2148,14 @@ It does what it was predicted to do, largest exactly where predicted -- AP@0.7,
 validation, refitted minus deployed tau: **+0.0087 ±0.0005** at sigma = 0.2,
 +0.0068 at 0.4, decaying to +0.0002 at 2.0; sweep mean **+0.0029 ±0.0002**.
 
-And it is **not shipped**, because the pre-registered rule's second criterion
-fails: AP@0.7 at sigma = 0 regresses by **-0.0012**, larger than any error bar
-in that comparison. A smaller tau shrinks less, and at sigma = 0 the true
-correction is the identity, so shrinking less necessarily does more damage.
-That is the trade the rule was written to refuse.
+And it is **not shipped**, because two of the rule's three criteria fail, on
+two different splits. AP@0.7 at sigma = 0 regresses by **-0.0012**, larger than
+any error bar in that comparison; and test's 1-2 shared slice regresses at
+**all eight sigmas**, beyond one paired standard error at six of them, worst
+-0.0064. A smaller tau shrinks less everywhere: at sigma = 0 the true
+correction is the identity, so shrinking less does more damage, and the sparse
+slice is where the evidence is thinnest and the shrinkage was doing the most
+work. That is the trade the rule was written to refuse.
 
 Shipping it would have shrunk the validation AP@0.7 deficit to FreeAlign from
 -0.0035 to **-0.0006** -- a 5.5x improvement that is *still* a deficit at 2.9

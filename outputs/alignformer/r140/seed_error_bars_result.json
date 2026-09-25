@@ -5619,5 +5619,197 @@
       "conditions_missing_from_multi_seed_run": [],
       "bit_identical": true
     }
+  },
+  "refit_sources": {
+    "validation": {
+      "path": "outputs/alignformer/r140/seeds_refit_val_result.json",
+      "split": "/media/chenyi/basement2/cache/opv2v_splits/val",
+      "frames": 958
+    },
+    "test": {
+      "path": "outputs/alignformer/r140/seeds_refit_test_result.json",
+      "split": "/media/chenyi/Elements1/Dataset/OPV2V/test",
+      "frames": 2170
+    },
+    "calibration": "outputs/alignformer/r140/shrinkage_irls_calibration_result.json"
+  },
+  "part_b_decision": {
+    "same_draws_in_both_runs": {
+      "validation": {
+        "cells_compared": 120,
+        "max_abs_difference": 0.0,
+        "paired": true
+      },
+      "test": {
+        "cells_compared": 120,
+        "max_abs_difference": 0.0,
+        "paired": true
+      }
+    },
+    "refit_calibration": {
+      "refit_tau_translation_m": 0.12249339151569316,
+      "fitted_on": "alignformer_irls",
+      "robust_solve_config": {
+        "mode": "huber",
+        "iterations": 2,
+        "min_evidence": 3.0,
+        "huber_constant": 1.345,
+        "scale_floor_m": 0.05,
+        "enabled": true
+      },
+      "deployed_arm_column_in_these_runs_is_not_a_measurement": "one calibration reaches every arm of ours, so the `alignformer` rows of the refit sweeps are the deployed solve scored through the IRLS arm's tau; only alignformer_irls is read from them"
+    },
+    "hypothesis": "H2: refitting tau to the IRLS arm's own residual distribution recovers the low-sigma AP@0.7 cells",
+    "criteria": {
+      "mean_ap70_improves_by_more_than_one_paired_sem": {
+        "measured": {
+          "mean": 0.002906165502063085,
+          "sem": 0.0001816898441448555,
+          "n": 5,
+          "verdict": "left",
+          "per_seed": [
+            0.0026724400566181528,
+            0.002715653866273149,
+            0.003342249657830587,
+            0.0033355936356267435,
+            0.0024648902939667927
+          ]
+        },
+        "required": "mean > sem (validation, over the sigma grid)",
+        "pass": true
+      },
+      "sigma_0_does_not_regress_beyond_one_paired_sem": {
+        "measured": {
+          "mean": -0.001213937384130448,
+          "sem": null,
+          "n": 1,
+          "verdict": "deterministic",
+          "per_seed": [
+            -0.001213937384130448
+          ]
+        },
+        "required": "mean >= -sem (validation, sigma = 0)",
+        "note": "sigma = 0 is a single deterministic run; one paired standard error is exactly zero, so this clause reads 'does not regress'",
+        "pass": false
+      },
+      "test_sparse_slice_does_not_regress_beyond_one_paired_sem": {
+        "worst_sigma": "sigma_0m",
+        "measured": {
+          "mean": -0.006416595870924913,
+          "sem": null,
+          "n": 1,
+          "verdict": "deterministic",
+          "per_seed": [
+            -0.006416595870924913
+          ]
+        },
+        "per_sigma": {
+          "sigma_0m": {
+            "mean": -0.006416595870924913,
+            "sem": null,
+            "n": 1,
+            "verdict": "deterministic",
+            "per_seed": [
+              -0.006416595870924913
+            ]
+          },
+          "sigma_0.2m": {
+            "mean": -0.0031615551242391684,
+            "sem": 0.0011219144644928135,
+            "n": 5,
+            "verdict": "right",
+            "per_seed": [
+              -0.005176942023778719,
+              -0.00287059885901797,
+              -0.0009781444347694013,
+              -0.006233120786386603,
+              -0.0005489695172431475
+            ]
+          },
+          "sigma_0.4m": {
+            "mean": -0.00038860059788845545,
+            "sem": 0.0011089524954932617,
+            "n": 5,
+            "verdict": "draw",
+            "per_seed": [
+              0.002385718937147674,
+              0.00027078432901772587,
+              -0.003985581730203025,
+              -0.0016321551692501934,
+              0.0010182306438455413
+            ]
+          },
+          "sigma_0.6m": {
+            "mean": -0.002218795274709273,
+            "sem": 0.0007377520121513349,
+            "n": 5,
+            "verdict": "right",
+            "per_seed": [
+              -0.0038308397711417363,
+              -0.0009121094614713554,
+              -6.381312401626538e-05,
+              -0.0034789753135392454,
+              -0.0028082387033777634
+            ]
+          },
+          "sigma_0.8m": {
+            "mean": -0.001683712305959717,
+            "sem": 0.000584879916149298,
+            "n": 5,
+            "verdict": "right",
+            "per_seed": [
+              -0.0008801498767291305,
+              -0.000549503691927633,
+              -0.0009388607216535005,
+              -0.0024099981711386276,
+              -0.0036400490683496933
+            ]
+          },
+          "sigma_1m": {
+            "mean": -0.001953520178600665,
+            "sem": 0.000301747964360947,
+            "n": 5,
+            "verdict": "right",
+            "per_seed": [
+              -0.0017671071198328558,
+              -0.0011239441750577894,
+              -0.0024314071414507366,
+              -0.0016205174010853751,
+              -0.0028246250555765684
+            ]
+          },
+          "sigma_1.5m": {
+            "mean": -0.00039171391231500595,
+            "sem": 0.0007219293935286728,
+            "n": 5,
+            "verdict": "draw",
+            "per_seed": [
+              -0.0012517157203404405,
+              -0.0026973347213680166,
+              0.0013632653255278848,
+              0.0006965183823518517,
+              -6.930282774630925e-05
+            ]
+          },
+          "sigma_2m": {
+            "mean": -0.001034204234893077,
+            "sem": 0.00031848609585444367,
+            "n": 5,
+            "verdict": "right",
+            "per_seed": [
+              -0.0005981558321828118,
+              -0.0005046340618176659,
+              -0.001984308756133424,
+              -0.00046956885170362783,
+              -0.0016143536726278551
+            ]
+          }
+        },
+        "required": "mean >= -sem at every sigma (TEST's 290-frame slice)",
+        "note": "read on test because validation's sparse slice is 5 frames / 33 pairs; used ONLY as a guard against regression, never to select",
+        "pass": false
+      }
+    },
+    "verdict": "NULL_KEEP_DEPLOYED_TAU"
   }
 }
