@@ -21,6 +21,22 @@
 # its detections and ROI features are baked into the cache named under `data`
 # below, so nothing here touches OpenCOOD at training time.
 
+# THE DEPLOYED ARM IS NOT THIS FILE'S DEFAULTS. As with `mode` below, the
+# switches that select the shipped estimator are per-run flags, and they are
+# left at their original values here so every earlier r140 number reproduces
+# bit for bit from this config. The arm that task 24 shipped is:
+#
+#   --variance-weighting scalar
+#   --robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0
+#   --abstain-arm per_pair
+#
+# on outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth. Running the plain
+# `--metric noisy_ap` command with no flags gives the ORIGINAL arm, not the
+# shipped one; docs/alignformer_p2.md quotes the full invocation. Note that
+# `--abstain-arm per_pair` deliberately takes NO `--shrinkage`: the per-pair
+# rule replaces the global-tau calibration rather than stacking on it
+# (alignformer.noisy_fusion.unshrunk_conditions).
+
 model:
   output_size: 4          # rotated ROI-align grid, k x k
   embed_dim: 128          # ablated over 32 / 64 / 128

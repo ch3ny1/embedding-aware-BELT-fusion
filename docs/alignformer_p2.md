@@ -2306,22 +2306,35 @@ Our gain over the deployed arm is measured against ourselves and is unaffected;
 the head-to-head sign flip is not a clean measurement of our improvement and is
 not quoted as one.
 
-**Clause 4, the test-side guard, passes at +0.0330 ±0.0007** on the 1-2 shared
-slice, positive at 7 of 8 sigmas, so all four pre-registered clauses pass and the
-arm ships.
+**Clause 4, the test-side guard, is the one clause whose granularity the brief
+never states, and the two readings disagree.** At the sweep mean it passes,
+**+0.0330 ±0.0007** on the 1-2 shared slice, positive at 7 of 8 sigmas: SHIP.
+Per cell it fails at sigma = 2.0 (-0.0020 ±0.0015, |t| = 1.35): NULL. The
+sweep-mean reading is the one applied, so all four clauses pass and the arm
+ships — but the verdict is a function of a reading the brief does not fix, and
+that belongs in the headline rather than a paragraph below it.
 
-That clause's granularity is not stated in the brief, and the first reading of
-this experiment supplied "at every sigma", under which the slice fails at
-sigma = 2.0 (-0.0020 ±0.0015, |t| = 1.35) and the verdict is NULL. The sweep-mean
-reading was adopted for three reasons, none of which depends on the direction of
-the result: "beyond one paired SE" is attached to a **sweep mean** in both other
-clauses that use the phrase and clause 4 names no cell; task 23's brief already
-ruled that test's sparse slice "is only ever read as a *guard against
-regression*, never to select a parameter"; and a per-cell bar of one paired SE at
-five seeds fires on 18.7% of cells under the null, i.e. vetoes roughly four arms
-in five that have no true effect at all. The task-24 report prints both readings,
-both numbers and the full argument, and records that the resolution came after
-the numbers were known.
+**The previous commit refused this exact reading, in writing.** `68ce2a2`'s
+message reads:
+
+> A 95% interval, a cell count, and the slice's own sweep mean would each ship
+> it; all three are named in the report and refused, because choosing the
+> reading after seeing which one fails is retrofitting a rule to its answer.
+> The deployed arm stays.
+
+The next commit adopts the third of those three. The reversal is deliberate and
+it overrides that sentence, but a reader should weigh it knowing the author had
+already ruled the reading out on principle, one commit earlier, with the same
+numbers in hand. What is offered against that is not a better outcome but three
+textual reasons, none of which depends on the direction of the result:
+"beyond one paired SE" is attached to a **sweep mean** in both other clauses
+that use the phrase and clause 4 names no cell; task 23's brief already ruled
+that test's sparse slice "is only ever read as a *guard against regression*,
+never to select a parameter"; and a per-cell bar of one paired SE at five seeds
+fires on 18.7% of cells under the null, i.e. vetoes roughly four arms in five
+that have no true effect at all. Whether that carries is the reader's call; the
+summarizer emits both readings and both numbers either way, so recomputing the
+verdict under the per-cell rule needs no rerun.
 
 **sigma = 2.0 is the one cell the rule costs**, consistently: -0.0020 ±0.0015 on
 the test sparse slice, +0.0002 ±0.0003 (a draw) on the full test split,
