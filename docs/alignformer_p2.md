@@ -2216,7 +2216,7 @@ pinned by exact-equality tests and was verified on real data to change nothing:
 **11,448 cells -- AP, the three slices, the intermediate-convention GT and every
 pose statistic -- max |difference| = 0.**
 
-## Per-pair abstention: the gate that fixes the clean case, and the rule that declined it
+## Per-pair abstention: the rule that fixes the clean case, and what it cost
 
 The section above leaves one gap, and task 23 measured its shape exactly: the
 AP@0.7 deficit to FreeAlign is not spread across the sweep. On test, sigma = 0.2
