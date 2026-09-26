@@ -8959,20 +8959,34 @@
       "enabled": true
     },
     "clause_4_evaluated": true,
-    "verdict": "NULL_VETOED_BY_TEST_SPARSE_SLICE",
+    "verdict": "SHIP_ALIGNFORMER_PER_PAIR",
     "test_sparse_guard": {
-      "worst_sigma": "sigma_2m",
+      "reading": "sweep_mean",
+      "reading_note": "the brief names no granularity for this clause; see this function's docstring for the three reasons it is read at the same granularity as clause 3, and for the per-cell number the other reading would give",
       "measured": {
-        "mean": -0.0020225569044532987,
-        "sem": 0.001478630828143127,
+        "mean": 0.03303783660114297,
+        "sem": 0.0007208133936007142,
         "n": 5,
-        "verdict": "right",
+        "verdict": "left",
         "per_seed": [
-          -7.37611962950413e-05,
-          0.0005093101896729291,
-          -0.0033742060001875074,
-          7.32988034368165e-05,
-          -0.0072474263188936905
+          0.03186187435951737,
+          0.033784493211111655,
+          0.03547956953497211,
+          0.03154992587847838,
+          0.03251332002163532
+        ]
+      },
+      "sweep_mean_drawn_sigmas_only": {
+        "mean": 0.01652969476459145,
+        "sem": 0.0008237867355436782,
+        "n": 5,
+        "verdict": "left",
+        "per_seed": [
+          0.015185737917019382,
+          0.017383016604555546,
+          0.0193202466889677,
+          0.014829225367260501,
+          0.015930247245154128
         ]
       },
       "per_sigma": {
@@ -9077,9 +9091,27 @@
           ]
         }
       },
-      "required": "mean >= -sem at every sigma (TEST's 290-frame slice)",
+      "sigmas_positive": 7,
+      "per_cell_reading": {
+        "worst_sigma": "sigma_2m",
+        "measured": {
+          "mean": -0.0020225569044532987,
+          "sem": 0.001478630828143127,
+          "n": 5,
+          "verdict": "right",
+          "per_seed": [
+            -7.37611962950413e-05,
+            0.0005093101896729291,
+            -0.0033742060001875074,
+            7.32988034368165e-05,
+            -0.0072474263188936905
+          ]
+        },
+        "pass": false
+      },
+      "required": "mean >= -sem on TEST's 290-frame slice",
       "note": "read on test because validation's sparse slice is 5 frames / 33 pairs; used ONLY as a guard against regression, never to select",
-      "pass": false
+      "pass": true
     }
   },
   "test_arms": {

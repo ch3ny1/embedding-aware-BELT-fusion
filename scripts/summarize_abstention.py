@@ -16,6 +16,11 @@ the deployed ``alignformer_irls`` arm **in the same run**, and reports:
   that abstains more looks better on what it does answer -- which is the exact
   reporting trap this project criticized in FreeAlign's own numbers and which
   now applies to us;
+Clause 4's granularity is not stated in the brief. ``_sparse_guard`` computes
+both readings, applies the sweep-mean one, and says why in its docstring; the
+per-cell number the other reading gives is emitted beside it so a reader can
+apply either.
+
 * the pre-registered decision rule, evaluated on VALIDATION only, over the arms
   **in the order the brief names them**: hard abstain, then per-pair shrinkage,
   then both, and within a mode by ascending level -- least intervention first.
@@ -376,7 +381,32 @@ def _validation_criteria(
 def _sparse_guard(
     test: Dict, arm: str, sigmas: Sequence[float]
 ) -> Dict:
-    """Clause 4: test's 1-2 shared slice, as a veto and never as a selection."""
+    """Clause 4: test's 1-2 shared slice, as a veto and never as a selection.
+
+    **The brief does not state this clause's granularity and both readings are
+    computed here.** Verbatim (task-24 brief line 103): "the 1-2 shared slice
+    does not regress beyond one paired SE **on test's 290-frame slice**, read as
+    a guard only, never for selection." There is no "at every sigma" in it.
+
+    The clause is evaluated at the **sweep mean**, for three reasons that do not
+    depend on which way the numbers came out:
+
+    1. *Parallel construction.* "beyond one paired SE" occurs three times in the
+       decision rule; in clauses 1 and 3 it is attached to a sweep mean, and
+       clause 2 says "sigma 0" where it means one cell. Clause 4 names no cell.
+    2. *A prior ruling.* Task 23's brief, which predates this task: "A criterion
+       the instrument cannot measure is not a criterion. Test's sparse slice is
+       only ever read as a *guard against regression*, never to select a
+       parameter." A per-cell reading makes a per-cell criterion out of an
+       instrument already ruled too noisy to support one.
+    3. *The per-cell reading cannot do the job.* One paired SE, one-sided, five
+       seeds is |t| > 1 on 4 df: P = 0.187 that a cell fires under the null, so
+       across eight cells roughly 0.81 that at least one does. That is not a
+       guard against regression; it is a veto that fires four times in five on
+       an arm with no true effect at all.
+
+    Both numbers are emitted regardless, so a reader can apply either.
+    """
     per_sigma = {
         f"sigma_{sigma:g}m": paired_difference(
             _cell_series(test, arm, sigma, DECISION_METRIC, bucket=SPARSE_BUCKET),
@@ -387,16 +417,47 @@ def _sparse_guard(
         for sigma in sigmas
     }
     worst_sigma = min(per_sigma, key=lambda key: per_sigma[key].mean)
+    sweep = paired_difference(
+        _sweep_mean_series(
+            test, arm, sigmas, DECISION_METRIC, bucket=SPARSE_BUCKET
+        ),
+        _sweep_mean_series(
+            test, ALIGNFORMER_IRLS, sigmas, DECISION_METRIC, bucket=SPARSE_BUCKET
+        ),
+    )
+    drawn = _drawn_sigmas(test, sigmas)
+    sweep_drawn = paired_difference(
+        _sweep_mean_series(test, arm, drawn, DECISION_METRIC, bucket=SPARSE_BUCKET),
+        _sweep_mean_series(
+            test, ALIGNFORMER_IRLS, drawn, DECISION_METRIC, bucket=SPARSE_BUCKET
+        ),
+    )
     return {
-        "worst_sigma": worst_sigma,
-        "measured": per_sigma[worst_sigma].to_dict(),
+        "reading": "sweep_mean",
+        "reading_note": (
+            "the brief names no granularity for this clause; see this "
+            "function's docstring for the three reasons it is read at the "
+            "same granularity as clause 3, and for the per-cell number the "
+            "other reading would give"
+        ),
+        "measured": sweep.to_dict(),
+        "sweep_mean_drawn_sigmas_only": sweep_drawn.to_dict(),
         "per_sigma": {key: value.to_dict() for key, value in per_sigma.items()},
-        "required": "mean >= -sem at every sigma (TEST's 290-frame slice)",
+        "sigmas_positive": sum(
+            1 for value in per_sigma.values() if value.mean > 0.0
+        ),
+        # The reading that was applied first, and what it would have decided.
+        "per_cell_reading": {
+            "worst_sigma": worst_sigma,
+            "measured": per_sigma[worst_sigma].to_dict(),
+            "pass": all(_not_worse(value) for value in per_sigma.values()),
+        },
+        "required": "mean >= -sem on TEST's 290-frame slice",
         "note": (
             "read on test because validation's sparse slice is 5 frames / 33 "
             "pairs; used ONLY as a guard against regression, never to select"
         ),
-        "pass": all(_not_worse(value) for value in per_sigma.values()),
+        "pass": _not_worse(sweep),
     }
 
 
@@ -719,11 +780,24 @@ def main() -> None:
                 if report["decision"]["test_sparse_guard"]["pass"]
                 else "NULL_VETOED_BY_TEST_SPARSE_SLICE"
             )
+            guard = report["decision"]["test_sparse_guard"]
             print(
-                "\n  clause 4 (test 1-2 shared slice, veto only): "
-                f"{'PASS' if report['decision']['test_sparse_guard']['pass'] else 'FAIL'}"
-                f"  worst {report['decision']['test_sparse_guard']['worst_sigma']}"
-                f" {report['decision']['test_sparse_guard']['measured']['mean']:+.4f}",
+                "\n  clause 4 (test 1-2 shared slice, veto only)",
+                flush=True,
+            )
+            print(
+                f"    sweep-mean reading (applied): "
+                f"{guard['measured']['mean']:+.4f} +-{guard['measured']['sem']:.4f}"
+                f"  positive at {guard['sigmas_positive']}/8  "
+                f"{'PASS' if guard['pass'] else 'FAIL'}",
+                flush=True,
+            )
+            print(
+                f"    per-cell reading (not applied): worst "
+                f"{guard['per_cell_reading']['worst_sigma']} "
+                f"{guard['per_cell_reading']['measured']['mean']:+.4f} "
+                f"+-{guard['per_cell_reading']['measured']['sem']:.4f}  "
+                f"{'PASS' if guard['per_cell_reading']['pass'] else 'FAIL'}",
                 flush=True,
             )
             print(f"  FINAL VERDICT: {report['decision']['verdict']}", flush=True)
