@@ -207,6 +207,33 @@ def sweep_estimators(
     return names
 
 
+def _require_fitted_variance_model(
+    modules: Mapping[str, Any], abstention: Sequence[AbstentionConfig]
+) -> None:
+    """Refuse an abstention arm whose statistic would be scaled by placeholders.
+
+    The per-pair rules decide on ``T^2``, the emitted correction measured
+    against the fit's own covariance, and that covariance is built from the
+    checkpoint's fitted correspondence-variance model. :data:`variance.
+    UNWEIGHTED` carries ``sigma = 1.0`` placeholders so a config with no fitted
+    block still loads -- they are a neutral weight, never a calibration, and a
+    statistic divided by them is off by whatever the real sigmas were. Nothing
+    downstream can see it: the run completes and every decision in the result
+    crossed a mis-scaled bar. ``variance_model_from_config`` already refuses an
+    unfitted weighted mode at config load; this is the same rule one layer up.
+    """
+    if not [config for config in abstention if config.enabled]:
+        return
+    model = getattr(modules["pose"], "variance_model", None)
+    if model is None or not model.enabled:
+        raise ValueError(
+            "a per-pair abstention arm needs a fitted correspondence-variance "
+            "model: its statistic is the correction measured against this "
+            "fit's own covariance, and an unfitted model supplies sigma = 1.0 "
+            "placeholders that silently rescale every decision"
+        )
+
+
 def unshrunk_conditions(
     abstention: Sequence[AbstentionConfig] = (),
 ) -> Tuple[str, ...]:
@@ -572,6 +599,7 @@ def run_noise_sweep(
             "the robust re-weighted solve needs head B; the loaded checkpoint's "
             "pose head solves no least-squares problem to re-weight"
         )
+    _require_fitted_variance_model(modules, abstention)
     heading_lambda = float(
         getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA)
     )

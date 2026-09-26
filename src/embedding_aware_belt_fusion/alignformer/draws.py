@@ -101,6 +101,10 @@ def sweep_draws(
         raise ValueError("a sweep needs at least one seed")
     if len(set(seeds)) != len(seeds):
         raise ValueError(f"sweep seeds must be distinct, got {list(seeds)}")
+    if len(set(sigmas)) != len(sigmas):
+        # draw_slots keys on (name, sigma, seed); a repeated sigma collapses
+        # into one accumulator and the second pass overwrites the first.
+        raise ValueError(f"sweep sigmas must be distinct, got {list(sigmas)}")
     return [(sigma, seed) for sigma in sigmas for seed in draw_seeds(sigma, seeds)]
 
 

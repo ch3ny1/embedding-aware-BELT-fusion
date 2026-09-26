@@ -115,7 +115,11 @@ def _series(
 
 
 def _drawn_once(result: Dict, sigma: float) -> bool:
-    return sigma in result.get("sigmas_drawn_once_m", [])
+    # Indexed, not `.get(..., [])`: a missing key would make every
+    # deterministic cell look drawn, giving it five identical copies, an
+    # sd of 0.0 and an infinitely significant paired difference. The failure
+    # is silent and points the wrong way, so it must be an error.
+    return sigma in result["sigmas_drawn_once_m"]
 
 
 def _cell_series(

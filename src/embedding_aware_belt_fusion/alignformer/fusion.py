@@ -166,7 +166,7 @@ def match_frames(
             box_utils.boxes_to_corners_3d(truth, order="hwl")[:, :4, :2]
             .detach().cpu().numpy()
         )
-        order = torch.argsort(scores, descending=True).tolist()
+        order = torch.argsort(scores, descending=True, stable=True).tolist()
         frames.append(
             FrameMatches(
                 scores=tuple(float(scores[index]) for index in order),

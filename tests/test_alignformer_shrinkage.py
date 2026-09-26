@@ -203,6 +203,21 @@ def test_a_negative_tau_is_rejected():
         )
 
 
+def test_a_zero_tau_is_rejected():
+    # z^2 divides by tau^2. A zero tau gives z^2 = inf, so the positive-part
+    # factor max(0, 1 - p/z^2) is 1 and NOTHING is shrunk -- the opposite of
+    # what a degenerate calibration should do, and indistinguishable in the
+    # output from a calibration that legitimately found nothing to shrink.
+    with pytest.raises(ValueError):
+        ShrinkageCalibration(
+            tau_translation_m=0.0, tau_yaw_rad=0.005, pairs=10, split="x", sigma_m=0.0
+        )
+    with pytest.raises(ValueError):
+        ShrinkageCalibration(
+            tau_translation_m=0.15, tau_yaw_rad=0.0, pairs=10, split="x", sigma_m=0.0
+        )
+
+
 # --- Task 23 part B: calibrating tau for the IRLS arm ------------------------
 #
 # The deployed tau (0.151 m) was fitted on the *un*-robust solve's residuals.

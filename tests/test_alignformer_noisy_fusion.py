@@ -22,6 +22,12 @@ import torch
 
 from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections
 from embedding_aware_belt_fusion.alignformer.fusion import correct_boxes, correct_detections
+from embedding_aware_belt_fusion.alignformer.abstain import (
+    NONE as ABSTAIN_NONE,
+    PER_PAIR,
+    AbstentionConfig,
+)
+from embedding_aware_belt_fusion.alignformer.draws import sweep_draws
 from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
     ALIGNFORMER,
     ORACLE,
@@ -29,6 +35,7 @@ from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
     ORACLE_MATCH_UNIFORM,
     _object_set,
     _oracle_variance_models,
+    _require_fitted_variance_model,
     _sweep_rng,
     _truncate_by_score,
     condition_key,
@@ -544,3 +551,50 @@ def test_an_append_to_a_shared_slot_reaches_every_seed_exactly_once():
     slots[("a", 0.0, 10)].append("frame")
 
     assert slots[("a", 0.0, 11)] == ["frame"]
+
+
+# --- Review round 2: the statistic's scale is a fitted quantity --------------
+#
+# The Wald statistic the per-pair rules decide on is the correction measured
+# against the fit's own covariance, and that covariance is built from the
+# checkpoint's fitted correspondence-variance model. `UNWEIGHTED` carries
+# sigma = 1.0 placeholders so a config with no fitted block still loads and
+# reproduces its own numbers -- but those placeholders are not a calibration,
+# and a statistic divided by them is off by whatever the real sigmas were.
+# Nothing downstream can see that: the run completes, the result file looks
+# ordinary, and every abstention decision in it crossed a mis-scaled bar.
+
+
+def test_an_abstention_arm_on_an_unfitted_variance_model_is_refused():
+    modules = {"pose": SimpleNamespace(variance_model=UNWEIGHTED)}
+
+    with pytest.raises(ValueError, match="fitted correspondence-variance"):
+        _require_fitted_variance_model(
+            modules, [AbstentionConfig(mode=PER_PAIR)]
+        )
+
+
+def test_an_abstention_arm_on_a_fitted_variance_model_is_allowed():
+    fitted = CorrespondenceVarianceModel(
+        mode="scalar", sigma_translation_m=0.2516, translation_exponent=1.1281,
+        sigma_yaw_rad=0.081, yaw_exponent=1.9322,
+    )
+    modules = {"pose": SimpleNamespace(variance_model=fitted)}
+
+    _require_fitted_variance_model(modules, [AbstentionConfig(mode=PER_PAIR)])
+
+
+def test_a_disabled_abstention_arm_does_not_require_a_fitted_model():
+    # The guard must not reach past the arms actually enabled: the unweighted
+    # sweep is a published configuration and has to keep running.
+    modules = {"pose": SimpleNamespace(variance_model=UNWEIGHTED)}
+
+    _require_fitted_variance_model(modules, [AbstentionConfig(mode=ABSTAIN_NONE)])
+    _require_fitted_variance_model(modules, [])
+
+
+def test_a_sweep_cannot_repeat_a_sigma():
+    # draw_slots keys on (name, sigma, seed), so a repeated sigma collapses
+    # into one accumulator and the second copy silently overwrites the first.
+    with pytest.raises(ValueError, match="distinct"):
+        sweep_draws([0.0, 0.2, 0.2], [0, 1])

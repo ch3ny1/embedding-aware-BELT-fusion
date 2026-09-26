@@ -83,8 +83,12 @@ class ShrinkageCalibration:
     def __post_init__(self) -> None:
         for name in ("tau_translation_m", "tau_yaw_rad"):
             value = getattr(self, name)
-            if not math.isfinite(value) or value < 0.0:
-                raise ValueError(f"{name} must be finite and non-negative, got {value}")
+            if not math.isfinite(value) or value <= 0.0:
+                # Strictly positive, not merely non-negative: z^2 divides by
+                # tau^2, so a zero tau gives z^2 = inf and a shrinkage factor
+                # of 1 -- no shrinkage at all, from a calibration that found
+                # no signal. Matches CorrespondenceVarianceModel's own check.
+                raise ValueError(f"{name} must be finite and positive, got {value}")
 
     @property
     def tau_yaw_deg(self) -> float:
