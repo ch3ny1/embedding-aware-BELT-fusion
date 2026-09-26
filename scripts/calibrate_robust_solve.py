@@ -59,6 +59,7 @@ from embedding_aware_belt_fusion.alignformer.robust import (
     HUBER,
     RobustSolveConfig,
 )
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 
 # The three axes the brief pre-registers, and nothing else. ``min_evidence``
@@ -280,7 +281,7 @@ def main() -> None:
             SimpleNamespace(
                 config=args.config,
                 alignformer_config=args.alignformer_config,
-                split=args.split,
+                split=resolve_split(args.split, allow_test=args.measure_only),
                 stride=args.stride,
                 sigma=sigma,
                 seed=args.seed,

@@ -45,6 +45,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split
+
 import numpy as np
 import torch
 
@@ -621,10 +623,11 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     spec = BASELINES[args.baseline]
 
-    cached = install_pcd_cache(args.split.resolve(), args.pcd_cache.resolve())
+    split = resolve_split(args.split, allow_test=True)
+    cached = install_pcd_cache(split, args.pcd_cache.resolve())
     print(f"pcd cache: {cached} npy files", flush=True)
 
-    hypes, dataset, model, checkpoint_path, wild = load_baseline(spec, args.split, device)
+    hypes, dataset, model, checkpoint_path, wild = load_baseline(spec, split, device)
     print(
         f"{spec['label']}: {len(dataset)} frames, model "
         f"{hypes['model']['core_method']}, weights {checkpoint_path.name}",

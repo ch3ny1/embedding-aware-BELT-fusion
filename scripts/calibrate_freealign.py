@@ -52,6 +52,7 @@ from embedding_aware_belt_fusion.alignformer.freealign import (
     FreeAlignConfig,
     freealign_estimate,
 )
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split
 from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 
 # The grid. Every axis the paper leaves open, plus the two the shipped code
@@ -145,7 +146,11 @@ def _collect_pairs(args, device):
     )
 
     hypes = load_yaml(str(args.config), None)
-    hypes["validate_dir"] = str(args.split.resolve())
+    # The grid SELECTS hyperparameters and must never see test;
+    # --selected-only scores one frozen choice and may.
+    hypes["validate_dir"] = str(
+        resolve_split(args.split, allow_test=args.selected_only)
+    )
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
     model_config = yaml.safe_load(args.alignformer_config.read_text())

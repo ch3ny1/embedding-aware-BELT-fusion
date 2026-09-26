@@ -49,6 +49,8 @@ import numpy as np
 import torch
 import yaml
 
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -88,7 +90,7 @@ def main() -> None:
     device = torch.device(args.device)
 
     hypes = load_yaml(str(args.config), None)
-    hypes["validate_dir"] = str(args.split.resolve())
+    hypes["validate_dir"] = str(resolve_split(args.split, allow_test=False))
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
     model_config = yaml.safe_load(args.alignformer_config.read_text())

@@ -77,6 +77,7 @@ from embedding_aware_belt_fusion.alignformer.robust import (
     ROBUST_NONE,
     RobustSolveConfig,
 )
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split
 
 # AP is reported at all three; only AP@0.7 is the P0 gate.
 _AP_IOU_THRESHOLDS = (0.3, 0.5, 0.7)
@@ -920,7 +921,9 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
 
     hypes = load_yaml(str(args.config), None)
-    hypes["validate_dir"] = str(args.split.resolve())
+    # Reporting a frozen configuration, so test is permitted here; the
+    # leaky validate/ symlink is not, under either flag.
+    hypes["validate_dir"] = str(resolve_split(args.split, allow_test=True))
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
 
@@ -1142,7 +1145,7 @@ def _run_ap(args: argparse.Namespace, device) -> Dict:
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
     hypes = load_yaml(str(args.config), None)
-    hypes["validate_dir"] = str(args.split.resolve())
+    hypes["validate_dir"] = str(resolve_split(args.split, allow_test=True))
 
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
