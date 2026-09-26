@@ -2216,6 +2216,146 @@ pinned by exact-equality tests and was verified on real data to change nothing:
 **11,448 cells -- AP, the three slices, the intermediate-convention GT and every
 pose statistic -- max |difference| = 0.**
 
+## Per-pair abstention: the gate that fixes the clean case, and the rule that declined it
+
+The section above leaves one gap, and task 23 measured its shape exactly: the
+AP@0.7 deficit to FreeAlign is not spread across the sweep. On test, sigma = 0.2
+alone (-0.0235) outweighs every cell the IRLS arm wins (+0.0314 combined), and
+the same defect costs **-0.2042** on the 1-2 shared slice at sigma = 0. Both are
+one thing: at low sigma the correct action is to not correct, and head B
+corrects anyway. Task 23 also closed the obvious escape -- a refitted *global*
+shrinkage tau buys the low-noise end and gives the clean case back, because a
+smaller scalar shrinks less everywhere.
+
+`alignformer/abstain.py` replaces the global scalar with a per-pair decision
+taken from the weighted solve's **own** covariance. Nothing is learned and
+nothing new is fitted: for parameters `(t_x, t_y, psi)` the residual Jacobian is
+`J_n = [I | perp(R(psi) q_n)]`, and the Wald statistic of the emitted correction
+against "no correction is needed" is `T^2 = (A theta)^T B^-1 (A theta) / tau^2`.
+
+**The covariance is a sandwich, and that is not a refinement.** The points are
+heading-augmented, so an object's two rows share their entire centre error --
+correlation 0.84 at this project's fitted constants. A first implementation used
+`sigma^2 A^-1` and, simulated on the deployed geometry at a nominal 5%, fired on
+**63.7%** of two-object pairs against 26.6% of twenty-four-object ones. That is
+not a mislabelled constant: it over-fires worst where the evidence is thinnest,
+which inverts the mechanism the whole idea rests on. With the model-based
+sandwich, a computed rather than counted residual divisor, and an `F(p, D)`
+reference at `D = 3 n_eff_objects - 3`, the realized rate is 0.075 at two matched
+objects falling to 0.045 at twenty-four. The defect was caught by review and the
+sweep in flight was killed **unread**.
+
+Three rules were tried over the statistic and no fourth: a hard threshold at a
+named level, the James-Stein positive-part factor with the pair's own statistic
+in place of the global one, and both.
+
+**Only the continuous rule gets both ends of the sweep.** A hard threshold is a
+step function: loosening it lets low-sigma corrections through and sigma = 0
+regresses; tightening it declines pairs that needed correcting and AP@0.5 pays.
+The `per_pair` arm, against the deployed IRLS arm, five seeds, both splits:
+
+| AP@0.7, per_pair - IRLS | validation | test |
+|---|---:|---:|
+| grid mean (8 cells) | +0.00427 ±0.00014 | **+0.00909 ±0.00008** |
+| drawn mean (7 cells) | +0.00447 ±0.00016 | +0.00829 ±0.00010 |
+| sigma = 0 | +0.0029 (det) | **+0.0147** (det) |
+| sigma = 0.2 | +0.0130 ±0.0005 | **+0.0273** ±0.0007 |
+| sigma = 2.0 | -0.0006 ±0.0003 | +0.0002 ±0.0003 |
+| coverage, grid mean | 0.861 -> 0.917 | 0.864 -> **0.903** |
+
+**Coverage rose.** The expectation was that a gate answers less often and
+flatters itself on what remains; the opposite happened, because the deployed
+global tau zeroes a large fraction of low-sigma pairs outright while the
+per-pair rule scales each by its own evidence. At sigma = 0 on validation it
+corrects three times as many pairs, each by half as much (0.074 m against
+0.146 m over answered pairs). What fell is the size of the corrections, not
+their count, and `emitted_translation_m` is reported beside coverage so the two
+cannot be conflated.
+
+**Against FreeAlign at AP@0.7, report both framings or neither.** The grid mean
+weights sigma = 0 -- no localization error at all -- equally with the seven
+sigmas that have some:
+
+| | grid mean (8) | drawn mean (7) |
+|---|---:|---:|
+| deployed IRLS, validation | -0.00354 ±0.00031 | -0.00617 ±0.00036 |
+| deployed IRLS, test | -0.00041 ±0.00017 | -0.00119 ±0.00019 |
+| per_pair, validation | +0.00073 ±0.00021 | **-0.00170 ±0.00024** |
+| per_pair, test | +0.00869 ±0.00021 | +0.00710 ±0.00024 |
+
+On validation the sign change is carried entirely by sigma = 0; excluding it,
+FreeAlign still edges the noisy sweep at |t| = 7. **The supportable statement is
+that the gate fixes the clean case and closes most of the AP@0.7 deficit --
+-0.0062 to -0.0017 on validation, 3.6x -- and turns it into a lead on test.**
+AP@0.3 and AP@0.5 are ours under every framing on both splits. FreeAlign remains
+scored without EdgeGAT, so every margin in our favour is optimistic and every
+margin against us conservative.
+
+The sparse slice is where the structural difference lives, and it moves most.
+Test, 1-2 shared objects, AP@0.7 against FreeAlign at sigma = 0: **-0.2042 for
+the deployed arm, -0.0556 for per_pair** -- the worst number in this project,
+reduced by 73%.
+
+**And the pre-registered rule declined it.** Clause 4 requires that test's 1-2
+shared slice does not regress beyond one paired standard error *at every sigma*.
+Seven of eight cells pass, four of them enormously (+0.1486 at sigma = 0). The
+eighth, sigma = 2.0, is -0.0020 against a paired SE of 0.0015 -- beyond the bar
+by 0.0005 AP, at |t| = 1.35. A 95% interval, a cell count, or the slice's own
+sweep mean would each let it through; all three are named in the task report and
+refused, because choosing the reading after seeing which one fails is
+retrofitting a rule to its answer.
+
+So the deployed arm stays, and what this section reports is a confirmed
+mechanism that did not ship. The follow-up is not a fourth variant of the
+decision -- it is that clause 4's failing cell is the top of the sweep, where
+shrinking at all can only hurt, and a rule that shrinks as a function of the
+statistic will always pay something there. Making the correction *not* need
+shrinking at the top of the sweep is a training-objective question.
+
+```bash
+# Task 24 in full. Roughly 3 h validation + 3 h test on an RTX 4090. The
+# ordering is the point: every constant is chosen on validation, and the test
+# sweep carries ONLY the arm the rule already selected.
+#
+# 1. Validation, five seeds, all seven candidate arms beside the two deployed
+#    ones and FreeAlign, in ONE invocation so the pairing is structural.
+python -m embedding_aware_belt_fusion.alignformer.evaluate \
+  --metric noisy_ap \
+  --config configs/alignformer_detector_r140.yaml \
+  --alignformer-config configs/alignformer_r140.yaml \
+  --split /media/chenyi/basement2/cache/opv2v_splits/val \
+  --checkpoint outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth \
+  --shrinkage outputs/alignformer/r140/shrinkage_ivw_scalar_calibration_result.json \
+  --robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0 \
+  --abstain-arm abstain:0.5 --abstain-arm abstain:0.2 \
+  --abstain-arm abstain:0.05 --abstain-arm abstain:0.01 \
+  --abstain-arm per_pair --abstain-arm both:0.2 --abstain-arm both:0.05 \
+  --freealign --ap-seeds 5 \
+  --output outputs/alignformer/r140/abstain_val_result.json
+
+# 2. Freeze on validation clauses 1-3 BEFORE reading test.
+python scripts/summarize_abstention.py \
+  --validation outputs/alignformer/r140/abstain_val_result.json \
+  --baseline-validation outputs/alignformer/r140/seeds_val_result.json \
+  --output outputs/alignformer/r140/abstention_result.json
+
+# 3. Test, read once, carrying only the chosen arm (`per_pair`).
+#    Same command as step 1 with --split .../OPV2V/test and --abstain-arm per_pair.
+
+# 4. Clause 4, the veto, and every table above.
+python scripts/summarize_abstention.py \
+  --validation outputs/alignformer/r140/abstain_val_result.json \
+  --baseline-validation outputs/alignformer/r140/seeds_val_result.json \
+  --test outputs/alignformer/r140/abstain_test_result.json \
+  --baseline-test outputs/alignformer/r140/seeds_test_result.json \
+  --output outputs/alignformer/r140/abstention_result.json
+```
+
+The summarizer refuses a single-seed decision, refuses to report one split as
+two, prints and **enforces** the bit-identity gate against the published runs
+(990 cells per split, max |difference| = 0 here), and keeps the verdict
+`PROVISIONAL_SHIP_*` until clause 4 has actually been evaluated.
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.

@@ -88,6 +88,20 @@ def _drawn_once(result: Dict, sigma: float) -> bool:
     return sigma in result.get("sigmas_drawn_once_m", [])
 
 
+def _drawn_sigmas(result: Dict, sigmas: Sequence[float]) -> List[float]:
+    """The sigmas that actually have a noise draw in them.
+
+    Every sweep mean in this report is computed twice: over the WHOLE grid,
+    because that is what the pre-registered rule is written over, and over this
+    subset, because it is the operating regime. ``sigma = 0`` is a degenerate
+    cell -- no localization error at all -- and a grid mean weights it equally
+    with the seven that have some. A sign change carried by that one cell is
+    true arithmetic and a misleading read, which is the exact failure task 23
+    caught in task 22's cell count.
+    """
+    return [sigma for sigma in sigmas if not _drawn_once(result, sigma)]
+
+
 def _series(
     result: Dict, condition: str, sigma: float, metric: str,
     *, bucket: Optional[str] = None,
@@ -270,10 +284,23 @@ def _sweep_means(result: Dict, arm: str, sigmas: Sequence[float]) -> Dict:
             ]
         ).to_dict(),
     }
+    drawn = _drawn_sigmas(result, sigmas)
+    summary["coverage_drawn_sigmas_only"] = spread(
+        [
+            sum(column) / len(column)
+            for column in zip(
+                *[_coverage_series(result, arm, sigma) for sigma in drawn]
+            )
+        ]
+    ).to_dict()
     for metric in AP_KEYS:
         difference = paired_difference(
             _sweep_mean_series(result, arm, sigmas, metric),
             _sweep_mean_series(result, ALIGNFORMER_IRLS, sigmas, metric),
+        )
+        drawn_difference = paired_difference(
+            _sweep_mean_series(result, arm, drawn, metric),
+            _sweep_mean_series(result, ALIGNFORMER_IRLS, drawn, metric),
         )
         tally = {"left": 0, "right": 0, "draw": 0, "deterministic": 0}
         for sigma in sigmas:
@@ -288,6 +315,10 @@ def _sweep_means(result: Dict, arm: str, sigmas: Sequence[float]) -> Dict:
         summary[metric] = {
             "value": spread(_sweep_mean_series(result, arm, sigmas, metric)).to_dict(),
             "minus_baseline": difference.to_dict(),
+            # The same difference over the seven sigmas that HAVE a draw. The
+            # rule is written over the whole grid; this is the operating
+            # regime, and both are reported so neither can be quoted alone.
+            "minus_baseline_drawn_sigmas_only": drawn_difference.to_dict(),
             "per_sigma_verdicts": tally,
         }
     return summary
@@ -376,13 +407,23 @@ def _freealign_comparison(
     if _key(FREEALIGN, sigmas[0]) not in result["ap_by_seed"][_seeds(result)[0]]:
         return None
     report: Dict[str, Dict] = {}
+    drawn = _drawn_sigmas(result, sigmas)
     for metric in AP_KEYS:
         difference = paired_difference(
             _sweep_mean_series(result, arm, sigmas, metric),
             _sweep_mean_series(result, FREEALIGN, sigmas, metric),
         )
+        drawn_difference = paired_difference(
+            _sweep_mean_series(result, arm, drawn, metric),
+            _sweep_mean_series(result, FREEALIGN, drawn, metric),
+        )
         report[metric] = {
             "sweep_mean": difference.to_dict(),
+            # Reported beside it, never instead of it: sigma = 0 is one cell of
+            # eight and has no localization error in it at all, so a grid mean
+            # whose sign that cell decides is true as computed and misleading as
+            # read.
+            "sweep_mean_drawn_sigmas_only": drawn_difference.to_dict(),
             "per_sigma": {
                 f"sigma_{sigma:g}m": paired_difference(
                     _cell_series(result, arm, sigma, metric),
@@ -563,6 +604,13 @@ def _print_arm(name: str, table: Dict, means: Dict) -> None:
         f"{means['ap_70']['value']['mean']:>11.4f}"
         + _difference_text(means["ap_70"]["minus_baseline"])
         + _difference_text(means["ap_50"]["minus_baseline"]),
+        flush=True,
+    )
+    print(
+        f"{'drawn':>5}{means['coverage_drawn_sigmas_only']['mean']:>10.3f}"
+        f"{'':>10}{'':>9}{'':>10}{'':>11}"
+        + _difference_text(means["ap_70"]["minus_baseline_drawn_sigmas_only"])
+        + _difference_text(means["ap_50"]["minus_baseline_drawn_sigmas_only"]),
         flush=True,
     )
 
