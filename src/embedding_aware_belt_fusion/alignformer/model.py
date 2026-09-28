@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from embedding_aware_belt_fusion.alignformer.abstain import wald_statistic
+from embedding_aware_belt_fusion.alignformer.abstain import wald_parts
 from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
 from embedding_aware_belt_fusion.alignformer.head_match import (
     DEFAULT_SINKHORN_ITERATIONS,
@@ -74,6 +74,11 @@ class PoseEstimate:
     log_assignment: Optional[Tensor] = None
     offset_statistic: Optional[Tensor] = None
     offset_dof: Optional[Tensor] = None
+    # The fit's inverse covariance, for the directional arm
+    # (:mod:`alignformer.abstain`). ``None`` on every estimate that did not ask
+    # for a statistic, so nothing older changes shape; the statistic is its
+    # quadratic form, ``theta^T offset_precision theta``.
+    offset_precision: Optional[Tensor] = None
 
 
 @dataclass(frozen=True)
@@ -292,7 +297,7 @@ def solve_pose(
         )
         psi, t, solved_weights = solution.psi, solution.t, solution.weights
 
-    offset_statistic = offset_dof = None
+    offset_statistic = offset_dof = offset_precision = None
     if statistic:
         # The DISAGREEMENT covariance, from the same fitted model the weights
         # are built from -- not a second uncertainty model. It is needed in
@@ -304,7 +309,7 @@ def solve_pose(
             correspondence.cav_variance_heading,
             heading_lambda,
         )
-        offset_statistic, offset_dof = wald_statistic(
+        parts = wald_parts(
             target,
             source,
             solved_weights,
@@ -314,6 +319,8 @@ def solve_pose(
             variance_heading=variance_heading,
             heading_lambda=heading_lambda,
         )
+        offset_statistic, offset_dof = parts.statistic, parts.dof
+        offset_precision = parts.precision
     return PoseEstimate(
         psi=psi,
         t=t,
@@ -321,6 +328,7 @@ def solve_pose(
         log_assignment=correspondence.log_assignment,
         offset_statistic=offset_statistic,
         offset_dof=offset_dof,
+        offset_precision=offset_precision,
     )
 
 

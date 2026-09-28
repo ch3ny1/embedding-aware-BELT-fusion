@@ -136,7 +136,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import numpy as np
 import torch
@@ -153,7 +153,18 @@ NONE = "none"
 ABSTAIN = "abstain"
 PER_PAIR = "per_pair"
 BOTH = "both"
-ABSTENTION_MODES = (NONE, ABSTAIN, PER_PAIR, BOTH)
+# The per-pair rule's per-axis generalization. ``per_pair`` applies one scalar
+# to all of SE(2); when two directions are well determined and a third is not
+# -- the far-pair geometry, where all the matched objects lie in one narrow
+# angular wedge -- that scalar has to either keep the unidentified direction's
+# runaway or discard the two good directions with it. This mode shrinks in the
+# estimator's own principal axes instead, at ``p = 1`` per axis.
+DIRECTIONAL = "directional"
+ABSTENTION_MODES = (NONE, ABSTAIN, PER_PAIR, BOTH, DIRECTIONAL)
+
+# Modes whose factor is not one number, so ``decision_factor`` cannot express
+# them and says so rather than returning something plausible.
+_SCALAR_MODES = (NONE, ABSTAIN, PER_PAIR, BOTH)
 
 # Lower bound on the fitted per-axis residual sd, in metres. Same number and
 # same reason as ``robust.SCALE_FLOOR_M``: the detector's own fitted
@@ -204,7 +215,7 @@ class AbstentionConfig:
             )
         if not (math.isfinite(self.level) and 0.0 <= self.level <= 1.0):
             raise ValueError(f"level must be in [0, 1], got {self.level}")
-        if self.mode in (NONE, PER_PAIR) and self.level != 0.0:
+        if self.mode in (NONE, PER_PAIR, DIRECTIONAL) and self.level != 0.0:
             raise ValueError(
                 f"mode {self.mode!r} has no use for a level, got {self.level}"
             )
@@ -215,7 +226,6 @@ class AbstentionConfig:
             )
         if self.dimensions < 1:
             raise ValueError(f"dimensions must be at least 1, got {self.dimensions}")
-
     @property
     def enabled(self) -> bool:
         return self.mode != NONE
@@ -223,7 +233,7 @@ class AbstentionConfig:
     @property
     def name(self) -> str:
         """The sweep condition key: ``alignformer_<mode>[_<level>]``."""
-        if self.mode == PER_PAIR:
+        if self.mode in (PER_PAIR, DIRECTIONAL):
             return f"alignformer_{self.mode}"
         return f"alignformer_{self.mode}_{self.level:g}"
 
@@ -497,7 +507,27 @@ def expected_residual_sum(
     return weights.sum(dim=1) - 2.0 * first + second
 
 
-def wald_statistic(
+class WaldParts(NamedTuple):
+    """The Wald test, plus the axes its statistic is a sum over.
+
+    ``statistic`` and ``dof`` are exactly what :func:`wald_statistic` has
+    always returned. ``precision`` is the estimator's inverse covariance
+    ``M = A B^-1 A / tau^2``, of which the statistic is the quadratic form
+    ``theta^T M theta`` -- so a rule that reads ``M`` is a refinement of the
+    deployed one and not a second, uncalibrated statistic.
+
+    The eigenbasis is deliberately NOT computed here. ``M`` mixes metres and
+    radians, so its axes only mean something after whitening by a prior with
+    those units, and the prior belongs to the decision rule
+    (:class:`AbstentionConfig`) rather than to the fit.
+    """
+
+    statistic: Tensor
+    dof: Tensor
+    precision: Tensor
+
+
+def wald_parts(
     p: Tensor,
     q: Tensor,
     weights: Tensor,
@@ -507,8 +537,8 @@ def wald_statistic(
     variance_centre: Tensor,
     variance_heading: Tensor,
     heading_lambda: float,
-) -> Tuple[Tensor, Tensor]:
-    """``(T^2, dof)`` for the emitted correction against this fit's covariance.
+) -> WaldParts:
+    """The Wald statistic of the emitted correction, resolved onto its axes.
 
     Parameters
     ----------
@@ -586,7 +616,120 @@ def wald_statistic(
     statistic = (quadratic.clamp_min(0.0) / tau_squared).nan_to_num(
         nan=0.0, posinf=0.0, neginf=0.0
     )
-    return statistic, dof
+
+    # The same quadratic form as a matrix: `statistic == theta^T M theta`, so
+    # a rule that reads `M` inherits every calibration argument made for the
+    # scalar one. The symmetrization is not cosmetic -- `linalg.solve` leaves
+    # an asymmetry of order the condition number, and a large condition number
+    # is precisely the case this exists for.
+    precision = torch.matmul(curvature, torch.linalg.solve(middle + ridge, curvature))
+    precision = 0.5 * (precision + precision.transpose(-1, -2))
+    precision = (precision / tau_squared.reshape(-1, 1, 1)).nan_to_num(
+        nan=0.0, posinf=0.0, neginf=0.0
+    )
+    return WaldParts(statistic=statistic, dof=dof, precision=precision)
+
+
+def wald_statistic(*args, **kwargs) -> Tuple[Tensor, Tensor]:
+    """``(T^2, dof)`` -- :func:`wald_parts` without the per-axis decomposition.
+
+    Kept as the module's original entry point, with its original signature and
+    its original values, so the shipped ``per_pair`` arm reproduces bit for bit
+    in the very run that measures the directional one.
+    """
+    parts = wald_parts(*args, **kwargs)
+    return parts.statistic, parts.dof
+
+
+def directional_theta(theta: Tensor, precision: Tensor) -> Tensor:
+    """``(B, 3)`` the correction shrunk per PRINCIPAL AXIS, not by one factor.
+
+    Parameters
+    ----------
+    theta: ``(B, 3)`` the emitted correction as ``[t_x, t_y, psi]``, the
+        ordering :func:`wald_parts` forms its quadratic in.
+    precision: ``(B, 3, 3)`` ``M`` from :class:`WaldParts`.
+
+    The rule is one ridge factor per eigenvalue of ``M``::
+
+        theta' = M (M + c I)^-1 theta,     c = p det(M)^(1/3) / T^2
+
+    and it introduces **no constant**: ``p`` is the three the deployed rule
+    already uses and ``c`` is built from the fit's own invariants. An axis the
+    pair cannot identify has ``mu << det(M)^(1/3)`` and is crushed; the axes
+    the same pair determines well have ``mu >> c`` and pass through. On an
+    isotropic fit every axis takes the single factor ``T^2 / (T^2 + p)``, so
+    with nothing anisotropic to see the rule does not invent a distinction.
+
+    Why the factor may depend on ``mu`` and never on the components
+    --------------------------------------------------------------
+
+    Because this is a **spectral matrix function**, ``F(M) = M (M + cI)^-1``,
+    two properties hold that nothing else tried here had.
+
+    *Rotation invariance.* Equal eigenvalues take equal factors, so a
+    degenerate block acts as a scalar. That is not academic: on the
+    well-conditioned pairs that are the majority of the population the two
+    translation axes sit at ``mu_2 / mu_1 = 1.09`` to ``1.15``, near enough to
+    degenerate that the eigenbasis is arbitrary. A per-COMPONENT rule --
+    ``max(0, 1 - 1/z_i^2)`` on each axis, which was the formulation tried
+    before this one -- is not invariant there, and measurably so: on an
+    isotropic ``M`` it returned ``(0.565, -1.568, 0.000)`` in one basis and
+    ``(0.549, -1.340, 0.794)`` in a rotated one, for the same fit. An answer
+    that depends on which eigenvectors LAPACK happened to return is not an
+    answer.
+
+    *Continuity.* ``mu / (mu + c)`` is smooth and bounded, so ``F`` is Lipschitz
+    in ``M`` where a positive part is not.
+
+    Two other forms were measured and rejected. Per-axis ``max(0, 1 - p/z^2)``
+    alone throws away the pooling that makes James-Stein work and emitted MORE
+    spurious correction than the scalar rule at sigma = 0 (1.35x on a
+    ten-object wedge, 1.69x on an open scatter). The posterior mean under
+    ``shrinkage``'s fitted tau is the best rule at sigma = 0 by a wide margin
+    and unusable anyway: that tau was calibrated at sigma = 0, and against a
+    true two-metre correction a prior saying "about 0.15 m" turned a 0.116 m
+    error into 0.967 m. That is task 23's dead end from the other side, and it
+    is why the scale here is taken from the fit rather than from a constant.
+
+    **Known limitation, measured.** On the ill-conditioned pairs this exists
+    for, ``cond(M)`` runs to ``1e6``, and there the output moves under
+    perturbations of ``M`` that the well-conditioned pairs do not feel
+    (``1e-1`` m against ``1e-4`` m for a relative nudge of ``1e-6``). That
+    sensitivity is the SOLVE's, not this rule's -- a fit whose normal matrix
+    has a condition number of a million does not determine its own weak
+    direction either -- but it does mean the gain here is a population
+    average and not a per-pair guarantee. Recorded rather than papered over.
+    """
+    if theta.shape[-1] != POSE_DIMENSIONS:
+        raise ValueError(
+            f"theta {tuple(theta.shape)} must end in {POSE_DIMENSIONS}"
+        )
+    expected = theta.shape[:-1] + (POSE_DIMENSIONS, POSE_DIMENSIONS)
+    if precision.shape != expected:
+        raise ValueError(f"precision {tuple(precision.shape)} must be {expected}")
+
+    tiny = torch.finfo(theta.dtype).tiny
+    symmetric = 0.5 * (precision + precision.transpose(-1, -2))
+    evidence, basis = torch.linalg.eigh(symmetric)
+    evidence = evidence.clamp_min(0.0)
+
+    statistic = torch.einsum("bi,bij,bj->b", theta, symmetric, theta).clamp_min(0.0)
+    # The geometric mean is det(M)^(1/3) computed in the log domain: the
+    # eigenvalues here span six orders of magnitude and their product
+    # underflows single precision long before their sum of logs does.
+    typical = torch.exp(torch.log(evidence.clamp_min(tiny)).mean(dim=-1))
+    ridge = (
+        POSE_DIMENSIONS * typical / statistic.clamp_min(tiny)
+    ).unsqueeze(-1)
+
+    factor = evidence / (evidence + ridge).clamp_min(tiny)
+    components = torch.matmul(
+        basis.transpose(-1, -2), theta.unsqueeze(-1)
+    ).squeeze(-1)
+    return torch.matmul(
+        basis, (factor * components).unsqueeze(-1)
+    ).squeeze(-1).nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def decision_factor(
@@ -600,6 +743,12 @@ def decision_factor(
     """
     if not config.enabled:
         return torch.ones_like(statistic)
+    if config.mode not in _SCALAR_MODES:
+        raise ValueError(
+            f"mode {config.mode!r} does not act by one factor on the whole "
+            "SE(2) -- that is the point of it -- so it has no decision factor; "
+            "use abstain.decide, which rewrites the correction itself"
+        )
 
     if config.mode == PER_PAIR:
         return shrinkage_factor(statistic, config.dimensions)
@@ -633,6 +782,19 @@ def decide(estimate, config: AbstentionConfig):
             "this estimate carries no offset statistic; solve it with "
             "solve_pose(..., statistic=True) before asking for a decision"
         )
+
+    if config.mode == DIRECTIONAL:
+        precision: Optional[Tensor] = getattr(estimate, "offset_precision", None)
+        if precision is None:
+            raise ValueError(
+                "the directional rule needs the fit's precision matrix; this "
+                "estimate carries none. Solve it with "
+                "solve_pose(..., statistic=True)"
+            )
+        theta = torch.cat([estimate.t, estimate.psi.reshape(-1, 1)], dim=-1)
+        shrunk = directional_theta(theta, precision)
+        return replace(estimate, psi=shrunk[..., 2], t=shrunk[..., :2])
+
     factor = decision_factor(
         statistic, getattr(estimate, "offset_dof", None), config
     )
@@ -645,6 +807,7 @@ __all__ = [
     "ABSTAIN",
     "ABSTENTION_MODES",
     "BOTH",
+    "DIRECTIONAL",
     "DOF_FLOOR",
     "NONE",
     "PER_PAIR",
@@ -654,9 +817,12 @@ __all__ = [
     "abstention_threshold",
     "decide",
     "decision_factor",
+    "directional_theta",
     "effective_sample_size",
     "expected_residual_sum",
     "residual_scale",
     "sandwich_middle",
+    "wald_parts",
     "wald_statistic",
+    "WaldParts",
 ]

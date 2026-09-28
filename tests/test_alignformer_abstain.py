@@ -45,6 +45,7 @@ from embedding_aware_belt_fusion.alignformer.abstain import (
     ABSTAIN,
     ABSTENTION_MODES,
     BOTH,
+    DIRECTIONAL,
     NONE,
     PER_PAIR,
     RESIDUAL_SD_FLOOR_M,
@@ -412,7 +413,8 @@ def test_a_disabled_decision_returns_the_estimate_untouched():
 
 @pytest.mark.parametrize("mode", ABSTENTION_MODES)
 def test_every_mode_is_constructible_and_reports_its_own_name(mode):
-    level = 0.0 if mode in (NONE, PER_PAIR) else 0.05
+    # per_pair and directional refuse a level rather than ignoring one.
+    level = 0.0 if mode in (NONE, PER_PAIR, DIRECTIONAL) else 0.05
     config = AbstentionConfig(mode=mode, level=level)
     assert config.enabled == (mode != NONE)
     assert config.to_dict()["mode"] == mode
