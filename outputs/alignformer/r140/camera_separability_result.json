@@ -1,0 +1,152 @@
+{
+  "method": "camera_separability",
+  "config": "configs/alignformer_r140.yaml",
+  "split": "/media/chenyi/Elements1/Dataset/OPV2V/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)",
+  "val_scenarios": [
+    "2021_08_18_18_33_56",
+    "2021_08_18_21_38_28",
+    "2021_08_21_09_09_41",
+    "2021_08_22_07_24_12",
+    "2021_08_22_11_29_38",
+    "2021_08_23_19_27_57",
+    "2021_08_23_22_31_01"
+  ],
+  "pairs_read": 600,
+  "probe_radius_m": 8.0,
+  "min_crop_pixels": 50,
+  "max_occlusion": 0.5,
+  "pre_registered_bars": {
+    "signal_auc": 0.8,
+    "coverage": 0.4,
+    "far_field_coverage": 0.25
+  },
+  "lidar_reference": {
+    "roi_auc": 0.5595922765932373,
+    "embedding_auc": 0.6272729723188022,
+    "association_delta": 0.0001,
+    "association_ci": [
+      -0.0013,
+      0.0014
+    ]
+  },
+  "coverage": {
+    "shared_objects": 7097,
+    "usable_in_both": 2781,
+    "fraction": 0.3918557136818374,
+    "by_range": {
+      "0-25m": {
+        "both": 1617,
+        "shared": 3050,
+        "fraction": 0.5301639344262296
+      },
+      "25-40m": {
+        "both": 753,
+        "shared": 2038,
+        "fraction": 0.36947988223748773
+      },
+      "40-70m": {
+        "both": 362,
+        "shared": 1680,
+        "fraction": 0.2154761904761905
+      },
+      "70m+": {
+        "both": 49,
+        "shared": 329,
+        "fraction": 0.14893617021276595
+      }
+    }
+  },
+  "all_objects": {
+    "hue_saturation": {
+      "n": 2779,
+      "auc": 0.610644321176624,
+      "pairwise_accuracy": 0.6772220223101835,
+      "partner_mean": 0.6972377733367906,
+      "distractor_mean": 0.6156635021203152,
+      "mean_gap": 0.08157427121647542,
+      "cohens_d": 0.3809674798034461
+    },
+    "mean_colour": {
+      "n": 2779,
+      "auc": 0.6327297169526085,
+      "pairwise_accuracy": 0.6757826556315222,
+      "partner_mean": 0.9982940976575008,
+      "distractor_mean": 0.9965081286682153,
+      "mean_gap": 0.0017859689892855135,
+      "cohens_d": 0.24947119439461704
+    }
+  },
+  "ambiguous": {
+    "hue_saturation": {
+      "n": 1332,
+      "auc": 0.5982621134648162,
+      "pairwise_accuracy": 0.6824324324324325,
+      "partner_mean": 0.700392576615896,
+      "distractor_mean": 0.6362358894822797,
+      "mean_gap": 0.06415668713361633,
+      "cohens_d": 0.31523550629593466
+    },
+    "mean_colour": {
+      "n": 1332,
+      "auc": 0.6398419816212609,
+      "pairwise_accuracy": 0.6756756756756757,
+      "partner_mean": 0.9986469428565318,
+      "distractor_mean": 0.997057578927774,
+      "mean_gap": 0.0015893639287577477,
+      "cohens_d": 0.22513848745893505
+    }
+  },
+  "same_agent_bound": {
+    "hue_saturation": {
+      "n": 291,
+      "auc": 0.7073841829926429,
+      "pairwise_accuracy": 0.7663230240549829,
+      "partner_mean": 0.7912133334191492,
+      "distractor_mean": 0.6606482397632492,
+      "mean_gap": 0.13056509365590008,
+      "cohens_d": 0.6869510703241478
+    },
+    "mean_colour": {
+      "n": 291,
+      "auc": 0.6804950343052161,
+      "pairwise_accuracy": 0.7079037800687286,
+      "partner_mean": 0.9985542100823128,
+      "distractor_mean": 0.9966599953931116,
+      "mean_gap": 0.0018942146892012568,
+      "cohens_d": 0.3892089934981117
+    }
+  },
+  "shuffled_control": {
+    "hue_saturation": {
+      "n": 2779,
+      "auc": 0.5052246964556178,
+      "pairwise_accuracy": 0.5088161209068011,
+      "partner_mean": 0.5771352640577829,
+      "distractor_mean": 0.5730674655100007,
+      "mean_gap": 0.004067798547782275,
+      "cohens_d": 0.017241778858535152
+    },
+    "mean_colour": {
+      "n": 2779,
+      "auc": 0.5018214152019963,
+      "pairwise_accuracy": 0.5062972292191436,
+      "partner_mean": 0.9951295181432179,
+      "distractor_mean": 0.9956703495500425,
+      "mean_gap": -0.0005408314068245934,
+      "cohens_d": -0.04818295227159089
+    }
+  },
+  "verdict": {
+    "best_descriptor": "mean_colour",
+    "ambiguous_auc": 0.6398419816212609,
+    "coverage": 0.3918557136818374,
+    "far_field_coverage": 0.2154761904761905,
+    "clauses": {
+      "signal_auc_at_least_0.80": false,
+      "coverage_at_least_0.40": false,
+      "far_field_coverage_at_least_0.25": false
+    },
+    "shuffle_control_valid": true,
+    "build_camera_branch": false
+  }
+}

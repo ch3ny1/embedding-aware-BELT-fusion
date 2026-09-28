@@ -164,16 +164,28 @@ def _views(
             descriptors = appearance(image, mask)
             if descriptors is None:
                 continue
-            previous = found.get(vid)
-            if previous is not None and previous["occlusion"] <= covered:
-                continue
-            found[vid] = {
+            candidate = {
                 **descriptors,
                 "occlusion": covered,
                 "pixels": pixel_count,
                 "depth": view.depth,
                 "camera": index,
             }
+            previous = found.get(vid)
+            if previous is None or covered < previous["occlusion"]:
+                # The displaced best becomes the runner-up: a SECOND camera on
+                # the same agent seeing the same vehicle is a viewpoint change
+                # with no cross-agent gap, which is what separates "colour
+                # carries no identity" from "colour does, and the cross-agent
+                # viewpoint destroys it". Only the second answer leaves a
+                # learned encoder anything to recover.
+                if previous is not None:
+                    candidate["runner_up"] = previous
+                elif vid in found:
+                    candidate["runner_up"] = found[vid].get("runner_up")
+                found[vid] = candidate
+            elif "runner_up" not in found[vid] or found[vid]["runner_up"] is None:
+                found[vid]["runner_up"] = candidate
     return found
 
 
@@ -201,6 +213,7 @@ def collect(root: Path, pairs, rng: random.Random) -> Dict:
     coverage = {"both": 0, "shared": 0}
     by_range = defaultdict(lambda: {"both": 0, "shared": 0})
     ambiguous = {name: {"partner": [], "distractor": []} for name in DESCRIPTORS}
+    same_agent = {name: {"partner": [], "distractor": []} for name in DESCRIPTORS}
     pixel_rows: List[Tuple[float, int]] = []
 
     for done, pair in enumerate(pairs, start=1):
@@ -265,6 +278,21 @@ def collect(root: Path, pairs, rng: random.Random) -> Dict:
             # at 0.5 or the headline is not measuring identity. Drawn once per
             # object rather than per descriptor so both descriptors are
             # controlled against the same draw.
+            # The same-agent upper bound: ego's SECOND camera on this vehicle
+            # against ego's best camera on the nearest other vehicle. Same
+            # agent, same instant, same illumination -- only the viewpoint
+            # differs. Whatever this scores is what a perfect cross-agent
+            # descriptor could hope for.
+            second = ego_views[vid].get("runner_up")
+            if second is not None and nearest in ego_views:
+                for name in DESCRIPTORS:
+                    same_agent[name]["partner"].append(
+                        cosine_similarity(second[name], ego_views[vid][name])
+                    )
+                    same_agent[name]["distractor"].append(
+                        cosine_similarity(second[name], ego_views[nearest][name])
+                    )
+
             decoys = rng.sample(list(cav_views), 2) if len(cav_views) >= 2 else None
             if decoys is not None:
                 for name in DESCRIPTORS:
@@ -285,6 +313,7 @@ def collect(root: Path, pairs, rng: random.Random) -> Dict:
     return {
         "scores": scores,
         "ambiguous": ambiguous,
+        "same_agent": same_agent,
         "shuffled": shuffled,
         "coverage": coverage,
         "by_range": {key: dict(value) for key, value in by_range.items()},
@@ -412,6 +441,13 @@ def main() -> None:
             name: summarize(
                 collected["ambiguous"][name]["partner"],
                 collected["ambiguous"][name]["distractor"],
+            )
+            for name in DESCRIPTORS
+        },
+        "same_agent_bound": {
+            name: summarize(
+                collected["same_agent"][name]["partner"],
+                collected["same_agent"][name]["distractor"],
             )
             for name in DESCRIPTORS
         },
