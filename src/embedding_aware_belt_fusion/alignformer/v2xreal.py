@@ -42,6 +42,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
+import warnings
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
@@ -223,6 +224,23 @@ def order_agents(agent_ids: Iterable[str]) -> Tuple[str, ...]:
 # ----------------------------------------------------------------------------
 
 
+def _readable_image(path: Path, load_image):
+    """The image, or ``None`` with a warning when the file cannot be decoded.
+
+    The released dataset ships one zero-byte jpeg
+    (test/2023-04-03-18-28-32_22_0/-1/000031_cam1.jpeg). A camera frame that
+    did not arrive is 'no camera' for that agent-frame -- the same state the
+    ``has_camera`` flag already carries for an object out of view -- and not
+    a reason to abort a 30-minute cache build. Never silent: the path is
+    warned so a wider defect would be seen, not absorbed.
+    """
+    try:
+        return load_image(path)
+    except (OSError, ValueError) as error:  # PIL raises both for a bad file
+        warnings.warn(f"unreadable camera image dropped: {path} ({error})", RuntimeWarning, stacklevel=3)
+        return None
+
+
 def _dataset_class():
     """Built lazily so importing this module never imports OpenCOOD."""
     from opencood.data_utils.datasets.late_fusion_dataset import LateFusionDataset
@@ -269,8 +287,9 @@ def _dataset_class():
             cameras = []
             for name in sorted(k for k in params if k.startswith("cam")):
                 image_path = yaml_path.with_name(f"{yaml_path.stem}_{name}.jpeg")
-                if image_path.exists():
-                    cameras.append((load_image(image_path), calibration_from_yaml(params[name])))
+                image = _readable_image(image_path, load_image) if image_path.exists() else None
+                if image is not None:
+                    cameras.append((image, calibration_from_yaml(params[name])))
             return cameras
 
     return V2XRealLateFusionDataset

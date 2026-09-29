@@ -541,3 +541,26 @@ def test_alignformer_entry_points_build_datasets_through_the_adapter(module_path
 
     assert "from opencood.data_utils.datasets import build_dataset" not in source
     assert "from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset" in source
+
+
+def test_frame_cameras_drops_an_unreadable_image_with_a_warning_naming_it(scenario_tree):
+    """test/2023-04-03-18-28-32_22_0/-1/000031_cam1.jpeg is a zero-byte file
+    in the released dataset. A dropped camera frame is 'no camera' for that
+    agent-frame, not a crash of the whole cache -- but never silently."""
+    import warnings
+
+    from PIL import Image
+
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    folder = scenario_tree / SCENARIO / "1"
+    (folder / "000000_cam1.jpeg").write_bytes(b"")
+    Image.new("RGB", (64, 32), color=(10, 20, 30)).save(folder / "000000_cam2.jpeg")
+    dataset = build_dataset(_hypes_for(scenario_tree), visualize=False, train=False)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cameras = dataset.frame_cameras(folder / "000000.yaml")
+
+    assert len(cameras) == 1
+    assert any("000000_cam1.jpeg" in str(w.message) for w in caught)
