@@ -163,3 +163,28 @@ def test_the_cli_writes_the_summary_and_records_its_sources(tmp_path):
     assert summary["sources"]["lidar"]["split"] == "/d/test"
     assert summary["seeds"] == [0, 1, 2]
     assert "lidar" in run.stdout and "boxes_only" in run.stdout
+
+
+def test_a_pairing_field_missing_from_both_files_is_refused_not_passed():
+    """None == None must not count as agreement: the guard exists to refuse."""
+    results = {"a": _result([0.8] * 3, [0.8] * 3), "b": _result([0.8] * 3, [0.8] * 3)}
+    for result in results.values():
+        del result["sigmas_drawn_once_m"]
+
+    with pytest.raises(ValueError, match="sigmas_drawn_once_m"):
+        check_paired(results)
+
+
+def test_the_same_split_spelled_relative_and_absolute_pairs(tmp_path):
+    absolute = str(tmp_path / "test")
+    results = {"a": _result([0.8] * 3, [0.8] * 3, split=absolute), "b": _result([0.8] * 3, [0.8] * 3, split=absolute)}
+    results["b"]["split"] = str(Path(absolute).parent / "." / "test")
+
+    check_paired(results)  # no raise
+
+
+def test_a_missing_condition_row_names_the_condition_and_the_trunk():
+    results = _three_trunks()
+
+    with pytest.raises(ValueError, match=r"boxes_only has no 'alignformer_irls' row"):
+        summarize(results, reference="boxes_only", condition="alignformer_irls")

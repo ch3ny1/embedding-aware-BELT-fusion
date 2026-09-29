@@ -106,3 +106,11 @@ def test_the_evaluator_accepts_the_calibration_flag(monkeypatch, tmp_path):
     args = evaluate.parse_args()
 
     assert args.freealign_calibration == tmp_path / "c.json"
+
+
+def test_a_calibration_file_without_the_freealign_flag_is_refused(tmp_path):
+    """Silently ignoring it would leave a result file claiming a calibrated row it never scored."""
+    path = _write_calibration(tmp_path / "c.json", FreeAlignConfig())
+
+    with pytest.raises(ValueError, match="--freealign"):
+        freealign_config_from_args(_args(freealign=False, freealign_calibration=path))

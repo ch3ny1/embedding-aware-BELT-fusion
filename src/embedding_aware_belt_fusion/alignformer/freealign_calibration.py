@@ -48,9 +48,11 @@ def freealign_config_from_calibration(path: Union[Path, str]) -> FreeAlignConfig
 
 def freealign_config_from_args(args: argparse.Namespace) -> Optional[FreeAlignConfig]:
     """``None`` without ``--freealign``; the calibration's config, or the two flags'."""
-    if not args.freealign:
-        return None
     calibration = getattr(args, "freealign_calibration", None)
+    if not args.freealign:
+        if calibration is not None:
+            raise ValueError("--freealign-calibration needs --freealign; without it no FreeAlign row is scored")
+        return None
     if calibration is None:
         return FreeAlignConfig(edge_feature=args.freealign_edge_feature, min_nodes=args.freealign_min_nodes)
     moved = args.freealign_edge_feature != EDGE_DISTANCE or args.freealign_min_nodes != DEFAULT_MIN_NODES

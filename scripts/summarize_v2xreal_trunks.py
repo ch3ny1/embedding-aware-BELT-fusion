@@ -68,17 +68,33 @@ def parse_trunks(specs: Sequence[str]) -> Dict[str, Path]:
     return trunks
 
 
+_PATH_FIELDS = ("split", "detector_checkpoint")
+
+
+def _pairing_value(result: dict, field: str, name: str):
+    if field not in result:
+        raise ValueError(f"{name} has no {field!r}; cannot tell whether it pairs with the others")
+    value = result[field]
+    # The same split or detector spelled two ways is one split or detector.
+    return str(Path(value).resolve()) if field in _PATH_FIELDS and isinstance(value, str) else value
+
+
 def check_paired(results: Dict[str, dict]) -> None:
     """Refuse two files whose per-seed differences would not be paired."""
     names = list(results)
     first = results[names[0]]
     for name in names[1:]:
         for field in PAIRING_FIELDS:
-            if results[name].get(field) != first.get(field):
-                raise ValueError(
-                    f"{name} and {names[0]} differ in {field}: "
-                    f"{results[name].get(field)!r} vs {first.get(field)!r}; not pairable"
-                )
+            mine = _pairing_value(results[name], field, name)
+            theirs = _pairing_value(first, field, names[0])
+            if mine != theirs:
+                raise ValueError(f"{name} and {names[0]} differ in {field}: {mine!r} vs {theirs!r}; not pairable")
+
+
+def _require_condition(result: dict, condition: str, sigmas: Sequence[float], name: str) -> None:
+    key = f"{condition}_sigma_{sigmas[0]:g}m"
+    if key not in result["ap_by_seed"][_seeds(result)[0]]:
+        raise ValueError(f"{name} has no {condition!r} row ({key} missing from ap_by_seed)")
 
 
 def _sigma_key(sigma: float) -> str:
@@ -122,6 +138,9 @@ def summarize(results: Dict[str, dict], reference: str, condition: str) -> dict:
     check_paired(results)
     first = results[reference]
     sigmas = [float(sigma) for sigma in first["sweep_sigmas_m"]]
+    for name, result in results.items():
+        _require_condition(result, condition, sigmas, name)
+        _require_condition(result, FREEALIGN, sigmas, name)
     per_metric = {}
     for metric in AP_KEYS:
         per_metric[metric] = {
@@ -196,7 +215,10 @@ def main() -> None:
     trunks = parse_trunks(args.trunk)
     if len(trunks) < 2:
         parser.error("at least two --trunk entries are needed")
-    results = {name: json.loads(path.read_text()) for name, path in trunks.items()}
+    try:
+        results = {name: json.loads(path.read_text()) for name, path in trunks.items()}
+    except (OSError, json.JSONDecodeError) as error:
+        parser.error(f"could not read a --trunk result file: {error}")
     summary = summarize(results, args.reference or next(iter(trunks)), args.condition)
     payload = {**summary, "sources": _sources(trunks, results)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
