@@ -232,7 +232,9 @@ def _dataset_class():
 
         def __init__(self, params, visualize, train=True):
             super().__init__(params, visualize, train)
-            self.scenario_database = _vehicle_centric(self.scenario_database)
+            database = _drop_corrupt_timestamps(self.scenario_database)
+            self.scenario_database = _vehicle_centric(database)
+            self.len_record = _len_record(self.scenario_database)
 
         def retrieve_base_data(self, idx, cur_ego_pose_flag=True):
             data = super().retrieve_base_data(idx, cur_ego_pose_flag)
@@ -272,6 +274,44 @@ def _dataset_class():
             return cameras
 
     return V2XRealLateFusionDataset
+
+
+def _drop_corrupt_timestamps(scenario_database: "OrderedDict") -> "OrderedDict":
+    """Every scenario without the timestamps of :data:`CORRUPT_FRAMES`.
+
+    Dropped for EVERY agent of the scenario, not only the one whose LiDAR was
+    corrupt: ``retrieve_base_data`` looks each agent up by the ego's timestamp
+    key, so a timestamp missing from one agent is a ``KeyError`` for the frame.
+    A refusal at read time (``bin_pcd_to_np``) stays as the backstop.
+    """
+    corrupt = {}
+    for scenario, agent, timestamp in CORRUPT_FRAMES:
+        corrupt.setdefault(scenario, set()).add(timestamp)
+    cleaned = OrderedDict()
+    for scenario_index, agents in scenario_database.items():
+        scenario_name = _scenario_name(agents)
+        drop = corrupt.get(scenario_name, set())
+        cleaned[scenario_index] = OrderedDict(
+            (cav_id, OrderedDict((k, v) for k, v in content.items() if k not in drop))
+            for cav_id, content in agents.items()
+        )
+    return cleaned
+
+
+def _scenario_name(agents: "OrderedDict") -> str:
+    first = next(iter(agents.values()))
+    yaml_path = next(v["yaml"] for k, v in first.items() if k != "ego")
+    return Path(yaml_path).parents[1].name
+
+
+def _len_record(scenario_database: "OrderedDict") -> list:
+    """Cumulative ego-frame counts, as ``basedataset.__init__`` builds them."""
+    record, total = [], 0
+    for agents in scenario_database.values():
+        first = next(iter(agents.values()))
+        total += sum(1 for k in first if k != "ego")
+        record.append(total)
+    return record
 
 
 def _vehicle_centric(scenario_database: "OrderedDict") -> "OrderedDict":

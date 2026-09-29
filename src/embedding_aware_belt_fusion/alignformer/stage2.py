@@ -83,6 +83,7 @@ from embedding_aware_belt_fusion.alignformer.train import (
     build_pair_split,
     embed_batch,
     roi_channels,
+    uses_camera,
 )
 from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
 from embedding_aware_belt_fusion.alignformer.variance import (
@@ -99,6 +100,9 @@ STAGE2_ROOT = Path("outputs/alignformer")
 STAGE1_CHECKPOINTS = {
     "boxes+embeddings": Path("outputs/alignformer/stage1/best.pth"),
     "boxes_only": Path("outputs/alignformer/stage1_zero_embeddings/best.pth"),
+    # The LiDAR+camera trunk (model.camera_dim > 0, V2X-Real): its own stage-1
+    # run, because the camera branch is trained there.
+    "boxes+embeddings+camera": Path("outputs/alignformer/stage1_camera/best.pth"),
 }
 HEADS = ("A", "B")
 MESSAGE_CONTENTS = tuple(STAGE1_CHECKPOINTS)
@@ -154,6 +158,7 @@ def build_stage2_modules(
                 in_channels=channels,
                 output_size=int(model_cfg["output_size"]),
                 dim=embed_dim,
+                camera_dim=int(model_cfg.get("camera_dim", 0)),
             ),
             "pose": pose,
         }
@@ -589,6 +594,7 @@ def build_stage2_datasets(
         train=True,
         total_epochs=epochs,
         seed=int(train_cfg["seed"]),
+        use_camera=uses_camera(config),
     )
     return train_set, build_eval_dataset(config, val_pairs, sigma)
 

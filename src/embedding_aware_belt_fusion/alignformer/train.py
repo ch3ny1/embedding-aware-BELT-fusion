@@ -89,6 +89,17 @@ def _split_name(root: Path) -> str:
     return root.name
 
 
+def _val_split_name(config: Mapping[str, Any]) -> str:
+    """The cache split validation pairs live in: ``val_root``'s if set, else train's."""
+    data = config["data"]
+    return _split_name(Path(data["val_root"] if data.get("val_root") else data["train_root"]))
+
+
+def uses_camera(config: Mapping[str, Any]) -> bool:
+    """``model.camera_dim > 0``: the LiDAR+camera trunk."""
+    return int(config["model"].get("camera_dim", 0)) > 0
+
+
 def build_pair_split(
     config: Mapping[str, Any]
 ) -> Tuple[List[AgentPair], List[AgentPair], List[str], List[str]]:
@@ -107,6 +118,23 @@ def build_pair_split(
         pair_cache_path(data["pair_cache_dir"], _split_name(root), comm_range_m),
         comm_range_m,
     )
+    if data.get("val_root"):
+        # An official, scenario-disjoint validation split (V2X-Real): every
+        # train_root pair trains, every val_root pair validates. The holdout
+        # below would hand the detector's own training scenarios to the
+        # calibration step.
+        val_root = Path(data["val_root"])
+        val_pairs = load_or_build_pairs(
+            val_root,
+            pair_cache_path(data["pair_cache_dir"], _split_name(val_root), comm_range_m),
+            comm_range_m,
+        )
+        return (
+            list(pairs),
+            list(val_pairs),
+            sorted({pair.scenario for pair in pairs}),
+            sorted({pair.scenario for pair in val_pairs}),
+        )
     train_scenarios, val_scenarios = split_scenarios(
         sorted({pair.scenario for pair in pairs}),
         float(data["val_scenario_fraction"]),
@@ -137,6 +165,7 @@ def build_datasets(
     common = {
         "cache_root": data["cache_root"],
         "split": _split_name(Path(data["train_root"])),
+        "use_camera": uses_camera(config),
     }
     sigma = float(train_cfg["stage1_max_xy_std"])
     train_set = OPV2VObjectSetDataset(
@@ -170,10 +199,11 @@ def build_eval_dataset(
     return OPV2VObjectSetDataset(
         pairs,
         cache_root=data["cache_root"],
-        split=_split_name(Path(data["train_root"])),
+        split=_val_split_name(config),
         noise_schedule=NoiseSchedule(max_xy_std=sigma),
         train=False,
         total_epochs=1,
+        use_camera=uses_camera(config),
         **extra,
     )
 
@@ -225,6 +255,7 @@ def build_modules(
                 in_channels=channels,
                 output_size=int(model_cfg["output_size"]),
                 dim=embed_dim,
+                camera_dim=int(model_cfg.get("camera_dim", 0)),
             ),
             "matcher": AlignFormerB(
                 embed_dim=embed_dim,
@@ -265,16 +296,48 @@ def zero_embeddings(batch: Mapping[str, Tensor]) -> Dict[str, Tensor]:
     return ablated
 
 
-def _embed(head: ObjectEmbedding, roi: Tensor) -> Tensor:
+def _embed(
+    head: ObjectEmbedding,
+    roi: Tensor,
+    camera: Optional[Tensor] = None,
+    has_camera: Optional[Tensor] = None,
+) -> Tensor:
     """Run the embedding head over a padded ``(B, N, C, k, k)`` ROI stack.
 
     Padded rows are embedded too and then masked out downstream by
     ``ego_mask``/``cav_mask``; the alternative, gathering only the real rows,
-    saves nothing measurable on object sets this small.
+    saves nothing measurable on object sets this small. The camera fields,
+    when the head has a camera branch, are flattened the same way.
     """
     batch, count = roi.shape[0], roi.shape[1]
-    flat = head(roi.reshape((batch * count,) + tuple(roi.shape[2:])).float())
+    flat_roi = roi.reshape((batch * count,) + tuple(roi.shape[2:])).float()
+    if getattr(head, "camera_dim", 0) > 0:
+        flat = head(
+            flat_roi,
+            camera=camera.reshape(batch * count, -1),
+            has_camera=has_camera.reshape(batch * count),
+        )
+    else:
+        flat = head(flat_roi)
     return flat.reshape(batch, count, head.dim)
+
+
+def _camera_inputs(head: ObjectEmbedding, batch: Mapping[str, Tensor], prefix: str):
+    """The camera fields a camera head needs, or ``(None, None)`` for a LiDAR head.
+
+    ``getattr`` because a head is anything callable on an ROI stack: the
+    shrinkage tests stand in a flatten-only double that has no camera branch.
+    """
+    if getattr(head, "camera_dim", 0) == 0:
+        return None, None
+    try:
+        return batch[f"{prefix}_camera"], batch[f"{prefix}_has_camera"]
+    except KeyError as missing:
+        raise ValueError(
+            f"the embedding head has a camera branch (camera_dim={head.camera_dim}) but "
+            f"the batch carries no {prefix} camera fields; the cache must be built with "
+            "--camera and the dataset with use_camera"
+        ) from missing
 
 
 def embed_batch(
@@ -289,8 +352,8 @@ def embed_batch(
     buys a single definition of the ablation.
     """
     enriched = dict(batch)
-    enriched["ego_embeddings"] = _embed(head, batch["ego_roi"])
-    enriched["cav_embeddings"] = _embed(head, batch["cav_roi"])
+    enriched["ego_embeddings"] = _embed(head, batch["ego_roi"], *_camera_inputs(head, batch, "ego"))
+    enriched["cav_embeddings"] = _embed(head, batch["cav_roi"], *_camera_inputs(head, batch, "cav"))
     return zero_embeddings(enriched) if ablate else enriched
 
 

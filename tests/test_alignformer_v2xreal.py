@@ -464,3 +464,53 @@ def test_frame_cameras_returns_both_images_with_their_calibrations(scenario_tree
     image, calib = cameras[0]
     assert image.shape == (32, 64, 3)
     assert calib.intrinsic.shape == (3, 3) and calib.camera_to_lidar.shape == (4, 4)
+
+
+# ----------------------------------------------------------------------------
+# The corrupt frame is dropped from the index, for every agent
+# ----------------------------------------------------------------------------
+#
+# Refusing it at read time crashed the detector's first epoch (2026-09-30):
+# the yaml still exists, so basedataset indexes the frame, and the read-time
+# refusal fires inside a DataLoader worker. And dropping it for one agent
+# only would not do either, because every agent is looked up by the ego's
+# timestamp key. The read-time refusal stays as the backstop.
+
+
+CORRUPT_SCENARIO, CORRUPT_AGENT, CORRUPT_STAMP = "2023-04-04-15-58-18_30_0", "1", "000112"
+
+
+@pytest.fixture
+def tree_with_the_corrupt_frame(tmp_path: Path) -> Path:
+    root = tmp_path / "split"
+    rng = np.random.default_rng(0)
+    for agent, infra, x in (("-1", True, 0.0), ("1", False, 5.0), ("2", False, 30.0)):
+        folder = root / CORRUPT_SCENARIO / agent
+        folder.mkdir(parents=True)
+        for stamp in ("000111", CORRUPT_STAMP, "000113"):
+            (folder / f"{stamp}.yaml").write_text(yaml.safe_dump(_frame_yaml(infra, x)))
+            if not (agent == CORRUPT_AGENT and stamp == CORRUPT_STAMP):
+                _write_bin(folder / f"{stamp}.bin", rng.normal(size=(50, 4)).astype(np.float32))
+    return root
+
+
+def test_the_corrupt_timestamp_is_absent_from_every_agent_and_the_length(tree_with_the_corrupt_frame):
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    dataset = build_dataset(_hypes_for(tree_with_the_corrupt_frame), visualize=False, train=False)
+
+    for cav_id, content in dataset.scenario_database[0].items():
+        stamps = [k for k in content if k != "ego"]
+        assert stamps == ["000111", "000113"], cav_id
+    assert len(dataset) == 2
+    assert dataset.len_record == [2]
+
+
+def test_every_remaining_frame_of_that_scenario_loads(tree_with_the_corrupt_frame):
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    dataset = build_dataset(_hypes_for(tree_with_the_corrupt_frame), visualize=False, train=False)
+
+    for index in range(len(dataset)):
+        data = dataset.retrieve_base_data(index)
+        assert list(data) == ["1", "2", "-1"]
