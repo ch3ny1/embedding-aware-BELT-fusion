@@ -507,6 +507,25 @@ def expected_residual_sum(
     return weights.sum(dim=1) - 2.0 * first + second
 
 
+def solve_or_zero(matrix: Tensor, rhs: Tensor) -> Tensor:
+    """``matrix^-1 rhs`` per batch element, zeros where there is no such thing.
+
+    A pair whose sandwich middle is exactly zero -- every correspondence
+    weight zero, so no evidence at all -- gets a ridge of ``SANDWICH_RIDGE *
+    tiny``, a denormal that the GPU flushes to zero, and ``linalg.solve`` then
+    raises on the singular matrix (the V2X-Real test sweep, 2026-09-29). A
+    non-finite middle is the same situation by another route. Both mean the
+    pair has nothing to say, and ``T^2 = 0`` is what nothing-to-say scores;
+    every invertible element goes through the same LU as ``linalg.solve``.
+    """
+    finite = torch.isfinite(matrix).flatten(1).all(dim=1)
+    identity = torch.eye(matrix.shape[-1], dtype=matrix.dtype, device=matrix.device)
+    safe = torch.where(finite.reshape(-1, 1, 1), matrix, identity.expand_as(matrix))
+    solution, info = torch.linalg.solve_ex(safe, rhs)
+    usable = (finite & (info == 0)).reshape(-1, 1, 1)
+    return torch.where(usable, solution, torch.zeros_like(solution))
+
+
 class WaldParts(NamedTuple):
     """The Wald test, plus the axes its statistic is a sum over.
 
@@ -611,7 +630,7 @@ def wald_parts(
         SANDWICH_RIDGE * trace.clamp_min(torch.finfo(middle.dtype).tiny)
     ).reshape(-1, 1, 1)
     quadratic = torch.matmul(
-        score.transpose(-1, -2), torch.linalg.solve(middle + ridge, score)
+        score.transpose(-1, -2), solve_or_zero(middle + ridge, score)
     ).reshape(-1)
     statistic = (quadratic.clamp_min(0.0) / tau_squared).nan_to_num(
         nan=0.0, posinf=0.0, neginf=0.0
@@ -622,7 +641,7 @@ def wald_parts(
     # scalar one. The symmetrization is not cosmetic -- `linalg.solve` leaves
     # an asymmetry of order the condition number, and a large condition number
     # is precisely the case this exists for.
-    precision = torch.matmul(curvature, torch.linalg.solve(middle + ridge, curvature))
+    precision = torch.matmul(curvature, solve_or_zero(middle + ridge, curvature))
     precision = 0.5 * (precision + precision.transpose(-1, -2))
     precision = (precision / tau_squared.reshape(-1, 1, 1)).nan_to_num(
         nan=0.0, posinf=0.0, neginf=0.0
@@ -813,6 +832,7 @@ __all__ = [
     "PER_PAIR",
     "RESIDUAL_SD_FLOOR_M",
     "SANDWICH_RIDGE",
+    "solve_or_zero",
     "AbstentionConfig",
     "abstention_threshold",
     "decide",

@@ -164,8 +164,8 @@ def _parts(p, q, w, psi=None, t=None):
         w,
         psi,
         t,
-        variance_centre=torch.full((p.shape[0], count), VARIANCE_CENTRE),
-        variance_heading=torch.full((p.shape[0], count), VARIANCE_HEADING),
+        variance_centre=torch.full((p.shape[0], count), VARIANCE_CENTRE, device=p.device),
+        variance_heading=torch.full((p.shape[0], count), VARIANCE_HEADING, device=p.device),
         heading_lambda=HEADING_LAMBDA,
     )
 
@@ -510,3 +510,79 @@ def test_the_directional_factor_has_no_scalar_form():
             torch.tensor([100.0]),
             AbstentionConfig(mode=DIRECTIONAL),
         )
+
+
+# --------------------------------------------------------------------------
+# 6. A PAIR WITH NO EVIDENCE IS A ZERO, NOT A CRASH.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="the GPU is where the denormal ridge flushes to zero"))])
+def test_wald_parts_with_all_zero_weights_returns_a_zero_statistic_not_a_singular_solve(device):
+    # The V2X-Real test sweep hit a pair whose sandwich middle was exactly
+    # zero: the relative ridge is then a denormal the GPU flushes to zero and
+    # linalg.solve raises on the singular matrix. Such a pair has no evidence,
+    # and no evidence is T^2 = 0. The CPU keeps the denormal and never raised.
+    p, q, _ = _pair(_spread(4, torch.Generator().manual_seed(0)), torch.Generator().manual_seed(1), psi=0.1, t=(0.5, -0.3))
+    p, q = p.to(device), q.to(device)
+
+    parts = _parts(p, q, torch.zeros(1, 8, device=device), psi=torch.tensor([0.1], device=device),
+                   t=torch.tensor([[0.5, -0.3]], device=device))
+
+    assert parts.statistic.tolist() == [0.0]
+    assert torch.isfinite(parts.precision).all()
+    assert parts.precision.abs().max().item() == 0.0
+
+
+def test_wald_parts_with_no_objects_at_all_returns_a_zero_statistic():
+    empty = torch.zeros(1, 0, 2)
+
+    parts = _parts(empty, empty, torch.zeros(1, 0), psi=torch.tensor([0.0]), t=torch.zeros(1, 2))
+
+    assert parts.statistic.tolist() == [0.0]
+    assert parts.precision.abs().max().item() == 0.0
+
+
+def test_solve_or_zero_matches_solve_on_invertible_matrices_and_zeros_the_rest():
+    from embedding_aware_belt_fusion.alignformer.abstain import solve_or_zero
+
+    good = torch.tensor([[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]])
+    singular = torch.tensor([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0], [0.0, 0.0, 0.0]])
+    broken = torch.full((3, 3), float("nan"))
+    matrix = torch.stack([good, singular, broken])
+    rhs = torch.ones(3, 3, 1)
+
+    solution = solve_or_zero(matrix, rhs)
+
+    torch.testing.assert_close(solution[0], torch.linalg.solve(good, rhs[0]))
+    assert solution[1].abs().max().item() == 0.0
+    assert solution[2].abs().max().item() == 0.0
+    assert torch.isfinite(solution).all()
+
+
+def test_wald_parts_survives_a_non_finite_variance_on_a_zero_weight_object():
+    # A dustbin-only object carries no mass and, through the correspondence
+    # variance's weighted average, a NaN variance; 0 * NaN is NaN in the
+    # sandwich and the solve then reports the matrix singular. No evidence,
+    # so T^2 = 0 for that pair; other pairs in the batch are untouched.
+    p, q, w = _pair(_spread(5, torch.Generator().manual_seed(2)), torch.Generator().manual_seed(3))
+    psi, t = weighted_se2_kabsch(p, q, w)
+    count = p.shape[1] // 2
+    variance_centre = torch.full((1, count), VARIANCE_CENTRE)
+    variance_heading = torch.full((1, count), VARIANCE_HEADING)
+    clean = wald_parts(p, q, w, psi, t, variance_centre=variance_centre,
+                       variance_heading=variance_heading, heading_lambda=HEADING_LAMBDA)
+    poisoned_w = w.clone(); poisoned_w[0, 0] = 0.0; poisoned_w[0, count] = 0.0
+    poisoned_v = variance_centre.clone(); poisoned_v[0, 0] = float("nan")
+    batch = lambda a, b: torch.cat([a, b], dim=0)  # noqa: E731
+
+    parts = wald_parts(
+        batch(p, p), batch(q, q), batch(w, poisoned_w), batch(psi, psi), batch(t, t),
+        variance_centre=batch(variance_centre, poisoned_v),
+        variance_heading=batch(variance_heading, variance_heading), heading_lambda=HEADING_LAMBDA,
+    )
+
+    torch.testing.assert_close(parts.statistic[0], clean.statistic[0])
+    assert torch.isfinite(parts.statistic).all() and torch.isfinite(parts.precision).all()
+    assert parts.statistic[1].item() == 0.0
