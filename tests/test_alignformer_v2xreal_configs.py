@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+import pytest
 import yaml
 
 from embedding_aware_belt_fusion.alignformer.camera_features import FEATURE_DIM
@@ -49,13 +50,31 @@ def test_the_v2xreal_config_differs_from_opv2v_only_in_data_paths_and_the_switch
 
     differing = {k for k in opv2v.keys() | lidar.keys() if opv2v.get(k) != lidar.get(k)}
 
+    # The four variance numbers are DATA, refit on V2X-Real val by
+    # scripts/fit_correspondence_variance.py (outputs/v2xreal/variance_fit_result.json);
+    # everything else that could differ is a hyper-parameter and must not.
     assert differing == {
         "model.camera_dim",
+        "model.correspondence_variance.sigma_translation_m",
+        "model.correspondence_variance.translation_exponent",
+        "model.correspondence_variance.sigma_yaw_deg",
+        "model.correspondence_variance.yaw_exponent",
         "data.train_root",
         "data.val_root",
         "data.test_root",
         "data.cache_root",
     }
+
+
+def test_the_variance_numbers_are_the_ones_the_fit_wrote():
+    import json
+
+    fitted = json.loads(Path("outputs/v2xreal/variance_fit_result.json").read_text())["correspondence_variance"]
+    block = _load(LIDAR)["model"]["correspondence_variance"]
+
+    for key in ("sigma_translation_m", "translation_exponent", "sigma_yaw_deg", "yaw_exponent"):
+        assert block[key] == pytest.approx(fitted[key], abs=5e-5), key
+    assert block["score_reference"] == fitted["score_reference"]
 
 
 def test_the_splits_are_the_official_ones_on_the_nvme_mirror():
