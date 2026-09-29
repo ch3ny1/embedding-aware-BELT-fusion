@@ -2608,13 +2608,42 @@ per-pair rule; what it stops needing is anything from the CAV beyond the
 boxes it already had. The method's premise -- a per-object embedding
 transmitted alongside the boxes -- is what the measurements retire.
 
+### Boxes-only under delay: the FreeAlign verdict is unchanged, and the embedding's sign flips
+
+The delay sweeps above were run with the embedding trunk. Re-run with the
+boxes-only trunk (same three paired seeds; FreeAlign bit-identical across the
+two runs at every cell), boxes-only minus FreeAlign, mean over sigma in
+{0, 0.4, 1.0, 2.0}:
+
+| delay | AP@0.7 | AP@0.5 | AP@0.3 | boxes-only emits | FreeAlign emits |
+|---|---:|---:|---:|---:|---:|
+| 100 ms | **+0.0438** (all four cells) | **+0.0500** | **+0.0287** | 0.62 m | 1.61 m |
+| 200 ms | +0.0033 (sigma = 2: -0.0102) | **+0.1292** | **+0.1452** | 1.29 m | 5.03 m |
+| 400 ms | -0.0504 (all four cells) | +0.0188 (sigma = 2: -0.0030) | **+0.1340** | 2.57 m | 11.60 m |
+
+Same shape as with the embedding: ours through 200 ms at every threshold but
+one cell, and at 400 ms FreeAlign takes AP@0.7 while we take AP@0.5 and AP@0.3.
+Nothing in the shipping proposal rests on the embedding.
+
+**Under delay the embedding is worth a little, with the opposite sign from
+the localization sweep.** Boxes-only minus embedding at AP@0.7: -0.0018 at
+100 ms, -0.0041 at 200 ms, -0.0067 at 400 ms, every cell negative at 200 and
+400 ms; at AP@0.5 and AP@0.3 the differences are within ±0.003 either way.
+Under localization error the same comparison was **+0.0045**, all eight cells
+positive. The reading is that delay corrupts the geometry that association
+runs on, since objects have moved relative to each other, and an appearance
+cue then carries a little information that it does not carry when the
+geometry is intact. It is small, it is one checkpoint against one, and it
+does not buy back a 19x message. It is recorded so that the retirement of
+the embedding is stated with its one measured exception.
+
 **Caveats.** One checkpoint against one checkpoint; the training-seed
 variance of a stage-2 run is not estimated here, so the +0.0045 is the
 difference between these two checkpoints and not between the two designs.
 The direction is consistent with all three earlier nulls. Validation selects
-and test reports: a five-seed test run of the boxes-only trunk and boxes-only
-delay sweeps are queued and will be appended here; until they land, the
-shipping change is proposed, not made.
+and test reports: the boxes-only delay sweeps have landed (above); a five-seed
+test run of the boxes-only trunk is running and will be appended here. Until
+it lands, the shipping change is proposed, not made.
 
 ## What this means for P3-P5
 
