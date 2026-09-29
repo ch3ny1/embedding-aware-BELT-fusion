@@ -49,7 +49,7 @@ oracle, across a localization-noise sweep.
 |---|---|
 | **P2 gate** (head B yaw MAE below predict-zero at every non-zero sigma) | **PASS, 7 of 7 on validation**, definition unmodified, at both detector ranges (6262 pairs out to 70 m). On the **test** split the same criterion still **fails at sigma = 0.2 and 0.4 m** and passes from 0.6 m up -- and at +/-140.8 m the *translation* criterion now fails at 0.2 m too (0.3043 against 0.2797 m), where at +/-70.4 m it passed everywhere. The gate is a validation statement and is not a claim about test; see [below](#p2-gate). |
 | Head A vs head B | **Decisive for B, at both ranges.** At `r70` head A's translation MAE tracks predict-zero to within 1-3% at every sigma (2.688 against 2.734 m at sigma = 2) and its **yaw MAE is *worse* than predict-zero** (1.643 against 1.600 deg). At `r140` its translation pulls 14-20% ahead of predict-zero but its **yaw is worse than predict-zero at every sigma** (0.811 against 0.800 at sigma = 1; 1.603 against 1.600 at sigma = 2), and its error still grows almost linearly in the injected noise -- the signature of a head sitting at the conditional mean. Exactly [CoLoca-QuA's failure](coloca_qua_baseline.md) on the same data. Head B is 8.0x better on yaw and 17x on translation at `r70` (8.9x and 16x at `r140`), with an error essentially flat in sigma. |
-| Does the embedding help? | **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
+| Does the embedding help? | **No, and it is no longer sent.** Through the deployed IRLS + per-pair pipeline the boxes-only trunk and the boxes+embedding trunk sit within ±0.005 AP of each other on both splits at all three thresholds with no stable sign (validation +0.0045 AP@0.7 for boxes-only; test -0.0019); the one measured exception is delay, where the embedding is worth 0.002-0.007 AP@0.7. The 128-d embedding cost 8,034 of the 8,474 bytes per frame per agent. **The shipping configuration is the boxes-only trunk**, whose message is byte-for-byte FreeAlign's. See [the message](#the-message-the-boxes-only-trunk-through-the-deployed-pipeline). The earlier reading, kept for the record: **Barely, and the headline "nothing" still stands where it was measured.** On *association* it is still worth nothing: the boxes-only stage 1 reaches Top-1 **0.9976** against boxes+embeddings' 0.9961. On *fused AP* it is worth **+0.000 to +0.021 AP@0.7** (mean +0.011), the same marginal amount measured before the fixes (+0.010 to +0.016). What did change is the *pose* metric, where the gap widened from ~3% to 12-15% and boxes-only would now **fail** the P2 gate at sigma = 0.2 m (0.1662 against 0.1600) where boxes+embeddings passes. See the caveat below: one seed, and separate warm starts. |
 | Does anything in the message help? | **Yes: the matching supervision, still more than the embedding.** Dropping `match_nll` (`match_weight 0`) costs head B 24% of its corner loss (0.919 -> 1.138 m) and 9-32% of its yaw accuracy. The value is in learning a correspondence from *geometry*, which the auxiliary loss supervises. |
 | **mAP under localization error** (the number the project needs) | **AlignFormer recovers 78-84% of the oracle-vs-vanilla gap at every sigma from 0.4 to 2.0 m**, worth **+0.46 to +0.60 AP@0.7** on the 2170-frame test split, and **+0.18 at sigma = 0.2 m**. At sigma = 0 it still costs **0.055** (it cost 0.070 at +/-70.4 m: the regression shrank by a fifth but did **not** close). |
 | **Inverse-variance correspondence weighting** (deployed, task 19) | **Better pose everywhere, better AP at every non-zero sigma, 0.011 worse at sigma = 0.** Weighting each correspondence by its fitted inverse variance cuts translation MAE 13-16% and yaw MAE 12-14% at every sigma, lifts AP@0.7 by +0.003 to +0.016 from sigma = 0.2 up, and costs 0.0105 at sigma = 0. It also **fixes the test-split translation gate failure at sigma = 0.2 m** (0.2599 against predict-zero's 0.2797, where the unweighted fit gave 0.3043). The variance is driven by **detection score, not range** -- see [below](#the-correspondence-variance-model). |
@@ -2570,7 +2570,8 @@ the camera and LiDAR appearance nulls. None of them had run the boxes-only
 trunk through the pipeline that now ships -- IRLS, per-pair abstention, its
 own calibrated tau. This is that run.
 
-**The boxes-only trunk is better, not merely as good.** Validation, 958
+**On validation the boxes-only trunk looked better, not merely as good**
+(the test subsection below withdraws "better" and keeps "as good"). Validation, 958
 frames, three paired seeds shared with the embedding run
 (`stage2_B_matched_boxes_only/best.pth` against `stage2_B_ivw_scalar/best.pth`,
 each with its own calibrated shrinkage, identical IRLS and `per_pair`
@@ -2637,13 +2638,61 @@ geometry is intact. It is small, it is one checkpoint against one, and it
 does not buy back a 19x message. It is recorded so that the retirement of
 the embedding is stated with its one measured exception.
 
+### Test: the validation lead does not replicate, the bandwidth verdict does not need it
+
+Official 2170-frame test split, five paired seeds shared with the task-24
+`per_pair` run (`abstain_test_result.json`); FreeAlign bit-identical across
+the two runs; oracle 0.8964 in both.
+
+| AP@0.7, test | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | grid | drawn (7) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| boxes only, `per_pair` | **.8674** | **.8385** | .8229 | .8193 | .8148 | .8131 | .8097 | .7990 | .8231 | |
+| boxes + embedding, `per_pair` | .8660 | .8380 | **.8245** | **.8213** | **.8182** | **.8173** | **.8129** | **.8016** | .8250 | |
+| FreeAlign | .8461 | .8342 | .8172 | .8106 | .8070 | .8054 | .8049 | **.8049** | .8163 | |
+| boxes - embedding | +.0014 | +.0005 | -.0016 | -.0021 | -.0034 | -.0043 | -.0032 | -.0026 | **-.0019** | -.0024 |
+| boxes - FreeAlign | **+.0212** | +.0043 | +.0058 | +.0087 | +.0079 | +.0077 | +.0048 | -.0059 | **+.0068** | +.0047 |
+
+| test, boxes - embedding | grid | drawn (7) | | test, boxes - FreeAlign | grid | drawn (7) |
+|---|---:|---:|---|---|---:|---:|
+| AP@0.5 | +.0008 | +.0002 | | AP@0.5 | **+.0162** (all 8 cells) | +.0168 |
+| AP@0.3 | +.0017 | +.0015 | | AP@0.3 | **+.0169** (all 8 cells) | +.0174 |
+
+**The validation +0.0045 was checkpoint noise, as the caveat above said it
+might be.** On test the embedding trunk is ahead at AP@0.7 from sigma = 0.4
+up, by 0.002-0.004 per cell, and behind at sigma = 0 and 0.2 and at AP@0.5
+and AP@0.3. Across both splits and three thresholds the two trunks sit within
+±0.005 of each other with no stable sign. "Better, not merely as good" is
+withdrawn; **as good** is what the measurements support, and it is enough,
+because the boxes-only message costs 19x less and the question was never
+whether the embedding is worth 0.002 but whether it is worth 8,034 bytes per
+frame per agent. It is not. Pose MAE, for the record, is *better* for
+boxes-only on test (0.086 m against 0.120 m at sigma = 0) while AP@0.7 is
+slightly worse: the two disagree in the opposite direction from validation.
+
+**Against FreeAlign on test, the boxes-only arm is ordered at every threshold
+but one cell.** AP@0.7: +0.0068 grid, +0.0212 at sigma = 0, every cell
+positive except sigma = 2 (-0.0059 ±0.0019). AP@0.5 and AP@0.3: every cell
+positive. Same message bytes. The sigma = 2 cell is the sparse tail already
+diagnosed in the oracle-correspondence section and it is the one place
+FreeAlign's always-correct policy pays off.
+
+**The shipping configuration is now the boxes-only trunk**:
+`stage2_B_matched_boxes_only/best.pth` with
+`shrinkage_matched_boxes_only_calibration_result.json`, IRLS Huber n = 2 with
+guard 3.0, `--abstain-arm per_pair`. `configs/alignformer_r140.yaml` names
+it. The embedding trunk's numbers stay in this document as the reference
+they were, and every earlier r140 number still reproduces from the flags it
+quotes. Standing caveats: one checkpoint per trunk, so training-seed
+variance is unmeasured; the delay-axis exception above (the embedding is
+worth 0.002-0.007 AP@0.7 under delay); and FreeAlign is scored without
+EdgeGAT.
+
 **Caveats.** One checkpoint against one checkpoint; the training-seed
 variance of a stage-2 run is not estimated here, so the +0.0045 is the
 difference between these two checkpoints and not between the two designs.
 The direction is consistent with all three earlier nulls. Validation selects
-and test reports: the boxes-only delay sweeps have landed (above); a five-seed
-test run of the boxes-only trunk is running and will be appended here. Until
-it lands, the shipping change is proposed, not made.
+and test reports: both the boxes-only delay sweeps and the five-seed test run
+have landed (above), and the shipping change is made.
 
 ## What this means for P3-P5
 

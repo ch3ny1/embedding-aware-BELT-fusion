@@ -30,12 +30,19 @@
 #   --robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0
 #   --abstain-arm per_pair
 #
-# on outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth. Running the plain
-# `--metric noisy_ap` command with no flags gives the ORIGINAL arm, not the
-# shipped one; docs/alignformer_p2.md quotes the full invocation. Note that
-# `--abstain-arm per_pair` deliberately takes NO `--shrinkage`: the per-pair
-# rule replaces the global-tau calibration rather than stacking on it
-# (alignformer.noisy_fusion.unshrunk_conditions).
+# on outputs/alignformer/r140/stage2_B_matched_boxes_only/best.pth -- the
+# BOXES-ONLY trunk. The 128-d embedding was retired after the test run of
+# 2026-09-29 (docs/alignformer_p2.md, "The message"): through this pipeline
+# the two trunks are within +/-0.005 AP of each other on both splits with no
+# stable sign, and the embedding was 8,034 of the 8,474 bytes per frame per
+# agent. The message is now byte-for-byte FreeAlign's. The embedding trunk
+# (stage2_B_ivw_scalar/best.pth) remains the reference for every earlier
+# r140 number; `embed_dim` below is still needed to load that checkpoint.
+# Running the plain `--metric noisy_ap` command with no flags gives the
+# ORIGINAL arm, not the shipped one; docs/alignformer_p2.md quotes the full
+# invocation. Note that `--abstain-arm per_pair` deliberately takes NO
+# `--shrinkage`: the per-pair rule replaces the global-tau calibration rather
+# than stacking on it (alignformer.noisy_fusion.unshrunk_conditions).
 
 model:
   output_size: 4          # rotated ROI-align grid, k x k
