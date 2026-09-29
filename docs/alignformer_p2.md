@@ -2547,6 +2547,75 @@ python -m embedding_aware_belt_fusion.alignformer.evaluate \
 #   -> outputs/alignformer/r140/delay{1,2,4}_val_result.json
 ```
 
+## The message: the boxes-only trunk through the deployed pipeline
+
+Both AlignFormer and FreeAlign are late fusion, so the detected boxes are on
+the wire either way and neither aligner can be charged for them. What
+separates the two is what each adds on top for alignment. FreeAlign adds
+nothing: it builds its relative-distance graph from the centres and yaws it
+already has. AlignFormer as deployed adds a 128-float per-object embedding.
+At the detector's measured 15.69 objects per agent-frame
+(`bandwidth.alignment_overhead_bytes`, `bandwidth_r140_result.json`):
+
+| bytes / frame / agent | shared box payload | alignment overhead | total |
+|---|---:|---:|---:|
+| FreeAlign | 439 | **0** | 439 |
+| AlignFormer, boxes + embedding (deployed) | 439 | **8,034** | 8,474 |
+| AlignFormer, boxes only | 439 | **0** | 439 |
+
+Three earlier measurements had already put the embedding's value near zero:
+the association diagnostic (+0.0001 AUC-equivalent), the matched `r140` trunk
+ablation (+0.0007 mean AP@0.7, sign flipping four times across the sweep), and
+the camera and LiDAR appearance nulls. None of them had run the boxes-only
+trunk through the pipeline that now ships -- IRLS, per-pair abstention, its
+own calibrated tau. This is that run.
+
+**The boxes-only trunk is better, not merely as good.** Validation, 958
+frames, three paired seeds shared with the embedding run
+(`stage2_B_matched_boxes_only/best.pth` against `stage2_B_ivw_scalar/best.pth`,
+each with its own calibrated shrinkage, identical IRLS and `per_pair`
+settings; FreeAlign's numbers are bit-identical across the two runs, which is
+the check that the pairing is real):
+
+| AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| oracle | .9199 | | | | | | | | |
+| boxes only, `per_pair` | **.9185** | **.9033** | **.9009** | **.9001** | **.8997** | **.9007** | **.8965** | .8872 | **.9009** |
+| boxes + embedding, `per_pair` | .9139 | .8983 | .8947 | .8942 | .8950 | .8961 | .8932 | .8856 | .8964 |
+| FreeAlign | .8962 | .8961 | .8957 | .8958 | .8958 | .8958 | .8957 | **.8958** | .8959 |
+| boxes - embedding | +.0045 | +.0050 | +.0062 | +.0059 | +.0047 | +.0046 | +.0033 | +.0016 | **+.0045** |
+| boxes - FreeAlign | +.0223 | +.0072 | +.0052 | +.0043 | +.0039 | +.0049 | +.0008 | -.0086 | **+.0050** |
+
+All eight cells favour boxes-only at AP@0.7 (sigma = 0 is deterministic; the
+SE of the mean difference over sigmas is 0.0005). At AP@0.5 the difference is
++0.0004 and at AP@0.3 -0.0002, both within noise; against FreeAlign, boxes-only
+is +0.0036 and +0.0024 there. The clean case closes to **0.0014** from the
+oracle, which is the number the directional and `both:0.01` arms above could
+not reach without paying at low sigma.
+
+Its pose error is slightly *worse* (0.0332 m against 0.0321 m at sigma = 0;
+0.137 m against 0.124 m at sigma = 2), and its coverage slightly higher (0.448
+against 0.433 at sigma = 0). Pose MAE and AP@0.7 disagree on which trunk is
+better, for the third time in this document; AP is the criterion.
+
+**What this changes.** The deployed configuration pays 19x the message for a
+difference that is not just indistinguishable from zero but of the wrong sign.
+The boxes-only trunk is byte-for-byte FreeAlign's message, so the
+communication criterion is met by construction rather than by a quantizer, and
+codebook quantization of the embedding has nothing left to quantize. The ego
+still runs the transformer, Sinkhorn, the weighted Kabsch solve, IRLS and the
+per-pair rule; what it stops needing is anything from the CAV beyond the
+boxes it already had. The method's premise -- a per-object embedding
+transmitted alongside the boxes -- is what the measurements retire.
+
+**Caveats.** One checkpoint against one checkpoint; the training-seed
+variance of a stage-2 run is not estimated here, so the +0.0045 is the
+difference between these two checkpoints and not between the two designs.
+The direction is consistent with all three earlier nulls. Validation selects
+and test reports: a five-seed test run of the boxes-only trunk and boxes-only
+delay sweeps are queued and will be appended here; until they land, the
+shipping change is proposed, not made.
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.
