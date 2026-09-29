@@ -39,11 +39,15 @@ references to what it is given.
 
 from __future__ import annotations
 
+import copy
+import functools
+import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 import numpy as np
+import yaml
 
 CORE_METHOD = "V2XRealLateFusionDataset"
 
@@ -60,6 +64,11 @@ V2XREAL_COM_RANGE = 70
 # and cameras for that frame still exist, so an indexer that lists yamls
 # will reach it; the shim refuses it by name rather than by a missing file.
 CORRUPT_FRAMES = frozenset({("2023-04-04-15-58-18_30_0", "1", "000112")})
+
+# Per-process. A training item loads the same four frame yamls ~5 times;
+# 64 entries cover a DataLoader worker's recent items without holding a
+# split's worth of parsed dicts in every worker.
+YAML_CACHE_SIZE = 64
 
 POINT_FLOATS = 4
 POINT_BYTES = POINT_FLOATS * np.dtype(np.float32).itemsize
@@ -117,6 +126,61 @@ def _refuse_corrupt(pcd: Path) -> None:
             f"{pcd.with_suffix('.bin')} was corrupt in the archive and deleted; "
             "skip this frame (alignformer.v2xreal.CORRUPT_FRAMES)"
         )
+
+
+# ----------------------------------------------------------------------------
+# Frame yaml
+# ----------------------------------------------------------------------------
+#
+# Profiled on the NVMe copy: 0.83 s of a 0.93 s training item was pure-Python
+# yaml parsing, 21 loads per item for 4 agents, most of them the same four
+# files reloaded by basedataset's distance calculation and parameter loading.
+# libyaml's C loader with OpenCOOD's float resolver parses the same text
+# several times faster; a bounded per-process cache removes the repeats.
+
+_BaseLoader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _FrameLoader(_BaseLoader):  # type: ignore[misc,valid-type]
+    """libyaml with the implicit float resolver ``yaml_utils.load_yaml`` adds."""
+
+
+# Verbatim from opencood/hypes_yaml/yaml_utils.py: without it YAML 1.1 reads
+# `1e-10` as a string.
+_FrameLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(
+        r"""^(?:
+         [-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+        |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+        |\.[0-9_]+(?:[eE][-+][0-9]+)?
+        |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*
+        |[-+]?\.(?:inf|Inf|INF)
+        |\.(?:nan|NaN|NAN))$""",
+        re.X,
+    ),
+    list("-+0123456789."),
+)
+
+
+@functools.lru_cache(maxsize=YAML_CACHE_SIZE)
+def _parse_yaml(path: str) -> Dict[str, Any]:
+    with open(path, "r") as stream:
+        return yaml.load(stream, Loader=_FrameLoader)
+
+
+def fast_load_yaml(file: str, opt: Optional[Any] = None) -> Dict[str, Any]:
+    """Drop-in for ``yaml_utils.load_yaml`` on frame yamls.
+
+    A deep copy of the cached parse, because OpenCOOD is free to edit what
+    it is handed. Hypes loading (``opt.model_dir``, ``yaml_parser``) is
+    OpenCOOD's job and is deferred to it.
+    """
+    if opt is not None and getattr(opt, "model_dir", None):
+        from opencood.hypes_yaml.yaml_utils import load_yaml
+
+        return load_yaml(file, opt)
+    return copy.deepcopy(_parse_yaml(str(file)))
 
 
 # ----------------------------------------------------------------------------
@@ -198,7 +262,7 @@ def _vehicle_centric(scenario_database: "OrderedDict") -> "OrderedDict":
 
 
 def install_shims(hypes: Dict[str, Any]) -> None:
-    """Patch the LiDAR reader and set OpenCOOD's ranges from ``hypes['v2xreal']``.
+    """Patch the LiDAR and yaml readers; set OpenCOOD's ranges from ``hypes['v2xreal']``.
 
     Idempotent: the reader is wrapped once (a second call finds the wrapper
     already installed), and the ranges are plain assignments.
@@ -210,6 +274,12 @@ def install_shims(hypes: Dict[str, Any]) -> None:
         shim = bin_pcd_to_np(pcd_utils.pcd_to_np)
         shim.__v2xreal_shim__ = True  # type: ignore[attr-defined]
         pcd_utils.pcd_to_np = shim
+
+    import opencood.data_utils.datasets.basedataset as basedataset
+    import opencood.data_utils.datasets.late_fusion_dataset as late_fusion
+
+    basedataset.load_yaml = fast_load_yaml
+    late_fusion.load_yaml = fast_load_yaml
 
     ranges = hypes.get("v2xreal")
     if not ranges:
@@ -242,6 +312,7 @@ __all__ = [
     "VEHICLE_TYPES",
     "bin_pcd_to_np",
     "build_dataset",
+    "fast_load_yaml",
     "filter_vehicles",
     "install_shims",
     "load_lidar_bin",
