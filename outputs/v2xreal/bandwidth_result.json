@@ -1,0 +1,53 @@
+{
+  "method": "v2xreal_bandwidth",
+  "metric": "bytes_per_frame_per_agent",
+  "precision": "float32",
+  "alignformer_cache": "/media/chenyi/basement2/cache/alignformer_v2xreal/test",
+  "alignformer": {
+    "agent_frames": 6850,
+    "objects_per_agent_mean": 7.772846715328467,
+    "objects_per_agent_median": 7.0,
+    "objects_per_agent_max": 29,
+    "truncated_at_max_objects": 0,
+    "box_floats": 7,
+    "embed_dim": 128,
+    "bytes_per_object": 540,
+    "bytes_per_frame_per_agent": 4197.337226277372,
+    "bytes_per_frame_per_agent_boxes_only": 217.63970802919707
+  },
+  "alignment_overhead": {
+    "freealign": {
+      "objects_per_agent": 7.772846715328467,
+      "box_floats": 7,
+      "embed_dim": 0,
+      "shared_box_bytes_per_frame_per_agent": 217.63970802919707,
+      "alignment_overhead_bytes_per_frame_per_agent": 0.0,
+      "total_bytes_per_frame_per_agent": 217.63970802919707
+    },
+    "alignformer_boxes_only": {
+      "objects_per_agent": 7.772846715328467,
+      "box_floats": 7,
+      "embed_dim": 0,
+      "shared_box_bytes_per_frame_per_agent": 217.63970802919707,
+      "alignment_overhead_bytes_per_frame_per_agent": 0.0,
+      "total_bytes_per_frame_per_agent": 217.63970802919707
+    },
+    "alignformer_boxes_embedding": {
+      "objects_per_agent": 7.772846715328467,
+      "box_floats": 7,
+      "embed_dim": 128,
+      "shared_box_bytes_per_frame_per_agent": 217.63970802919707,
+      "alignment_overhead_bytes_per_frame_per_agent": 3979.697518248175,
+      "total_bytes_per_frame_per_agent": 4197.337226277372
+    },
+    "alignformer_boxes_embedding_camera": {
+      "objects_per_agent": 7.772846715328467,
+      "box_floats": 7,
+      "embed_dim": 128,
+      "shared_box_bytes_per_frame_per_agent": 217.63970802919707,
+      "alignment_overhead_bytes_per_frame_per_agent": 3979.697518248175,
+      "total_bytes_per_frame_per_agent": 4197.337226277372
+    }
+  },
+  "note": "the camera trunk adds the camera feature INTO the same 128-float embedding, so its message is byte-identical to the LiDAR embedding trunk"
+}
