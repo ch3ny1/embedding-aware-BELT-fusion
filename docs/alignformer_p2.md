@@ -2521,8 +2521,9 @@ static object off its true position (AP@0.5, AP@0.3). Shrinkage lands in
 between. Which threshold is "the" metric at 400 ms is a choice; both are
 reported.
 
-**Caveats.** Three seeds, not five; validation only, test is not run on this
-axis yet; `sim` mode is a constant delay applied to every CAV, not the
+**Caveats.** Three seeds, not five; this section is validation with the
+embedding trunk, and the test-split numbers for the shipped trunk are under
+"Delay on the test split, shipped trunk" below; `sim` mode is a constant delay applied to every CAV, not the
 per-agent random model; the first `d` frames of each scenario get a shorter
 delay by the clamp; FreeAlign is scored without EdgeGAT, so its margins are
 conservative and ours optimistic, as everywhere in this document; and neither
@@ -2686,6 +2687,43 @@ quotes. Standing caveats: one checkpoint per trunk, so training-seed
 variance is unmeasured; the delay-axis exception above (the embedding is
 worth 0.002-0.007 AP@0.7 under delay); and FreeAlign is scored without
 EdgeGAT.
+
+### Delay on the test split, shipped trunk
+
+Official 2170-frame test split, boxes-only trunk, IRLS + `per_pair`, three
+paired seeds, sigma in {0, 0.4, 1.0, 2.0} on top of each delay. Ours minus
+FreeAlign, mean over sigmas, with the one negative cell named where there is
+one:
+
+| delay | AP@0.7 | AP@0.5 | AP@0.3 | ours emits | FreeAlign emits |
+|---|---:|---:|---:|---:|---:|
+| 100 ms | **+0.0246** (all four cells, |t| >= 5) | **+0.0669** (all) | **+0.0521** (all) | 0.51 m | 3.12 m |
+| 200 ms | +0.0065 (sigma = 2: -0.0030 ±0.0018) | **+0.0829** (all) | **+0.1200** (all) | 1.00 m | 6.73 m |
+| 400 ms | -0.0114 (sigma = 0: **+0.0069**; negative from 0.4 up) | **+0.0566** (all) | **+0.1327** (all) | 1.97 m | 13.32 m |
+
+Full AP@0.7 rows, sigma = 0 / 0.4 / 1.0 / 2.0:
+
+| AP@0.7, test | oracle | uncorrected | ours | FreeAlign |
+|---|---:|---|---|---|
+| 100 ms | .3507 | .351 .195 .168 .190 | **.645 .619 .621 .613** | .604 .600 .597 .598 |
+| 200 ms | .2242 | .224 .164 .171 .194 | **.481 .459 .463** .457 | .459 .457 .459 **.460** |
+| 400 ms | .2607 | .261 .222 .208 .208 | **.360** .344 .339 .324 | .353 **.352 .353 .354** |
+
+Test is kinder to the shipped trunk than validation was at 400 ms (-0.011
+against -0.050 at AP@0.7), and at AP@0.5 the 400 ms lead is +0.057 where
+validation gave +0.019. The shape is otherwise the one validation showed:
+ours through 200 ms at every threshold but one cell; at 400 ms FreeAlign
+takes AP@0.7 from sigma = 0.4 up while emitting 13.3 m corrections, and we
+take AP@0.5 and AP@0.3 by 0.06 and 0.13. FreeAlign's coverage falls under
+delay on test (0.90 / 0.88 / 0.86), so its always-correct policy is no
+longer quite that; ours is 0.72 / 0.77 / 0.81. The caveats of the validation
+section apply unchanged: three seeds, `sim` mode constant delay, the clamp
+at scenario start, no motion model on either side, no EdgeGAT.
+
+**Reproducing:** the validation delay command with
+`--split /media/chenyi/Elements1/Dataset/OPV2V/test`, the boxes-only
+checkpoint and shrinkage named under "The message", and
+`--output outputs/alignformer/r140/boxesonly_delay{1,2,4}_test_result.json`.
 
 **Caveats.** One checkpoint against one checkpoint; the training-seed
 variance of a stage-2 run is not estimated here, so the +0.0045 is the
