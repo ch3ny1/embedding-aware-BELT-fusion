@@ -21,10 +21,14 @@
 #       This trunk. configs/alignformer_v2xreal_camera.yaml is the same file
 #       with camera_dim 256 and nothing else changed.
 #   model.correspondence_variance
-#       The OPV2V fit is NOT reused. mode none here; the scalar
-#       inverse-variance model is refit on V2X-Real val/ by
-#       scripts/fit_correspondence_variance.py before the deployed arm runs,
-#       and the fitted numbers replace these placeholders in a later commit.
+#       The OPV2V fit is NOT reused. The numbers below are the scalar
+#       inverse-variance model refit on the official V2X-Real val/ split by
+#       scripts/fit_correspondence_variance.py on 2026-09-29
+#       (outputs/v2xreal/variance_fit_result.json: 11,652 correspondences
+#       over 4,334 pairs, RMS 0.436 m / 10.02 deg; the confidence form wins
+#       over range here too, by 0.023 / 0.066 Gamma deviance, range adds
+#       nothing). mode none here; stage 2 is trained with
+#       --variance-weighting scalar and the checkpoint carries the mode.
 #
 # Everything else (trunk width, epochs, curriculum, comm range) is the OPV2V
 # configuration, on purpose: the comparison is across datasets, not across
@@ -41,10 +45,10 @@ model:
   max_objects: 64
   correspondence_variance:
     mode: none
-    sigma_translation_m: 0.2516
-    translation_exponent: 1.1281
-    sigma_yaw_deg: 4.6392
-    yaw_exponent: 1.9322
+    sigma_translation_m: 0.2887
+    translation_exponent: 0.4928
+    sigma_yaw_deg: 6.0141
+    yaw_exponent: 1.0310
     score_reference: 0.4
 train:
   stage1_epochs: 20
