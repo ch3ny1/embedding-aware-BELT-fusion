@@ -119,6 +119,10 @@ def bin_pcd_to_np(real_reader: PcdReader) -> PcdReader:
     return read
 
 
+def _no_pcd_reader(pcd_file: str) -> np.ndarray:
+    raise FileNotFoundError(f"V2X-Real has no .pcd files; {pcd_file} should not exist")
+
+
 def _refuse_corrupt(pcd: Path) -> None:
     key = (pcd.parent.parent.name, pcd.parent.name, pcd.stem)
     if key in CORRUPT_FRAMES:
@@ -238,6 +242,34 @@ def _dataset_class():
                 entry["params"] = filter_vehicles(content["params"])
                 filtered[cav_id] = entry
             return filtered
+
+        # The three hooks the cache builder asks for when it assembles one
+        # agent-frame from paths, outside retrieve_base_data.
+
+        @staticmethod
+        def frame_params(yaml_path: Path | str) -> Dict[str, Any]:
+            return filter_vehicles(fast_load_yaml(str(yaml_path)))
+
+        @staticmethod
+        def frame_points(lidar_path: Path | str) -> np.ndarray:
+            return bin_pcd_to_np(_no_pcd_reader)(str(lidar_path))
+
+        @staticmethod
+        def frame_cameras(yaml_path: Path | str):
+            """``[(image, Calibration), ...]`` for every ``cam*`` block that has a jpeg."""
+            from embedding_aware_belt_fusion.alignformer.camera_features import (
+                calibration_from_yaml,
+                load_image,
+            )
+
+            yaml_path = Path(yaml_path)
+            params = fast_load_yaml(str(yaml_path))
+            cameras = []
+            for name in sorted(k for k in params if k.startswith("cam")):
+                image_path = yaml_path.with_name(f"{yaml_path.stem}_{name}.jpeg")
+                if image_path.exists():
+                    cameras.append((load_image(image_path), calibration_from_yaml(params[name])))
+            return cameras
 
     return V2XRealLateFusionDataset
 

@@ -110,3 +110,88 @@ def test_evaluate_and_cache_share_the_same_frame_seed_function():
     # identity proves there is exactly one implementation left to edit.
     assert evaluate_module.frame_seed is cache_module.frame_seed
     assert evaluate_module.frame_seed is frame_seed
+
+
+# ----------------------------------------------------------------------------
+# Camera features ride beside the LiDAR ROI feature, optionally
+# ----------------------------------------------------------------------------
+#
+# OPV2V caches were written without them and must read back unchanged; a
+# V2X-Real cache built with --camera carries three extra arrays per frame.
+
+
+def _record_with_camera(n: int = 3):
+    import numpy as np
+
+    from embedding_aware_belt_fusion.alignformer.cache import FrameRecord
+
+    return FrameRecord(
+        boxes=np.zeros((n, 7), dtype=np.float32),
+        scores=np.ones(n, dtype=np.float32),
+        gt_ids=[None] * n,
+        roi=np.zeros((n, 4, 4, 8), dtype=np.float16),
+        camera=np.arange(n * 256, dtype=np.float32).reshape(n, 256),
+        has_camera=np.array([True, False, True][:n]),
+        camera_index=np.array([0, -1, 1][:n], dtype=np.int8),
+    )
+
+
+def test_camera_fields_round_trip_through_the_npz(tmp_path):
+    import numpy as np
+
+    from embedding_aware_belt_fusion.alignformer.cache import read_frame, write_frame
+
+    record = _record_with_camera()
+    write_frame(tmp_path / "f.npz", record)
+
+    loaded = read_frame(tmp_path / "f.npz")
+
+    np.testing.assert_allclose(loaded.camera, record.camera, rtol=1e-3)  # float16 on disk
+    np.testing.assert_array_equal(loaded.has_camera, record.has_camera)
+    np.testing.assert_array_equal(loaded.camera_index, record.camera_index)
+
+
+def test_a_record_without_camera_fields_reads_back_with_none(tmp_path):
+    import numpy as np
+
+    from embedding_aware_belt_fusion.alignformer.cache import FrameRecord, read_frame, write_frame
+
+    record = FrameRecord(
+        boxes=np.zeros((2, 7), dtype=np.float32),
+        scores=np.ones(2, dtype=np.float32),
+        gt_ids=[None, "7"],
+        roi=np.zeros((2, 4, 4, 8), dtype=np.float16),
+    )
+    write_frame(tmp_path / "f.npz", record)
+
+    loaded = read_frame(tmp_path / "f.npz")
+
+    assert loaded.camera is None and loaded.has_camera is None and loaded.camera_index is None
+    assert loaded.gt_ids == [None, "7"]
+
+
+def test_camera_fields_must_match_the_box_count():
+    import numpy as np
+
+    from embedding_aware_belt_fusion.alignformer.cache import FrameRecord
+
+    with pytest.raises(ValueError, match="camera"):
+        FrameRecord(
+            boxes=np.zeros((2, 7), dtype=np.float32),
+            scores=np.ones(2, dtype=np.float32),
+            gt_ids=[None, None],
+            roi=np.zeros((2, 4, 4, 8), dtype=np.float16),
+            camera=np.zeros((3, 256), dtype=np.float32),
+            has_camera=np.zeros(3, dtype=bool),
+            camera_index=np.full(3, -1, dtype=np.int8),
+        )
+
+
+def test_the_cache_cli_has_a_camera_switch(monkeypatch):
+    from embedding_aware_belt_fusion.alignformer.cache import parse_args
+
+    monkeypatch.setattr("sys.argv", ["cache", "--config", "c.yaml", "--splits", "s", "--cache-root", "r", "--camera"])
+    assert parse_args().camera is True
+
+    monkeypatch.setattr("sys.argv", ["cache", "--config", "c.yaml", "--splits", "s", "--cache-root", "r"])
+    assert parse_args().camera is False

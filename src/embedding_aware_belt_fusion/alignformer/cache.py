@@ -45,6 +45,12 @@ class FrameRecord:
     scores: np.ndarray
     gt_ids: Sequence[Optional[str]]
     roi: np.ndarray
+    # Per-object camera features (alignformer.camera_features), present only
+    # in caches built with --camera. OPV2V caches predate them and read back
+    # as None; the pair dataset treats None as "this trunk has no camera".
+    camera: Optional[np.ndarray] = None
+    has_camera: Optional[np.ndarray] = None
+    camera_index: Optional[np.ndarray] = None
 
     def __post_init__(self) -> None:
         count = self.boxes.shape[0]
@@ -53,6 +59,13 @@ class FrameRecord:
             "gt_ids": len(self.gt_ids),
             "roi": self.roi.shape[0],
         }
+        present = [f is not None for f in (self.camera, self.has_camera, self.camera_index)]
+        if any(present) and not all(present):
+            raise ValueError("camera, has_camera and camera_index must be given together")
+        if all(present):
+            lengths["camera"] = self.camera.shape[0]
+            lengths["has_camera"] = self.has_camera.shape[0]
+            lengths["camera_index"] = self.camera_index.shape[0]
         mismatched = {name: n for name, n in lengths.items() if n != count}
         if mismatched:
             raise ValueError(f"inconsistent length against {count} boxes: {mismatched}")
@@ -93,13 +106,19 @@ def write_frame(path: Union[Path, str], record: FrameRecord) -> None:
         [_NO_GT_ID if value is None else str(value) for value in record.gt_ids],
         dtype=np.str_,
     )
-    np.savez(
-        path,
+    arrays = dict(
         boxes=record.boxes.astype(np.float32),
         scores=record.scores.astype(np.float32),
         gt_ids=gt_ids,
         roi=record.roi.astype(np.float16),
     )
+    if record.camera is not None:
+        arrays.update(
+            camera=record.camera.astype(np.float16),
+            has_camera=record.has_camera.astype(bool),
+            camera_index=record.camera_index.astype(np.int8),
+        )
+    np.savez(path, **arrays)
 
 
 def read_frame(path: Union[Path, str]) -> FrameRecord:
@@ -112,6 +131,9 @@ def read_frame(path: Union[Path, str]) -> FrameRecord:
                 None if value == _NO_GT_ID else str(value) for value in data["gt_ids"]
             ],
             roi=data["roi"],
+            camera=data["camera"] if "camera" in data else None,
+            has_camera=data["has_camera"] if "has_camera" in data else None,
+            camera_index=data["camera_index"] if "camera_index" in data else None,
         )
 
 
@@ -292,17 +314,25 @@ def _cache_one_frame(
     output_size: int,
     device,
     stats: PcdCacheStats,
+    camera_backbone=None,
 ) -> None:
-    """Detect, ROI-align, and write the cache record for one agent-frame."""
-    from opencood.hypes_yaml.yaml_utils import load_yaml
+    """Detect, ROI-align, and write the cache record for one agent-frame.
+
+    A dataset that exposes ``frame_params`` / ``frame_points`` (the V2X-Real
+    adapter) supplies its own yaml filtering and ``.bin`` reading; OpenCOOD's
+    stock dataset gets the OPV2V path, unchanged. With ``camera_backbone``
+    set, the dataset's ``frame_cameras`` supplies the images and the record
+    carries per-object camera features.
+    """
     from torch import no_grad
 
     from embedding_aware_belt_fusion.alignformer.boxes import detect_agent
     from embedding_aware_belt_fusion.alignformer.embedding import rotated_roi_align
 
     cav_dir = split_root / scenario / cav_id
-    params = load_yaml(str(cav_dir / f"{timestamp}.yaml"), None)
-    lidar_np = _load_agent_points(cav_dir / f"{timestamp}.pcd", pcd_cache_root, split_root, stats)
+    yaml_path = cav_dir / f"{timestamp}.yaml"
+    params = _frame_params(dataset, yaml_path)
+    lidar_np = _frame_points(dataset, cav_dir / f"{timestamp}.pcd", pcd_cache_root, split_root, stats)
     cav_content = _cav_content_for_frame(
         dataset, params, lidar_np, device, scenario=scenario, cav_id=cav_id, timestamp=timestamp
     )
@@ -311,15 +341,45 @@ def _cache_one_frame(
         detections = detect_agent(detector, cav_content, postprocessor)
         roi = rotated_roi_align(detections.features, detections.boxes, lidar_range, output_size)
 
-    write_frame(
-        destination,
-        FrameRecord(
-            boxes=detections.boxes.detach().cpu().numpy(),
-            scores=detections.scores.detach().cpu().numpy(),
-            gt_ids=list(detections.gt_ids),
-            roi=roi.detach().cpu().numpy().astype(np.float16),
-        ),
+    record = FrameRecord(
+        boxes=detections.boxes.detach().cpu().numpy(),
+        scores=detections.scores.detach().cpu().numpy(),
+        gt_ids=list(detections.gt_ids),
+        roi=roi.detach().cpu().numpy().astype(np.float16),
     )
+    if camera_backbone is not None:
+        record = _with_camera(record, camera_backbone, dataset, yaml_path, detections)
+    write_frame(destination, record)
+
+
+def _with_camera(record: FrameRecord, backbone, dataset, yaml_path: Path, detections) -> FrameRecord:
+    from dataclasses import replace
+
+    from embedding_aware_belt_fusion.alignformer.camera_features import frame_camera_features
+
+    cameras = dataset.frame_cameras(yaml_path)
+    corners = detections.corners.detach().cpu().numpy()
+    features = frame_camera_features(backbone, corners, cameras)
+    return replace(
+        record,
+        camera=features.features,
+        has_camera=features.has_camera,
+        camera_index=features.camera_index,
+    )
+
+
+def _frame_params(dataset, yaml_path: Path) -> Dict:
+    if hasattr(dataset, "frame_params"):
+        return dataset.frame_params(yaml_path)
+    from opencood.hypes_yaml.yaml_utils import load_yaml
+
+    return load_yaml(str(yaml_path), None)
+
+
+def _frame_points(dataset, pcd_path: Path, pcd_cache_root: Path, split_root: Path, stats: PcdCacheStats):
+    if hasattr(dataset, "frame_points"):
+        return dataset.frame_points(pcd_path)
+    return _load_agent_points(pcd_path, pcd_cache_root, split_root, stats)
 
 
 def _log_progress(
@@ -349,12 +409,16 @@ def build_split_cache(
     pcd_cache_root: Path,
     output_size: int,
     device,
+    camera_backbone=None,
 ) -> PcdCacheStats:
-    """Detect and cache every agent-frame under one OPV2V split directory."""
+    """Detect and cache every agent-frame under one split directory."""
     from embedding_aware_belt_fusion.coloca.index import scan_split
 
-    checked = verify_pcd_cache_equivalence(pcd_cache_root, split_root)
-    print(f"{split_name}: pcd cache equivalence check passed on {checked} frames", flush=True)
+    if hasattr(dataset, "frame_points"):
+        print(f"{split_name}: dataset reads its own LiDAR; no pcd mirror involved", flush=True)
+    else:
+        checked = verify_pcd_cache_equivalence(pcd_cache_root, split_root)
+        print(f"{split_name}: pcd cache equivalence check passed on {checked} frames", flush=True)
 
     frames = list(_iter_agent_frames(scan_split(split_root)))
     print(f"{split_name}: {len(frames)} agent-frames to cache", flush=True)
@@ -378,6 +442,7 @@ def build_split_cache(
                 output_size=output_size,
                 device=device,
                 stats=stats,
+                camera_backbone=camera_backbone,
             )
 
         done += 1
@@ -401,13 +466,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-size", type=int, default=DEFAULT_OUTPUT_SIZE)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument(
+        "--camera",
+        action="store_true",
+        help="also store per-object camera features (alignformer.camera_features); "
+        "needs a dataset that exposes frame_cameras, i.e. the V2X-Real adapter",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     import torch
-    from opencood.data_utils.datasets import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
+
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
 
     args = parse_args()
     if args.device == "cuda" and not torch.cuda.is_available():
@@ -422,6 +494,13 @@ def main() -> None:
     # one instance covers every split passed on the command line.
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
+    camera_backbone = None
+    if args.camera:
+        if not hasattr(dataset, "frame_cameras"):
+            raise ValueError("--camera needs a dataset that exposes frame_cameras (the V2X-Real adapter)")
+        from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
+
+        camera_backbone = CameraBackbone().to(device)
 
     for split in args.splits:
         split_root = Path(split)
@@ -437,6 +516,7 @@ def main() -> None:
             pcd_cache_root=args.pcd_cache_root / split_name,
             output_size=args.output_size,
             device=device,
+            camera_backbone=camera_backbone,
         )
         hits, misses = stats.snapshot()
         total = hits + misses

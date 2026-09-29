@@ -416,3 +416,51 @@ def test_building_the_dataset_installs_the_fast_loader(scenario_tree):
 
     assert basedataset.load_yaml is fast_load_yaml
     assert late_fusion.load_yaml is fast_load_yaml
+
+
+# ----------------------------------------------------------------------------
+# Frame hooks for the cache builder
+# ----------------------------------------------------------------------------
+#
+# The cache builder assembles one agent-frame at a time from a yaml path and
+# a LiDAR path, outside retrieve_base_data. The V2X-Real dataset therefore
+# exposes the same two differences as methods the builder can ask for.
+
+
+def test_frame_params_filters_the_classes_the_way_retrieve_base_data_does(scenario_tree):
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    dataset = build_dataset(_hypes_for(scenario_tree), visualize=False, train=False)
+
+    params = dataset.frame_params(scenario_tree / SCENARIO / "1" / "000000.yaml")
+
+    assert set(params["vehicles"]) == {"1", "4"}
+    assert params["lidar_pose"][0] == 5.0
+
+
+def test_frame_points_reads_the_bin_named_by_its_pcd_path(scenario_tree):
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    dataset = build_dataset(_hypes_for(scenario_tree), visualize=False, train=False)
+
+    points = dataset.frame_points(scenario_tree / SCENARIO / "1" / "000000.pcd")
+
+    assert points.shape == (50, 4)
+
+
+def test_frame_cameras_returns_both_images_with_their_calibrations(scenario_tree):
+    from PIL import Image
+
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
+
+    folder = scenario_tree / SCENARIO / "1"
+    for cam in ("cam1", "cam2"):
+        Image.new("RGB", (64, 32), color=(10, 20, 30)).save(folder / f"000000_{cam}.jpeg")
+    dataset = build_dataset(_hypes_for(scenario_tree), visualize=False, train=False)
+
+    cameras = dataset.frame_cameras(folder / "000000.yaml")
+
+    assert len(cameras) == 2
+    image, calib = cameras[0]
+    assert image.shape == (32, 64, 3)
+    assert calib.intrinsic.shape == (3, 3) and calib.camera_to_lidar.shape == (4, 4)

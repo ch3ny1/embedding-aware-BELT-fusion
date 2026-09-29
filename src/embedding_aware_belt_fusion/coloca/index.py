@@ -58,6 +58,15 @@ def parse_lidar_pose(yaml_path: Path) -> list[float]:
     raise ValueError(f"no lidar_pose key found in {yaml_path}")
 
 
+# OPV2V ships <ts>.pcd; V2X-Real ships <ts>.bin (float32 x, y, z, i). A frame
+# without either has no point cloud and is not a usable frame.
+LIDAR_SUFFIXES = (".pcd", ".bin")
+
+
+def _has_lidar(cav_dir: Path, stem: str) -> bool:
+    return any((cav_dir / f"{stem}{suffix}").exists() for suffix in LIDAR_SUFFIXES)
+
+
 def scan_split(root_dir: Path) -> dict[str, dict[str, dict[str, list[float]]]]:
     """Walk an OPV2V split and return ``{scenario: {cav_id: {timestamp: pose}}}``."""
     if not root_dir.is_dir():
@@ -76,7 +85,7 @@ def scan_split(root_dir: Path) -> dict[str, dict[str, dict[str, list[float]]]]:
             frames = {
                 path.stem: parse_lidar_pose(path)
                 for path in sorted(cav_dir.glob("*.yaml"))
-                if (cav_dir / f"{path.stem}.pcd").exists()
+                if _has_lidar(cav_dir, path.stem)
             }
             if frames:
                 agents[cav_id] = frames

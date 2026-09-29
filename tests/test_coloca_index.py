@@ -259,3 +259,23 @@ def test_a_roadside_unit_is_never_the_opencood_ego():
 def test_the_opencood_ego_needs_at_least_one_agent():
     with pytest.raises(ValueError, match="at least one agent"):
         opencood_ego_id([])
+
+
+# ----------------------------------------------------------------------------
+# V2X-Real: the LiDAR is <ts>.bin, never <ts>.pcd
+# ----------------------------------------------------------------------------
+
+
+def test_scan_split_counts_a_frame_whose_lidar_is_a_bin_file(tmp_path):
+    from embedding_aware_belt_fusion.coloca.index import scan_split
+
+    cav = tmp_path / "2023-01-01-00-00-00_1_0" / "1"
+    cav.mkdir(parents=True)
+    (cav / "000000.yaml").write_text("lidar_pose:\n- 1.0\n- 2.0\n- 3.0\n- 0.0\n- 0.0\n- 0.0\n")
+    (cav / "000000.bin").write_bytes(b"\x00" * 16)
+    (cav / "000001.yaml").write_text("lidar_pose:\n- 1.0\n- 2.0\n- 3.0\n- 0.0\n- 0.0\n- 0.0\n")
+    # no LiDAR at all for 000001: not a usable frame
+
+    poses = scan_split(tmp_path)
+
+    assert list(poses["2023-01-01-00-00-00_1_0"]["1"]) == ["000000"]
