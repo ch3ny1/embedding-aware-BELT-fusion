@@ -8,7 +8,7 @@ carries appearance for matching, the box carries geometry for solving.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -94,10 +94,21 @@ def rotated_roi_align(
 
 
 class ObjectEmbedding(nn.Module):
-    """Map pooled ROI features to an L2-normalized per-object descriptor."""
+    """Map pooled ROI features to an L2-normalized per-object descriptor.
 
-    def __init__(self, in_channels: int, output_size: int, dim: int) -> None:
+    With ``camera_dim > 0`` the head also takes a per-object camera vector
+    (``alignformer.camera_features``) and ADDS its projection to the LiDAR
+    descriptor before normalization, masked by ``has_camera``. The descriptor
+    keeps its dimension, so the LiDAR+camera message costs exactly the bytes
+    the LiDAR message costs, and an object seen by no camera gets the LiDAR
+    descriptor unchanged: a camera head fed ``has_camera = False`` everywhere
+    IS the LiDAR head.
+    """
+
+    def __init__(self, in_channels: int, output_size: int, dim: int, camera_dim: int = 0) -> None:
         super().__init__()
+        if camera_dim < 0:
+            raise ValueError(f"camera_dim must be non-negative, got {camera_dim}")
         flat = in_channels * output_size * output_size
         self.net = nn.Sequential(
             nn.Flatten(start_dim=1),
@@ -106,10 +117,38 @@ class ObjectEmbedding(nn.Module):
             nn.GELU(),
             nn.Linear(2 * dim, dim),
         )
+        self.camera_net = (
+            nn.Sequential(
+                nn.Linear(camera_dim, 2 * dim),
+                nn.LayerNorm(2 * dim),
+                nn.GELU(),
+                nn.Linear(2 * dim, dim),
+            )
+            if camera_dim > 0
+            else None
+        )
         self.dim = dim
+        self.camera_dim = camera_dim
 
-    def forward(self, roi: Tensor) -> Tensor:
+    def lidar_descriptor(self, roi: Tensor) -> Tensor:
+        """The un-normalized LiDAR branch, ``(M, dim)``."""
+        return self.net(roi)
+
+    def forward(
+        self,
+        roi: Tensor,
+        camera: Optional[Tensor] = None,
+        has_camera: Optional[Tensor] = None,
+    ) -> Tensor:
         """Return ``(M, dim)`` unit-norm embeddings for ``(M, C, k, k)`` ROI features."""
+        if self.camera_net is None and camera is not None:
+            raise ValueError("this head has no camera branch (camera_dim = 0) but was given camera input")
+        if self.camera_net is not None and (camera is None or has_camera is None):
+            raise ValueError("a camera head needs both camera and has_camera")
         if roi.shape[0] == 0:
             return roi.new_zeros((0, self.dim))
-        return F.normalize(self.net(roi), p=2.0, dim=1)
+        descriptor = self.lidar_descriptor(roi)
+        if self.camera_net is not None:
+            visible = has_camera.to(descriptor.dtype).unsqueeze(1)
+            descriptor = descriptor + self.camera_net(camera.to(descriptor.dtype)) * visible
+        return F.normalize(descriptor, p=2.0, dim=1)

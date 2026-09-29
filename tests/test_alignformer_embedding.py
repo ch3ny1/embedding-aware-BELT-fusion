@@ -140,3 +140,77 @@ def test_embedding_handles_empty_object_set():
     embeddings = head(torch.zeros(0, 8, 4, 4))
 
     assert embeddings.shape == (0, 128)
+
+
+# ----------------------------------------------------------------------------
+# Camera input: the LiDAR+camera trunk of the V2X-Real comparison
+# ----------------------------------------------------------------------------
+#
+# The camera vector enters the SAME head and is ADDED before normalization,
+# so the descriptor keeps its dimension: the LiDAR+camera message costs the
+# ego exactly the bytes the LiDAR message costs, and the comparison between
+# the two trunks is about information, not bandwidth. An object visible in
+# no camera contributes nothing from the camera branch, by the mask, so a
+# camera head fed has_camera = False everywhere IS the LiDAR head.
+
+
+def _roi(n: int = 3, channels: int = 8, size: int = 4) -> torch.Tensor:
+    return torch.randn(n, channels, size, size, generator=torch.Generator().manual_seed(0))
+
+
+def test_a_head_without_camera_dim_rejects_camera_input():
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+
+    head = ObjectEmbedding(in_channels=8, output_size=4, dim=16)
+
+    with pytest.raises(ValueError, match="camera"):
+        head(_roi(), camera=torch.zeros(3, 256), has_camera=torch.ones(3, dtype=torch.bool))
+
+
+def test_a_camera_head_requires_camera_input():
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+
+    head = ObjectEmbedding(in_channels=8, output_size=4, dim=16, camera_dim=256)
+
+    with pytest.raises(ValueError, match="camera"):
+        head(_roi())
+
+
+def test_an_object_seen_by_no_camera_gets_the_lidar_descriptor():
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+
+    torch.manual_seed(0)
+    head = ObjectEmbedding(in_channels=8, output_size=4, dim=16, camera_dim=256).eval()
+    roi = _roi()
+    camera = torch.randn(3, 256)
+    nobody = torch.zeros(3, dtype=torch.bool)
+
+    with_camera = head(roi, camera=camera, has_camera=nobody)
+    lidar_only = head.lidar_descriptor(roi)
+
+    torch.testing.assert_close(with_camera, torch.nn.functional.normalize(lidar_only, dim=1))
+
+
+def test_a_visible_camera_changes_the_descriptor_and_keeps_its_dimension():
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+
+    torch.manual_seed(0)
+    head = ObjectEmbedding(in_channels=8, output_size=4, dim=16, camera_dim=256).eval()
+    roi = _roi()
+    camera = torch.randn(3, 256)
+
+    seen = head(roi, camera=camera, has_camera=torch.tensor([True, False, True]))
+    unseen = head(roi, camera=camera, has_camera=torch.zeros(3, dtype=torch.bool))
+
+    assert seen.shape == (3, 16)
+    torch.testing.assert_close(seen.norm(dim=1), torch.ones(3))
+    assert not torch.allclose(seen[0], unseen[0])
+    torch.testing.assert_close(seen[1], unseen[1])
+    assert not torch.allclose(seen[2], unseen[2])
+
+
+def test_the_camera_head_reports_its_camera_dim():
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+
+    assert ObjectEmbedding(in_channels=8, output_size=4, dim=16).camera_dim == 0
+    assert ObjectEmbedding(in_channels=8, output_size=4, dim=16, camera_dim=256).camera_dim == 256

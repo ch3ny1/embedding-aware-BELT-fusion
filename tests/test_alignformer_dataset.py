@@ -381,3 +381,122 @@ def test_set_epoch_actually_changes_the_sampled_noise(tmp_path):
     assert sample_first_epoch["psi_true"].item() == pytest.approx(0.0, abs=1e-6)
 
     assert torch.linalg.norm(sample_last_epoch["t_true"]).item() > 1e-3
+
+
+# ----------------------------------------------------------------------------
+# Camera fields: emitted only when asked for, truncated with the boxes
+# ----------------------------------------------------------------------------
+#
+# The LiDAR+camera trunk reads per-object camera features from the cache
+# beside the ROI feature. Everything else is untouched: a dataset built
+# without ``use_camera`` never emits the fields, so the OPV2V path is
+# bit-identical to before the fields existed.
+
+
+def _write_camera_frame(path, boxes, gt_ids, has_camera):
+    from embedding_aware_belt_fusion.alignformer.camera_features import FEATURE_DIM
+
+    count = boxes.shape[0]
+    write_frame(
+        path,
+        FrameRecord(
+            boxes=boxes.astype(np.float32),
+            scores=np.linspace(1.0, 0.5, count).astype(np.float32),
+            gt_ids=gt_ids,
+            roi=np.zeros((count, 2, 2, 2), dtype=np.float16),
+            camera=np.arange(count, dtype=np.float32)[:, None].repeat(FEATURE_DIM, axis=1),
+            has_camera=np.asarray(has_camera, dtype=bool),
+            camera_index=np.where(has_camera, 0, -1).astype(np.int8),
+        ),
+    )
+
+
+def _camera_dataset(tmp_path, ego_count=1, cav_count=2, use_camera=True):
+    cav_boxes = np.array([[3.0 + i, -2.0, 0.0, 1.5, 1.5, 4.0, 0.4] for i in range(cav_count)])
+    ego_boxes = np.array([[1.0 + i, 1.0, 0.0, 1.5, 1.5, 4.0, 0.1] for i in range(ego_count)])
+    scenario, timestamp = "scenario_0", "000069"
+    _write_camera_frame(
+        cache_path(tmp_path, "train", scenario, "ego", timestamp), ego_boxes, [None] * ego_count,
+        [i % 2 == 0 for i in range(ego_count)],
+    )
+    _write_camera_frame(
+        cache_path(tmp_path, "train", scenario, "cav", timestamp), cav_boxes, [None] * cav_count,
+        [True] * cav_count,
+    )
+    pair = AgentPair(
+        scenario=scenario, timestamp=timestamp, ego_id="ego", cav_id="cav",
+        ego_pose=_EGO_POSE, cav_pose=_CAV_POSE_TRUE,
+    )
+    return OPV2VObjectSetDataset(
+        [pair], tmp_path, "train", noise_schedule=NoiseSchedule(max_xy_std=0.0),
+        train=False, total_epochs=1, use_camera=use_camera,
+    )
+
+
+def test_use_camera_emits_the_four_camera_fields(tmp_path):
+    from embedding_aware_belt_fusion.alignformer.camera_features import FEATURE_DIM
+
+    item = _camera_dataset(tmp_path)[0]
+
+    assert item["ego_camera"].shape == (1, FEATURE_DIM)
+    assert item["ego_has_camera"].tolist() == [True]
+    assert item["cav_camera"].shape == (2, FEATURE_DIM)
+    assert item["cav_has_camera"].tolist() == [True, True]
+    assert item["ego_camera"].dtype == torch.float32 and item["ego_has_camera"].dtype == torch.bool
+
+
+def test_without_use_camera_the_fields_are_absent_even_when_cached(tmp_path):
+    item = _camera_dataset(tmp_path, use_camera=False)[0]
+
+    assert not any(key.endswith("_camera") for key in item)
+
+
+def test_use_camera_on_a_cache_without_camera_fields_fails_loudly(tmp_path):
+    dataset, _ = _build_dataset(tmp_path)
+    with_camera = OPV2VObjectSetDataset(
+        dataset.pairs, tmp_path, "train", noise_schedule=NoiseSchedule(max_xy_std=0.0),
+        train=False, total_epochs=1, use_camera=True,
+    )
+
+    with pytest.raises(ValueError, match="camera"):
+        with_camera[0]
+
+def test_camera_fields_are_truncated_in_the_same_order_as_the_boxes(tmp_path):
+    from embedding_aware_belt_fusion.alignformer.trunk import MAX_OBJECTS
+
+    item = _camera_dataset(tmp_path, cav_count=MAX_OBJECTS + 3)[0]
+
+    assert item["cav_boxes"].shape[0] == MAX_OBJECTS
+    assert item["cav_camera"].shape[0] == MAX_OBJECTS
+    # scores descend with index, so the kept objects are 0..MAX_OBJECTS-1, and
+    # the camera row of object i was written as the constant i.
+    torch.testing.assert_close(item["cav_camera"][:, 0], torch.arange(MAX_OBJECTS, dtype=torch.float32))
+    assert torch.all(item["cav_scores"][:-1] >= item["cav_scores"][1:])  # kept in score order
+
+
+def test_collate_pads_camera_fields_with_zeros_and_false(tmp_path):
+    from embedding_aware_belt_fusion.alignformer.camera_features import FEATURE_DIM
+    from embedding_aware_belt_fusion.alignformer.dataset import collate
+
+    dataset = _camera_dataset(tmp_path, ego_count=3, cav_count=1)
+    one = dataset[0]
+    two = {**one, "ego_camera": one["ego_camera"][:1], "ego_has_camera": one["ego_has_camera"][:1],
+           "ego_boxes": one["ego_boxes"][:1], "ego_scores": one["ego_scores"][:1],
+           "ego_roi": one["ego_roi"][:1], "ego_match": one["ego_match"][:1]}
+
+    batch = collate([one, two])
+
+    assert batch["ego_camera"].shape == (2, 3, FEATURE_DIM)
+    assert batch["ego_has_camera"].shape == (2, 3)
+    assert batch["ego_has_camera"][1].tolist() == [True, False, False]
+    assert batch["ego_camera"][1, 1:].abs().max() == 0.0
+
+
+def test_collate_refuses_a_batch_where_only_some_samples_carry_camera(tmp_path):
+    from embedding_aware_belt_fusion.alignformer.dataset import collate
+
+    with_cam = _camera_dataset(tmp_path)[0]
+    without = {k: v for k, v in with_cam.items() if "camera" not in k}
+
+    with pytest.raises(ValueError, match="camera"):
+        collate([with_cam, without])

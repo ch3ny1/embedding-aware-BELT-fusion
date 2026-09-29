@@ -104,8 +104,23 @@ def correspondence_indices(
 # Per-object fields are padded to the batch maximum; the rest are stacked.
 _EGO_FIELDS = ("ego_boxes", "ego_scores", "ego_roi", "ego_match")
 _CAV_FIELDS = ("cav_boxes", "cav_scores", "cav_roi", "cav_match")
-# Match targets pad with -1 ("no counterpart"), everything else with 0.
+# Present only when the dataset was built with ``use_camera`` (the
+# LiDAR+camera trunk); padded like the fields above when present.
+_CAMERA_FIELDS = ("camera", "has_camera")
+# Match targets pad with -1 ("no counterpart"), everything else with 0
+# (which is ``False`` for the has_camera mask).
 _PAD_VALUES = {"ego_match": -1, "cav_match": -1}
+
+
+def _optional_fields(samples: List[Dict[str, Tensor]], prefix: str) -> Tuple[str, ...]:
+    """The camera fields, if every sample carries them; none if none does."""
+    names = tuple(f"{prefix}_{field}" for field in _CAMERA_FIELDS)
+    carrying = [all(name in s for name in names) for s in samples]
+    if all(carrying):
+        return names
+    if any(carrying):
+        raise ValueError("some samples carry camera fields and others do not; one dataset per batch")
+    return ()
 
 
 def _pad(tensors: List[Tensor], size: int, value: float) -> Tensor:
@@ -129,9 +144,9 @@ def collate(samples: List[Dict[str, Tensor]]) -> Dict[str, Tensor]:
     ego_size, cav_size = max(ego_counts), max(cav_counts)
 
     batch: Dict[str, Tensor] = {}
-    for field in _EGO_FIELDS:
+    for field in _EGO_FIELDS + _optional_fields(samples, "ego"):
         batch[field] = _pad([s[field] for s in samples], ego_size, _PAD_VALUES.get(field, 0))
-    for field in _CAV_FIELDS:
+    for field in _CAV_FIELDS + _optional_fields(samples, "cav"):
         batch[field] = _pad([s[field] for s in samples], cav_size, _PAD_VALUES.get(field, 0))
 
     indices = torch.arange(ego_size)
@@ -172,15 +187,38 @@ def _project_boxes_to_ego(boxes: np.ndarray, agent_pose: Sequence[float],
     return projected
 
 
+def _top_indices(scores: np.ndarray, max_objects: int) -> Optional[np.ndarray]:
+    """Indices of the top ``max_objects`` by descending score, or ``None`` for "keep all"."""
+    if scores.shape[0] <= max_objects:
+        return None
+    return np.argsort(-scores, kind="stable")[:max_objects]
+
+
 def _truncate_by_score(
     boxes: np.ndarray, scores: np.ndarray, roi: np.ndarray, gt_ids: Sequence[Optional[str]],
     max_objects: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[Optional[str]]]:
     """Keep the top ``max_objects`` detections by descending score."""
-    if boxes.shape[0] <= max_objects:
+    order = _top_indices(scores, max_objects)
+    if order is None:
         return boxes, scores, roi, list(gt_ids)
-    order = np.argsort(-scores, kind="stable")[:max_objects]
     return boxes[order], scores[order], roi[order], [gt_ids[i] for i in order]
+
+
+def _camera_fields(record, order: Optional[np.ndarray], prefix: str) -> Dict[str, Tensor]:
+    """``{prefix}_camera`` and ``{prefix}_has_camera`` in the truncation order."""
+    if record.camera is None:
+        raise ValueError(
+            f"use_camera was requested but the cached {prefix} frame carries no camera "
+            "fields; rebuild the cache with --camera"
+        )
+    camera, has_camera = record.camera, record.has_camera
+    if order is not None:
+        camera, has_camera = camera[order], has_camera[order]
+    return {
+        f"{prefix}_camera": torch.from_numpy(camera.astype(np.float32)),
+        f"{prefix}_has_camera": torch.from_numpy(has_camera.astype(bool)),
+    }
 
 
 class OPV2VObjectSetDataset(Dataset):
@@ -219,6 +257,7 @@ class OPV2VObjectSetDataset(Dataset):
         train: bool,
         total_epochs: int = _DEFAULT_TOTAL_EPOCHS,
         seed: int = _DEFAULT_SEED,
+        use_camera: bool = False,
     ) -> None:
         if not pairs:
             raise ValueError("pairs must be non-empty")
@@ -229,6 +268,7 @@ class OPV2VObjectSetDataset(Dataset):
         self.train = train
         self.total_epochs = total_epochs
         self.seed = seed
+        self.use_camera = use_camera
         self.epoch = 0
 
     def __len__(self) -> int:
@@ -262,6 +302,8 @@ class OPV2VObjectSetDataset(Dataset):
         # Truncate before matching so ego_match/cav_match index the final,
         # returned arrays directly -- matching first and truncating after
         # would require remapping indices for objects dropped by truncation.
+        ego_order = _top_indices(ego_record.scores, MAX_OBJECTS)
+        cav_order = _top_indices(cav_record.scores, MAX_OBJECTS)
         ego_boxes, ego_scores, ego_roi, ego_ids = _truncate_by_score(
             ego_record.boxes, ego_record.scores, ego_record.roi, ego_record.gt_ids, MAX_OBJECTS
         )
@@ -271,7 +313,13 @@ class OPV2VObjectSetDataset(Dataset):
 
         ego_match, cav_match = correspondence_indices(ego_ids, cav_ids)
 
+        camera: Dict[str, Tensor] = {}
+        if self.use_camera:
+            camera.update(_camera_fields(ego_record, ego_order, "ego"))
+            camera.update(_camera_fields(cav_record, cav_order, "cav"))
+
         return {
+            **camera,
             "ego_boxes": torch.from_numpy(ego_boxes.astype(np.float32)),
             "ego_scores": torch.from_numpy(ego_scores.astype(np.float32)),
             "ego_roi": torch.from_numpy(ego_roi.astype(np.float32)),
