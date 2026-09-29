@@ -84,3 +84,19 @@ def resolve_split(path: Union[str, Path], *, allow_test: bool) -> Path:
         )
 
     return resolved
+
+
+def validation_split_description(config: dict) -> str:
+    """The one line a result file records for the validation split it used.
+
+    With ``data.val_root`` set, validation is that official split and the
+    carved-slice parameters in the config are inert, so naming them would
+    misdescribe the measurement.
+    """
+    data = config["data"]
+    if data.get("val_root"):
+        return f"{data['val_root']} :: the official validation split (data.val_root)"
+    return (
+        f"{data['train_root']} :: validation scenarios (scenario-disjoint, "
+        f"val_scenario_fraction={data['val_scenario_fraction']}, split_seed={data['split_seed']})"
+    )

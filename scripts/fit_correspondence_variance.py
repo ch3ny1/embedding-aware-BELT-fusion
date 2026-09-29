@@ -52,6 +52,7 @@ from torch.utils.data import DataLoader
 
 from embedding_aware_belt_fusion.alignformer.boxes import BOX_YAW
 from embedding_aware_belt_fusion.alignformer.dataset import collate
+from embedding_aware_belt_fusion.alignformer.splits import validation_split_description
 from embedding_aware_belt_fusion.alignformer.train import (
     build_eval_dataset,
     build_pair_split,
@@ -261,12 +262,7 @@ def main() -> None:
         "method": "correspondence_variance_fit",
         "config": str(args.config),
         "cache_root": config["data"]["cache_root"],
-        "split": (
-            f"{config['data']['train_root']} :: validation scenarios "
-            f"(scenario-disjoint, val_scenario_fraction="
-            f"{config['data']['val_scenario_fraction']}, split_seed="
-            f"{config['data']['split_seed']})"
-        ),
+        "split": validation_split_description(config),
         "sigma_m": 0.0,
         "correspondences": int(delta.size),
         "val_pairs": int(data["val_pairs"][0]),

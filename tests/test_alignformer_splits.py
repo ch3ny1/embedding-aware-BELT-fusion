@@ -92,3 +92,31 @@ def test_a_substring_match_is_not_a_component_match():
     for name in ("validate_v2", "revalidate", "pretest", "test_mini"):
         path = Path("/cache") / name
         assert resolve_split(path, allow_test=False) == path.resolve()
+
+
+# ----------------------------------------------------------------------------
+# Naming the validation split in a result file
+# ----------------------------------------------------------------------------
+
+
+def test_the_validation_split_description_names_the_carved_slice_by_default():
+    from embedding_aware_belt_fusion.alignformer.splits import validation_split_description
+
+    config = {"data": {"train_root": "/d/train", "val_scenario_fraction": 0.15, "split_seed": 0}}
+
+    description = validation_split_description(config)
+
+    assert description == (
+        "/d/train :: validation scenarios (scenario-disjoint, val_scenario_fraction=0.15, split_seed=0)"
+    )
+
+
+def test_the_validation_split_description_names_the_official_split_when_configured():
+    from embedding_aware_belt_fusion.alignformer.splits import validation_split_description
+
+    config = {"data": {"train_root": "/d/train", "val_root": "/d/val", "val_scenario_fraction": 0.15, "split_seed": 0}}
+
+    description = validation_split_description(config)
+
+    assert description == "/d/val :: the official validation split (data.val_root)"
+    assert "scenario-disjoint" not in description

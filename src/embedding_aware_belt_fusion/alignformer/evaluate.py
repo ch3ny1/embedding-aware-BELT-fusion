@@ -81,7 +81,7 @@ from embedding_aware_belt_fusion.alignformer.delay import (
     DELAY_FRAME_MS,
     delay_wild_setting,
 )
-from embedding_aware_belt_fusion.alignformer.splits import resolve_split
+from embedding_aware_belt_fusion.alignformer.splits import resolve_split, validation_split_description
 
 # AP is reported at all three; only AP@0.7 is the P0 gate.
 _AP_IOU_THRESHOLDS = (0.3, 0.5, 0.7)
@@ -186,6 +186,14 @@ def parse_args() -> argparse.Namespace:
         help="the paper's training-free edge attribute is the relative distance "
              "alone; their shipped greedy_match.py adds the relative yaw. "
              "Selected on validation, never on test.",
+    )
+    parser.add_argument(
+        "--freealign-calibration", type=Path, default=None,
+        help="--metric noisy_ap only: a scripts/calibrate_freealign.py result. "
+             "Its 'selected' block then defines EVERY FreeAlign parameter, the "
+             "four the two flags below cannot reach included, so the row is the "
+             "calibrated port and not OPV2V's settings on another dataset. "
+             "Given, the two flags must stay at their defaults.",
     )
     parser.add_argument(
         "--freealign-min-nodes", type=int, default=DEFAULT_MIN_NODES,
@@ -591,12 +599,7 @@ def run_top1(args: argparse.Namespace, device) -> Dict:
         "method": "alignformer_b_stage1",
         "metric": "top1",
         "config": str(args.config),
-        "split": (
-            f"{config['data']['train_root']} :: validation scenarios "
-            f"(scenario-disjoint, val_scenario_fraction="
-            f"{config['data']['val_scenario_fraction']}, split_seed="
-            f"{config['data']['split_seed']})"
-        ),
+        "split": validation_split_description(config),
         "checkpoint": str(checkpoint_path.resolve()),
         "checkpoint_epoch": checkpoint["epoch"],
         "cache_root": config["data"]["cache_root"],
@@ -761,12 +764,7 @@ def run_pose(args: argparse.Namespace, device) -> Dict:
         "method": "alignformer_stage2",
         "metric": "pose",
         "config": str(args.config),
-        "split": (
-            f"{config['data']['train_root']} :: validation scenarios "
-            f"(scenario-disjoint, val_scenario_fraction="
-            f"{config['data']['val_scenario_fraction']}, split_seed="
-            f"{config['data']['split_seed']})"
-        ),
+        "split": validation_split_description(config),
         "checkpoints": {
             _configuration_name(checkpoint): {
                 "path": str(Path(path).resolve()),
@@ -877,12 +875,7 @@ def run_shrinkage(args: argparse.Namespace, device) -> Dict:
     checkpoint_path = args.checkpoint[0]
     modules, checkpoint = load_stage2(checkpoint_path, device)
 
-    split = (
-        f"{config['data']['train_root']} :: validation scenarios "
-        f"(scenario-disjoint, val_scenario_fraction="
-        f"{config['data']['val_scenario_fraction']}, split_seed="
-        f"{config['data']['split_seed']})"
-    )
+    split = validation_split_description(config)
     dataset = build_eval_dataset(config, val_pairs, 0.0)
     loader = DataLoader(
         dataset, batch_size=_TOP1_BATCH_SIZE, num_workers=args.num_workers,
@@ -943,7 +936,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
-    from embedding_aware_belt_fusion.alignformer.freealign import FreeAlignConfig
+    from embedding_aware_belt_fusion.alignformer.freealign_calibration import freealign_config_from_args
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
         ALIGNFORMER,
         ALIGNFORMER_IRLS,
@@ -979,14 +972,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     modules, checkpoint = load_stage2(checkpoint_path, device)
     shrinkage = _load_shrinkage(args)
 
-    freealign = (
-        FreeAlignConfig(
-            edge_feature=args.freealign_edge_feature,
-            min_nodes=args.freealign_min_nodes,
-        )
-        if args.freealign
-        else None
-    )
+    freealign = freealign_config_from_args(args)
     robust = RobustSolveConfig(
         mode=args.robust_solve,
         iterations=args.robust_iterations,
@@ -1104,6 +1090,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # Labelled unambiguously: this row is OUR reimplementation of the
         # published method, on our detections, never the authors' code.
         "freealign_config": None if freealign is None else freealign.to_dict(),
+        "freealign_calibration": None if args.freealign_calibration is None else str(args.freealign_calibration),
         # The IRLS arm's frozen configuration. Chosen on the scenario-disjoint
         # validation slice (scripts/calibrate_robust_solve.py); recorded here so
         # a result file states what it was measured under.

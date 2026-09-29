@@ -242,6 +242,13 @@ outputs/alignformer/r140/*
 outputs/alignformer/baselines/*
 !outputs/alignformer/baselines/*_gate.json
 !outputs/alignformer/baselines/*_result.json
+# ... and for outputs/v2xreal/, the three-trunk comparison on V2X-Real
+# (boxes-only vs LiDAR embedding vs LiDAR+camera; started 2026-09-29). Same
+# two suffixes; the detector, the trunks and the logs stay ignored.
+!outputs/v2xreal/
+outputs/v2xreal/*
+!outputs/v2xreal/*_gate.json
+!outputs/v2xreal/*_result.json
 *.pth
 *.pt
 *.ckpt
