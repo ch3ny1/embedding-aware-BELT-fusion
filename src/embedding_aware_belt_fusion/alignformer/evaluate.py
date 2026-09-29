@@ -77,6 +77,10 @@ from embedding_aware_belt_fusion.alignformer.robust import (
     ROBUST_NONE,
     RobustSolveConfig,
 )
+from embedding_aware_belt_fusion.alignformer.delay import (
+    DELAY_FRAME_MS,
+    delay_wild_setting,
+)
 from embedding_aware_belt_fusion.alignformer.splits import resolve_split
 
 # AP is reported at all three; only AP@0.7 is the P0 gate.
@@ -221,6 +225,18 @@ def parse_args() -> argparse.Namespace:
              "both. Each arm REPLACES the --shrinkage calibration rather than "
              "stacking on it, so the deployed arms in the same run still "
              "reproduce bit for bit.",
+    )
+    parser.add_argument(
+        "--delay-frames", type=int, default=0,
+        help="--metric noisy_ap only: transmission delay, in WHOLE 10 Hz "
+             "frames (100 ms each). The CAV sends what it saw at t-d with its "
+             "own pose at t-d, so static objects arrive correctly placed and "
+             "moving ones arrive displaced by their own velocity -- an error "
+             "no rigid SE(2) can undo, which is why this is a separate axis "
+             "from --sweep and not more of it. Frames rather than "
+             "milliseconds because OpenCOOD floors ms to frames, so 150 and "
+             "100 are the same experiment. Zero builds the dataset exactly as "
+             "it was before this axis existed.",
     )
     parser.add_argument(
         "--ap-seeds", type=int, default=1,
@@ -924,6 +940,15 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     # Reporting a frozen configuration, so test is permitted here; the
     # leaky validate/ symlink is not, under either flag.
     hypes["validate_dir"] = str(resolve_split(args.split, allow_test=True))
+    # Delay re-enters OpenCOOD's `wild_setting` block, which is stripped
+    # everywhere else in this project so its constant-seed, z-perturbing
+    # localization noise cannot run beside this sweep's own perturbation.
+    # `delay_wild_setting` keeps that off and turns on only the asynchrony;
+    # at zero it returns None and nothing is set, so the dataset is built
+    # exactly as before.
+    delay_setting = delay_wild_setting(args.delay_frames)
+    if delay_setting is not None:
+        hypes["wild_setting"] = delay_setting
     dataset = build_dataset(hypes, visualize=False, train=False)
     detector = _build_detector(hypes, device)
 
@@ -1037,6 +1062,8 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         "nms_thresh": dataset.post_processor.params["nms_thresh"],
         "frames": len(ground_truth),
         "sweep_sigmas_m": list(args.sweep),
+        "delay_frames": int(args.delay_frames),
+        "delay_ms": int(args.delay_frames) * DELAY_FRAME_MS,
         "conditions": {
             "oracle": ORACLE,
             "uncorrected": UNCORRECTED,
