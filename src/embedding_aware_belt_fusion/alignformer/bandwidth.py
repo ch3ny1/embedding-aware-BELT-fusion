@@ -175,6 +175,50 @@ def alignformer_message_bytes(
     }
 
 
+# The three floats freealign.edge_features reads: centre x, centre y, yaw.
+# A message with fewer is not one either method could align from.
+MIN_BOX_FLOATS = 3
+
+
+def alignment_overhead_bytes(
+    objects_per_agent: float, embed_dim: int, box_floats: int = 7
+) -> Dict[str, Any]:
+    """Split one agent's message into the shared payload and the aligner's cost.
+
+    Both methods here are LATE fusion: the ego cannot fuse a CAV detection
+    without its full box, so the boxes are on the wire whatever aligns them.
+    Charging them to the aligner would make every ratio in the report wrong,
+    so they are reported as ``shared_box_bytes_per_frame_per_agent`` and
+    attributed to neither.
+
+    What separates the two methods is the remainder. FreeAlign adds nothing --
+    it builds its relative-distance graph from the centres and yaws already in
+    the boxes (``freealign.edge_features``, and its own docstring: "a
+    boxes-only method"). AlignFormer as configured adds ``embed_dim`` floats
+    per object, which at 128 is 512 bytes against the box's 28.
+
+    Pass ``embed_dim=0`` for FreeAlign or for the boxes-only trunk; the two are
+    then the same number by construction, which is the point.
+    """
+    if embed_dim < 0:
+        raise ValueError(f"embed_dim must be non-negative, got {embed_dim}")
+    if box_floats < MIN_BOX_FLOATS:
+        raise ValueError(
+            f"box_floats must be at least {MIN_BOX_FLOATS} (centre x, centre y "
+            f"and yaw are what alignment reads), got {box_floats}"
+        )
+    shared = float(objects_per_agent) * box_floats * BYTES_PER_FLOAT32
+    overhead = float(objects_per_agent) * embed_dim * BYTES_PER_FLOAT32
+    return {
+        "objects_per_agent": float(objects_per_agent),
+        "box_floats": box_floats,
+        "embed_dim": embed_dim,
+        "shared_box_bytes_per_frame_per_agent": shared,
+        "alignment_overhead_bytes_per_frame_per_agent": overhead,
+        "total_bytes_per_frame_per_agent": shared + overhead,
+    }
+
+
 @torch.no_grad()
 def measure_baseline(baseline: str, split: Path, pcd_cache: Path, frames: int, device):
     """Run ``frames`` frames of one baseline at sigma 0 with the probe attached."""
