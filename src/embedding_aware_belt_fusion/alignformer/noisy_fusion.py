@@ -285,7 +285,11 @@ def _roi_like_the_cache(
 def _object_set(
     ego: Mapping[str, Tensor], cav: Mapping[str, Tensor]
 ) -> Dict[str, Tensor]:
-    """A one-sample collated batch in the layout the trunk expects."""
+    """A one-sample collated batch in the layout the trunk expects.
+
+    Camera fields ride along when the pack carries them (the LiDAR+camera
+    trunk); ``train.embed_batch`` consumes them only for a camera head.
+    """
     batch: Dict[str, Tensor] = {}
     for prefix, side in (("ego", ego), ("cav", cav)):
         batch[f"{prefix}_boxes"] = side["boxes"].unsqueeze(0)
@@ -294,7 +298,48 @@ def _object_set(
         batch[f"{prefix}_mask"] = torch.ones(
             (1, side["boxes"].shape[0]), dtype=torch.bool, device=side["boxes"].device
         )
+        if "camera" in side:
+            batch[f"{prefix}_camera"] = side["camera"].unsqueeze(0)
+            batch[f"{prefix}_has_camera"] = side["has_camera"].unsqueeze(0)
     return batch
+
+
+def _truncation_order(detections: AgentDetections, max_objects: int) -> Optional[Tensor]:
+    """Indices ``_truncate_by_score`` keeps, or ``None`` when nothing is dropped."""
+    if detections.boxes.shape[0] <= max_objects:
+        return None
+    return torch.argsort(detections.scores, descending=True, stable=True)[:max_objects]
+
+
+def _frame_yaml(dataset, index: int, key: str, timestamp: str) -> str:
+    """The yaml path of one agent of the frame at global ``index``.
+
+    ``key`` is ``"ego"`` or a CAV id, as ``collate_batch_test`` names them.
+    Mirrors ``evaluate._frame_identity``'s index accounting.
+    """
+    scenario_index = next(i for i, end in enumerate(dataset.len_record) if index < end)
+    agents = dataset.scenario_database[scenario_index]
+    cav_id = key if key != "ego" else next(c for c, content in agents.items() if content["ego"])
+    return agents[cav_id][timestamp]["yaml"]
+
+
+def _camera_like_the_cache(
+    detections: AgentDetections, cameras, backbone
+) -> Tuple[Tensor, Tensor]:
+    """Per-object camera features for every detection, float16 round-tripped.
+
+    The cache stores the camera vector as float16 (``cache.write_frame``), so
+    the same round-trip is applied here for the reason ``_roi_like_the_cache``
+    gives: the frozen head was fitted on half-precision inputs.
+    """
+    from embedding_aware_belt_fusion.alignformer.camera_features import frame_camera_features
+
+    corners = detections.corners.detach().cpu().numpy()
+    features = frame_camera_features(backbone, corners, cameras)
+    device = detections.boxes.device
+    camera = torch.from_numpy(features.features).half().float().to(device)
+    has_camera = torch.from_numpy(features.has_camera).to(device)
+    return camera, has_camera
 
 
 class _PoseSubset:
@@ -512,6 +557,7 @@ def run_noise_sweep(
     freealign: Optional[FreeAlignConfig] = None,
     robust: Optional[RobustSolveConfig] = None,
     abstention: Sequence[AbstentionConfig] = (),
+    camera_backbone=None,
 ) -> Tuple[
     Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]],
     List[Tensor],
@@ -665,6 +711,13 @@ def run_noise_sweep(
             roi = _roi_like_the_cache(found, lidar_range, output_size)
             boxes, scores, roi, gt_ids = _truncate_by_score(found, roi, MAX_OBJECTS)
             packs[key] = {"boxes": boxes, "scores": scores, "roi": roi, "gt_ids": gt_ids}
+            if camera_backbone is not None:
+                cameras = dataset.frame_cameras(_frame_yaml(dataset, index, key, timestamp))
+                camera, has_camera = _camera_like_the_cache(found, cameras, camera_backbone)
+                order = _truncation_order(found, MAX_OBJECTS)
+                if order is not None:
+                    camera, has_camera = camera[order], has_camera[order]
+                packs[key]["camera"], packs[key]["has_camera"] = camera, has_camera
             transforms[key] = entry["transformation_matrix"].to(device)
 
         # Oracle: every agent moved by its TRUE relative pose (the P0 pipeline).

@@ -343,6 +343,28 @@ def _build_test_frame(
     return frame, poses, list(ego_lidar_pose), base_data_dict
 
 
+def camera_backbone_for(model_config: Dict, dataset, device):
+    """The frozen camera trunk a LiDAR+camera checkpoint needs at inference, else ``None``.
+
+    A checkpoint whose ``model.camera_dim`` is zero gets ``None`` and nothing
+    changes. One with a camera branch needs a dataset that can hand over each
+    agent's images (``frame_cameras``, the V2X-Real adapter); on any other
+    dataset this is a configuration error, not a silent LiDAR-only run.
+    """
+    from embedding_aware_belt_fusion.alignformer.train import uses_camera
+
+    if not uses_camera(model_config):
+        return None
+    if not hasattr(dataset, "frame_cameras"):
+        raise ValueError(
+            "this checkpoint has a camera branch but the dataset exposes no frame_cameras; "
+            "only the V2X-Real adapter can evaluate a LiDAR+camera trunk"
+        )
+    from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
+
+    return CameraBackbone().to(device)
+
+
 def _cav_content(entry: Dict, device) -> Dict:
     """Move one collated agent's fields onto ``device`` for ``detect_agent``."""
     return {
@@ -1017,6 +1039,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         freealign=freealign,
         robust=robust,
         abstention=abstention,
+        camera_backbone=camera_backbone_for(checkpoint["config"], dataset, device),
     )
 
     # AP sliced by how many ground-truth objects the frame's agents share --

@@ -214,3 +214,86 @@ def test_datasets_carry_use_camera_from_the_config(tmp_path):
     train_set, val_set = build_datasets(config, epochs=1)
 
     assert train_set.use_camera is True and val_set.use_camera is True
+
+
+# ----------------------------------------------------------------------------
+# Inference: the sweep computes camera features live, like the ROI features
+# ----------------------------------------------------------------------------
+
+
+class _FakeDataset:
+    len_record = [2, 5]
+    scenario_database = {
+        0: {"1": {"000000": {"yaml": "/s0/1/000000.yaml"}, "000001": {"yaml": "/s0/1/000001.yaml"}, "ego": True},
+            "-1": {"000000": {"yaml": "/s0/-1/000000.yaml"}, "000001": {"yaml": "/s0/-1/000001.yaml"}, "ego": False}},
+        1: {"2": {"000000": {"yaml": "/s1/2/000000.yaml"}, "ego": True},
+            "-2": {"000000": {"yaml": "/s1/-2/000000.yaml"}, "ego": False}},
+    }
+
+
+def test_frame_yaml_resolves_ego_and_cav_keys_across_scenarios():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import _frame_yaml
+
+    assert _frame_yaml(_FakeDataset(), 1, "ego", "000001") == "/s0/1/000001.yaml"
+    assert _frame_yaml(_FakeDataset(), 1, "-1", "000001") == "/s0/-1/000001.yaml"
+    assert _frame_yaml(_FakeDataset(), 3, "ego", "000000") == "/s1/2/000000.yaml"
+    assert _frame_yaml(_FakeDataset(), 3, "-2", "000000") == "/s1/-2/000000.yaml"
+
+
+def test_object_set_carries_camera_fields_only_when_the_pack_has_them():
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import _object_set
+
+    side = {"boxes": torch.zeros(2, 7), "scores": torch.ones(2), "roi": torch.zeros(2, 4, 2, 2)}
+    with_cam = {**side, "camera": torch.zeros(2, 256), "has_camera": torch.tensor([True, False])}
+
+    plain = _object_set(side, side)
+    camera = _object_set(with_cam, side)
+
+    assert not any("camera" in k for k in plain)
+    assert camera["ego_camera"].shape == (1, 2, 256) and camera["ego_has_camera"].shape == (1, 2)
+    assert "cav_camera" not in camera
+
+
+def test_camera_like_the_cache_round_trips_float16_and_truncates_in_score_order():
+    from embedding_aware_belt_fusion.alignformer.boxes import AgentDetections
+    from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone, Calibration
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import _camera_like_the_cache, _truncation_order
+
+    backbone = CameraBackbone().eval()
+    intrinsic = np.array([[1000.0, 0, 320.0], [0, 1000.0, 180.0], [0, 0, 1]])
+    cameras = [(np.random.default_rng(0).integers(0, 255, (360, 640, 3), dtype=np.uint8), Calibration(intrinsic, np.eye(4)))]
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], dtype=float)
+    corners = np.stack([np.array([0.0, 0.0, 10.0]) + signs, np.array([0.0, 0.0, -10.0]) + signs, np.array([1.0, 0.0, 12.0]) + signs])
+    found = AgentDetections(
+        boxes=torch.zeros(3, 7), scores=torch.tensor([0.2, 0.9, 0.5]), corners=torch.from_numpy(corners),
+        gt_ids=[None] * 3, features=torch.zeros(4, 8, 8),
+    )
+
+    camera, has_camera = _camera_like_the_cache(found, cameras, backbone)
+    order = _truncation_order(found, 2)
+
+    assert has_camera.tolist() == [True, False, True]
+    torch.testing.assert_close(camera, camera.half().float())
+    assert order.tolist() == [1, 2]
+    assert has_camera[order].tolist() == [False, True]
+
+
+def test_camera_backbone_for_is_none_without_a_camera_branch_and_refuses_a_blind_dataset():
+    from embedding_aware_belt_fusion.alignformer.evaluate import camera_backbone_for
+
+    assert camera_backbone_for({"model": _model_cfg(0)}, object(), torch.device("cpu")) is None
+    with pytest.raises(ValueError, match="frame_cameras"):
+        camera_backbone_for({"model": _model_cfg(256)}, object(), torch.device("cpu"))
+
+
+def test_camera_backbone_for_builds_a_backbone_for_a_camera_dataset():
+    from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
+    from embedding_aware_belt_fusion.alignformer.evaluate import camera_backbone_for
+
+    class WithCameras:
+        def frame_cameras(self, path):
+            return []
+
+    backbone = camera_backbone_for({"model": _model_cfg(256)}, WithCameras(), torch.device("cpu"))
+
+    assert isinstance(backbone, CameraBackbone)
