@@ -338,6 +338,24 @@ def install_fixed_output_dir(output_dir: Path = OUTPUT_DIR) -> None:
     train_utils.setup_train = fixed_setup_train
 
 
+def install_v2xreal_training() -> None:
+    """Route OpenCOOD's trainer through the V2X-Real dataset builder.
+
+    ``opencood/tools/train.py`` binds ``build_dataset`` by ``from ... import``
+    at import time, so the module attribute is the slot to replace; the
+    adapter delegates every non-V2X-Real ``core_method`` to OpenCOOD
+    unchanged. The LiDAR ``.bin`` shim and the range constants are installed
+    by the builder itself the first time a V2X-Real dataset is built, which
+    happens inside ``opencood_train.main()`` before any DataLoader forks.
+    """
+    from opencood.tools import train as opencood_train
+
+    from embedding_aware_belt_fusion.alignformer import v2xreal
+
+    opencood_train.build_dataset = v2xreal.build_dataset
+    print("v2xreal dataset builder installed", flush=True)
+
+
 def log_shim_stats(stats: ShimStats) -> None:
     hits, misses = stats.snapshot()
     total = hits + misses
@@ -388,6 +406,15 @@ def parse_args() -> argparse.Namespace:
         help="OpenCOOD-format hypes yaml (a machine-local copy of point_pillar_late_fusion.yaml).",
     )
     parser.add_argument(
+        "--dataset",
+        choices=("opv2v", "v2xreal"),
+        default="opv2v",
+        help="opv2v (default): materialize the scenario-disjoint holdout and install the "
+        "pcd cache shim, exactly as before. v2xreal: skip both (the tree has no .pcd "
+        "files and ships its own val/ split) and route OpenCOOD's trainer through "
+        "alignformer.v2xreal.build_dataset.",
+    )
+    parser.add_argument(
         "--split-root",
         type=Path,
         default=SPLIT_ROOT,
@@ -432,6 +459,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.dataset == "v2xreal":
+        return _main_v2xreal(args)
 
     train_split_dir = args.split_root / "train"
     val_split_dir = args.split_root / "val"
@@ -458,6 +487,21 @@ def main() -> None:
         opencood_train.main()
     finally:
         log_shim_stats(stats)
+
+
+def _main_v2xreal(args: argparse.Namespace) -> None:
+    """The V2X-Real path: no OPV2V split, no pcd shim, the adapter installed.
+
+    Installed before ``opencood.tools.train`` builds anything, so DataLoader
+    workers forked from this process inherit the patched module state, the
+    same ordering the OPV2V path relies on for its shim.
+    """
+    install_v2xreal_training()
+    install_fixed_output_dir(args.output_dir)
+    from opencood.tools import train as opencood_train
+
+    sys.argv = ["train.py", "--hypes_yaml", str(args.hypes_yaml)]
+    opencood_train.main()
 
 
 if __name__ == "__main__":

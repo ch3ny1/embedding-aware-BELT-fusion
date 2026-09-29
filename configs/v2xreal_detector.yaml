@@ -1,0 +1,145 @@
+# AlignFormer per-agent late-fusion detector on V2X-Real (real traffic).
+#
+# Derived from configs/alignformer_detector_r140.yaml. What differs, and why
+# (pinned by tests/test_alignformer_v2xreal_detector.py):
+#
+#   fusion.core_method      V2XRealLateFusionDataset -- the adapter in
+#                           alignformer/v2xreal.py: .bin LiDAR, vehicle-class
+#                           filter, vehicle-centric ego. Everything else is
+#                           OpenCOOD's own LateFusionDataset.
+#   cav_lidar_range         [-102.4, -51.2, -15, 102.4, 51.2, 15], the V2X-Real
+#                           benchmark range (GenComm stage-1 yamls; its
+#                           GT_RANGE at datasets/__init__.py:44). Wide in z
+#                           because infrastructure LiDARs sit ~4 m up and see
+#                           the road at z ~ -5.
+#   voxel_size              [0.4, 0.4, 30]: one pillar layer spanning that z.
+#   max_voxel_*             64000 / 100000: a 128-beam frame has ~65k points
+#                           against OPV2V's ~20k, and GenComm's budget is 64000.
+#   anchor l/w/h            4.5 / 2.0 / 1.6 from the train census (Car median
+#                           half-extents 2.29 / 1.02 / 0.80 over 918 sampled
+#                           frames); OpenCOOD's 3.9 / 1.6 / 1.56 is a CARLA car.
+#   v2xreal                 GT_RANGE and COM_RANGE the adapter sets at build
+#                           time. 70 m is the training comm range of every
+#                           V2X-Real yaml; GenComm's inference widens it to 180.
+#   root_dir/validate_dir   the official train/ and val/ splits, on the NVMe
+#                           mirror (the dataset ships its own scenario-disjoint
+#                           validation split, so no holdout is materialized).
+#
+# The class is the V2X-Real `vehicle` super-class only (Car, PoliceCar,
+# LongVehicle). Trucks and buses are a different anchor and are not in the
+# ground truth; a detection on one is a false positive for every arm and for
+# FreeAlign alike. The absolute AP is therefore not the paper's three-class
+# number and must not be quoted beside it.
+#
+# Trained by:
+#   python -u scripts/train_late_fusion.py --dataset v2xreal \
+#     --hypes_yaml configs/v2xreal_detector.yaml \
+#     --output-dir outputs/v2xreal/point_pillar_late_fusion
+name: point_pillar_late_fusion_v2xreal
+
+root_dir: "/media/chenyi/basement2/dataset/v2x-real/train"
+validate_dir: "/media/chenyi/basement2/dataset/v2x-real/val"
+
+v2xreal:
+  gt_range: [-102.4, -51.2, -15, 102.4, 51.2, 15]
+  comm_range: 70
+
+yaml_parser: "load_point_pillar_params"
+train_params:
+  batch_size: &batch_size 2
+  epoches: 15
+  eval_freq: 1
+  save_freq: 1
+
+fusion:
+  core_method: 'V2XRealLateFusionDataset'
+  args: []
+
+# preprocess-related
+preprocess:
+  # options: BasePreprocessor, VoxelPreprocessor, BevPreprocessor
+  core_method: 'SpVoxelPreprocessor'
+  args:
+    voxel_size: &voxel_size [0.4, 0.4, 30]
+    max_points_per_voxel: 32
+    max_voxel_train: 64000
+    max_voxel_test: 100000
+  # lidar range for each individual cav.
+  cav_lidar_range: &cav_lidar [-102.4, -51.2, -15, 102.4, 51.2, 15]
+
+data_augment:
+  - NAME: random_world_flip
+    ALONG_AXIS_LIST: [ 'x' ]
+
+  - NAME: random_world_rotation
+    WORLD_ROT_ANGLE: [ -0.78539816, 0.78539816 ]
+
+  - NAME: random_world_scaling
+    WORLD_SCALE_RANGE: [ 0.95, 1.05 ]
+
+# anchor box related
+postprocess:
+  core_method: 'VoxelPostprocessor' # VoxelPostprocessor, BevPostprocessor supported
+  anchor_args:
+    cav_lidar_range: *cav_lidar
+    l: 4.5
+    w: 2.0
+    h: 1.6
+    r: [0, 90]
+    num: &achor_num 2
+  target_args:
+    pos_threshold: 0.6
+    neg_threshold: 0.45
+    score_threshold: 0.20
+  order: 'hwl' # hwl or lwh
+  max_num: 100 # maximum number of objects in a single frame. use this number to make sure different frames has the same dimension in the same batch
+  nms_thresh: 0.15
+
+# model related
+model:
+  core_method: point_pillar
+  args:
+    voxel_size: *voxel_size
+    lidar_range: *cav_lidar
+    anchor_number: *achor_num
+    pillar_vfe:
+      use_norm: true
+      with_distance: false
+      use_absolute_xyz: true
+      num_filters: [64]
+    point_pillar_scatter:
+      num_features: 64
+
+    base_bev_backbone:
+      layer_nums: [3, 5, 8]
+      layer_strides: [2, 2, 2]
+      num_filters: [64, 128, 256]
+      upsample_strides: [1, 2, 4]
+      num_upsample_filter: [128, 128, 128]
+
+    anchor_num: *achor_num
+
+loss:
+  core_method: point_pillar_loss
+  args:
+    cls_weight: 1.0
+    reg: 2.0
+
+optimizer:
+  core_method: Adam
+  lr: 0.002
+  args:
+    eps: 1e-10
+    weight_decay: 1e-4
+
+lr_scheduler:
+  core_method: multistep #step, multistep and Exponential support
+  gamma: 0.1
+  step_size: [10, 15]
+
+# --- AlignFormer-specific (not part of OpenCOOD's hypes schema) ---
+# The per-agent detector the cache and the sweeps load. Epoch chosen on the
+# official val/ split after training; 15 is the schedule's last epoch and
+# the OPV2V precedent, and is replaced here if val says otherwise.
+detector:
+  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/v2xreal/point_pillar_late_fusion/net_epoch15.pth"
