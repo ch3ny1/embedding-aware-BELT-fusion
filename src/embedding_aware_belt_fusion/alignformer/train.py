@@ -312,9 +312,11 @@ def _embed(
     batch, count = roi.shape[0], roi.shape[1]
     flat_roi = roi.reshape((batch * count,) + tuple(roi.shape[2:])).float()
     if getattr(head, "camera_dim", 0) > 0:
+        # The camera width is named, not inferred: a frame with no detected
+        # objects has zero elements here and an inferred -1 is then ambiguous.
         flat = head(
             flat_roi,
-            camera=camera.reshape(batch * count, -1),
+            camera=camera.reshape(batch * count, camera.shape[-1]),
             has_camera=has_camera.reshape(batch * count),
         )
     else:

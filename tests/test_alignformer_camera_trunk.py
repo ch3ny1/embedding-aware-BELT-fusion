@@ -297,3 +297,20 @@ def test_camera_backbone_for_builds_a_backbone_for_a_camera_dataset():
     backbone = camera_backbone_for({"model": _model_cfg(256)}, WithCameras(), torch.device("cpu"))
 
     assert isinstance(backbone, CameraBackbone)
+
+
+def test_embed_batch_handles_an_agent_frame_with_no_objects_on_a_camera_head():
+    # The evaluator sees frames where the detector found nothing; the padded
+    # stacks are then (1, 0, ...) and reshaping a zero-element camera tensor
+    # with an inferred dimension is what crashed the camera trunk's val sweep.
+    from embedding_aware_belt_fusion.alignformer.embedding import ObjectEmbedding
+    from embedding_aware_belt_fusion.alignformer.train import embed_batch
+
+    head = ObjectEmbedding(in_channels=4, output_size=2, dim=16, camera_dim=256).eval()
+    batch = _batch(with_camera=True, n=0)
+    batch["ego_has_camera"] = torch.zeros(1, 0, dtype=torch.bool)
+
+    enriched = embed_batch(head, batch)
+
+    assert enriched["ego_embeddings"].shape == (1, 0, 16)
+    assert enriched["cav_embeddings"].shape == (1, 0, 16)
