@@ -139,7 +139,8 @@ lr_scheduler:
 
 # --- AlignFormer-specific (not part of OpenCOOD's hypes schema) ---
 # The per-agent detector the cache and the sweeps load. Epoch chosen on the
-# official val/ split after training; 15 is the schedule's last epoch and
-# the OPV2V precedent, and is replaced here if val says otherwise.
+# official val/ split after training (2026-09-29): validation loss by saved
+# checkpoint, net_epoch13 0.873 < net_epoch15 0.893 < net_epoch11 0.894;
+# the schedule's last epoch (the OPV2V precedent) was not the best one.
 detector:
-  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/v2xreal/point_pillar_late_fusion/net_epoch15.pth"
+  checkpoint: "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/v2xreal/point_pillar_late_fusion/net_epoch13.pth"
