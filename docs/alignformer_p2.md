@@ -2388,6 +2388,165 @@ two, prints and **enforces** the bit-identity gate against the published runs
 (990 cells per split, max |difference| = 0 here), and keeps the verdict
 `PROVISIONAL_SHIP_*` until clause 4 has actually been evaluated.
 
+## Two more clean-case arms, and delay as an axis
+
+Per-pair abstention left 0.006 AP@0.7 between the deployed arm and the oracle
+at sigma = 0 on validation (0.9139 against 0.9199). Two arms were built to take
+it, both lost, and the way they lost is the finding. Delay was then added as a
+second noise axis beside localization error. All numbers in this section are
+validation, 958 frames, `r140`, IRLS + `per_pair` unless named otherwise.
+
+### Directional shrinkage loses to the scalar rule, with better pose error
+
+`abstain.py` gained a `directional` mode: instead of one James-Stein factor on
+the whole correction, the correction is shrunk per principal axis of the
+pair's own precision `M = A^T (B + ridge)^-1 A / tau^2`, with the factor
+`mu_i / (mu_i + p * gm(mu) / T^2)` read from the eigenvalues only, so the rule is
+rotation-invariant under degeneracy. That matters because well-conditioned
+pairs here are near-degenerate (mu_2 / mu_1 = 1.09-1.15); a per-component rule
+gave `(0.565, -1.568, 0.000)` in one basis and `(0.549, -1.340, 0.794)` in a
+rotated one on the same pair. Four formulations were needed to get there, and
+each earlier one was rejected by simulation before the sweep, not after.
+
+| AP@0.7, five seeds | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `per_pair` (deployed) | .9139 | .8976 | .8954 | .8950 | .8951 | .8974 | .8927 | .8859 | **.8966** |
+| `directional` | .9122 | .8805 | .8673 | .8637 | .8729 | .8746 | .8740 | .8702 | .8769 |
+
+Worse at every sigma. And yet its pose error at sigma = 0 is **0.0142 m against
+0.0321 m** for `per_pair`, 2.3x better, exactly as the simulation predicted.
+The reconciliation is coverage: `directional` answers **100.0%** of pairs,
+because a ridge never reaches zero, while `per_pair` declines 57% of them
+outright. For AP@0.7, leaving an already-aligned pair exactly untouched beats
+correcting it slightly better. That reframes the clean case as "abstain on
+exactly the right pairs", not "shrink more cleverly".
+
+### The hard-then-shrink rule takes the clean case and pays for it at low sigma
+
+The original grid swept `abstain` (hard threshold) at 0.5/0.2/0.05/0.01 and
+`both` (threshold, then James-Stein) only at 0.2/0.05. `both:0.01` was the one
+untried cell that could plausibly combine `abstain_0.01`'s clean score with
+`per_pair`'s noisy one.
+
+| AP@0.7, five seeds | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| oracle | .9199 | | | | | | | | |
+| `both:0.01` | **.9195** | .8751 | .8766 | .8853 | .8916 | .8939 | .8896 | .8841 | .8895 |
+| `per_pair` (deployed) | .9139 | **.8976** | **.8954** | **.8950** | **.8951** | **.8974** | **.8927** | **.8859** | **.8966** |
+| FreeAlign | .8962 | .8960 | .8957 | .8959 | .8958 | .8960 | .8958 | .8957 | .8959 |
+
+It closes the clean gap to 0.0004 by answering **3.5%** of pairs at sigma = 0,
+and the same threshold leaves real misalignments uncorrected at sigma = 0.2-0.6,
+where it falls below FreeAlign. One knob does not buy both ends. **`per_pair`
+stays deployed.** The clean-case position against FreeAlign is +0.0177 at
+sigma = 0 on validation, carried by abstention: FreeAlign corrects 99.9% of
+pairs by 0.32 m where no correction is needed. The remaining 0.006 to the oracle
+is not being chased further; three formulations have now shown it trades
+directly against the low-noise band.
+
+### Delay is not more localization error, and pose MAE is the wrong number under it
+
+`alignformer/delay.py` re-enters OpenCOOD's asynchrony model through
+`wild_setting` with `async_mode: sim` (a constant, never a draw that would
+consume from the sweep's seeded stream) and OpenCOOD's own localization noise
+firmly off. The ego is never delayed (`time_delay_calculation` returns 0 for
+it); each CAV's boxes and pose come from `d` frames earlier, clamped at the
+scenario start. OPV2V is 10 Hz and OpenCOOD floors to whole frames
+(`time_delay // 100`), so the axis is specified in frames: 1, 2, 4 = 100, 200,
+400 ms. Three paired seeds, sigma in {0, 0.4, 1.0, 2.0}, on top of the delay.
+
+Under localization error the CAV's box set is displaced rigidly and a single
+SE(2) undoes it. Under delay, **static** objects arrive in the right world
+position and **moving** ones arrive displaced by their own velocity times `d`.
+No rigid transform repairs that. Two consequences were predicted in the
+`delay.py` docstring before the sweep ran and both held:
+
+- **Oracle equals uncorrected at sigma = 0** (0.4027 = 0.4027 at 100 ms), as it
+  must: there is no pose error to remove.
+- **Every correcting arm scores far above the oracle.** At 100 ms the deployed
+  arm reaches 0.7226 AP@0.7 against the oracle's 0.4027. The "correction" is
+  absorbing bulk scene motion, not pose error: the deployed arm emits 0.63 m at
+  100 ms, 1.29 m at 200 ms, 2.58 m at 400 ms against a true rigid correction of
+  zero, and FreeAlign emits 1.61 / 5.03 / **11.60 m**. Under delay,
+  `translation_mae_m` measures how much the aligner moved the boxes, and a
+  larger number scores *better*. It must not be reported as an accuracy metric
+  on this axis. Coverage of `per_pair` rises from 0.43 to 0.84-0.88 because
+  the Wald test correctly finds that the sets do not agree.
+
+The absolute AP@0.7 numbers collapse with delay (oracle 0.92 -> 0.40 -> 0.25 ->
+0.28), because a 4.5 m car displaced 1 m longitudinally already has IoU 0.64.
+The oracle's rise from 200 to 400 ms is consistent with NMS at 0.15: a CAV
+duplicate displaced 2 m still overlaps the ego's correct box and can suppress
+it, while one displaced 4 m no longer does and survives as a cheaper false
+positive. That is a property of late fusion under delay, not a defect in the
+sweep, and it is stated here as an explanation, not a measurement.
+
+**Head-to-head, `per_pair` minus FreeAlign, seed-paired mean ± SE, mean over
+the four sigmas:**
+
+| delay | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---:|---:|---:|
+| 100 ms | **+0.0457** (all four cells positive, |t| >= 24) | **+0.0501** | **+0.0291** |
+| 200 ms | +0.0073 (sigma = 2: -0.0049 ±0.0010) | **+0.1322** | **+0.1472** |
+| 400 ms | **-0.0436** (all four cells negative) | +0.0199 (sigma = 2: -0.0070) | **+0.1326** |
+
+Full rows, sigma = 0 / 0.4 / 1.0 / 2.0:
+
+| AP@0.7 | oracle | uncorrected | IRLS | `per_pair` | FreeAlign |
+|---|---:|---|---|---|---|
+| 100 ms | .4027 | .403 .231 .199 .220 | .715 .692 .697 .688 | **.723 .693 .698 .689** | .654 .654 .654 .654 |
+| 200 ms | .2496 | .250 .196 .200 .223 | .475 .468 .465 .455 | **.483 .464 .465** .455 | .460 .460 .460 **.460** |
+| 400 ms | .2818 | .282 .245 .229 .235 | .307 .304 .300 .291 | .327 .306 .299 .290 | **.349 .349 .348 .348** |
+
+| AP@0.5 | oracle | `per_pair` | FreeAlign |
+|---|---:|---|---|
+| 100 ms | .8377 | **.944 .929 .930 .919** | .881 .880 .880 .880 |
+| 200 ms | .4782 | **.817 .785 .781 .768** | .654 .654 .654 .654 |
+| 400 ms | .3499 | **.542 .529 .520** .495 | .501 .501 .500 **.500** |
+
+| AP@0.3 | oracle | `per_pair` | FreeAlign |
+|---|---:|---|---|
+| 100 ms | .9617 | **.962 .961 .961 .956** | .931 .931 .931 .931 |
+| 200 ms | .7760 | **.943 .933 .929 .917** | .784 .784 .783 .782 |
+| 400 ms | .5015 | **.753 .739 .728 .699** | .595 .595 .595 .595 |
+
+**The supportable statement.** At 100 and 200 ms the deployed arm beats
+FreeAlign at every IoU threshold and every sigma but one (200 ms, sigma = 2,
+AP@0.7, -0.005). At 400 ms FreeAlign wins AP@0.7 by 0.044 and the deployed arm
+wins AP@0.5 and AP@0.3 by 0.020 and 0.133. The mechanism is the same one as
+under localization error, inverted: FreeAlign always corrects and corrects by
+whatever its graph match says, which at 400 ms means 11.6 m; that lands the
+moving majority exactly on the ego's current boxes (AP@0.7) and drags every
+static object off its true position (AP@0.5, AP@0.3). Shrinkage lands in
+between. Which threshold is "the" metric at 400 ms is a choice; both are
+reported.
+
+**Caveats.** Three seeds, not five; validation only, test is not run on this
+axis yet; `sim` mode is a constant delay applied to every CAV, not the
+per-agent random model; the first `d` frames of each scenario get a shorter
+delay by the clamp; FreeAlign is scored without EdgeGAT, so its margins are
+conservative and ours optimistic, as everywhere in this document; and neither
+method has a motion model, so both are doing something they were not designed
+for and the comparison is between two aligners misused identically.
+
+### Reproducing
+
+```bash
+export PYTHONPATH=src:external/OpenCOOD
+# both:0.01 (and directional, with --abstain-arm directional) beside per_pair
+python -m embedding_aware_belt_fusion.alignformer.evaluate \
+  --metric noisy_ap --config configs/alignformer_detector_r140.yaml \
+  --alignformer-config configs/alignformer_r140.yaml \
+  --split /media/chenyi/basement2/cache/opv2v_splits/val \
+  --checkpoint outputs/alignformer/r140/stage2_B_ivw_scalar/best.pth \
+  --shrinkage outputs/alignformer/r140/shrinkage_ivw_scalar_calibration_result.json \
+  --robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0 \
+  --abstain-arm per_pair --abstain-arm both:0.01 --freealign --ap-seeds 5 \
+  --output outputs/alignformer/r140/both001_val_result.json
+# delay: same command with --sweep 0 0.4 1.0 2.0 --ap-seeds 3 --delay-frames {1,2,4}
+#   -> outputs/alignformer/r140/delay{1,2,4}_val_result.json
+```
+
 ## What this means for P3-P5
 
 The plan's "After P2" branch asks which of three outcomes obtains.
