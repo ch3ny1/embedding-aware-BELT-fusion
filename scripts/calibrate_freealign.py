@@ -119,7 +119,7 @@ def parse_args() -> argparse.Namespace:
 
 def _collect_pairs(args, device):
     """One ego-CAV pair per CAV per strided frame, set up exactly as the sweep does."""
-    from opencood.data_utils.datasets import build_dataset
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
     from opencood.utils.transformation_utils import x1_to_x2
 

@@ -514,3 +514,30 @@ def test_every_remaining_frame_of_that_scenario_loads(tree_with_the_corrupt_fram
     for index in range(len(dataset)):
         data = dataset.retrieve_base_data(index)
         assert list(data) == ["1", "2", "-1"]
+
+
+# ----------------------------------------------------------------------------
+# Every AlignFormer entry point builds its OpenCOOD dataset through the adapter
+# ----------------------------------------------------------------------------
+#
+# The adapter delegates every non-V2X-Real core_method to OpenCOOD unchanged,
+# so routing everything through it costs OPV2V nothing and is what lets one
+# --config select the dataset. A direct import of OpenCOOD's builder in one
+# of these would silently make that entry point OPV2V-only.
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "src/embedding_aware_belt_fusion/alignformer/evaluate.py",
+        "src/embedding_aware_belt_fusion/alignformer/cache.py",
+        "src/embedding_aware_belt_fusion/alignformer/baselines.py",
+        "scripts/calibrate_freealign.py",
+        "scripts/correspondence_evidence_budget.py",
+    ],
+)
+def test_alignformer_entry_points_build_datasets_through_the_adapter(module_path):
+    source = Path(module_path).read_text()
+
+    assert "from opencood.data_utils.datasets import build_dataset" not in source
+    assert "from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset" in source

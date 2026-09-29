@@ -226,7 +226,7 @@ def load_baseline(spec: Dict[str, Any], split: Path, device):
     OpenCOOD's own (constant-seed, z-perturbing) localization noise and its
     asynchrony model cannot run alongside this sweep's perturbation.
     """
-    from opencood.data_utils.datasets import build_dataset
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
     from opencood.tools.train_utils import create_model
 

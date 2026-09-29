@@ -940,7 +940,7 @@ def run_shrinkage(args: argparse.Namespace, device) -> Dict:
 def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     """Fused AP under localization error: uncorrected vs AlignFormer vs oracle."""
     import yaml
-    from opencood.data_utils.datasets import build_dataset
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
     from embedding_aware_belt_fusion.alignformer.freealign import FreeAlignConfig
@@ -1191,7 +1191,7 @@ def _pairs_by_shared_bucket(frame_shared_counts) -> Dict[str, int]:
 
 
 def _run_ap(args: argparse.Namespace, device) -> Dict:
-    from opencood.data_utils.datasets import build_dataset
+    from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
     from opencood.hypes_yaml.yaml_utils import load_yaml
 
     hypes = load_yaml(str(args.config), None)
