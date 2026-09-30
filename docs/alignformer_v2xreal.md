@@ -12,14 +12,19 @@
 - **Against FreeAlign on V2X-Real test, every trunk wins every cell**: 8
   sigmas x 3 thresholds, including the clean case, by +0.028 AP@0.7 /
   +0.056 AP@0.5 / +0.054 AP@0.3 on the sweep mean for the boxes-only trunk.
-  Under 100 and 200 ms of delay the same holds at every cell but one; at
-  400 ms AP@0.7 is a draw and AP@0.5 / AP@0.3 stay ours.
+  A second training seed keeps 70 of the 72 cells (boxes-only and the camera
+  trunk give up sigma 2 at AP@0.7 by 0.001-0.003) and +0.023 / +0.054 /
+  +0.057 on the sweep mean. Under 100 and 200 ms of delay the same holds at
+  every cell but one; at 400 ms AP@0.7 is a draw and AP@0.5 / AP@0.3 stay
+  ours.
 - **The LiDAR embedding's validation lead over boxes-only (+0.012 AP@0.7,
-  replicated at a second training seed) shrinks to +0.001 on test**, where it
-  survives only in the clean case (+0.012 at sigma 0) and at AP@0.3 (all
-  eight cells). This is the same val-to-test shrinkage OPV2V showed.
+  replicated at a second training seed) is a wash on test**: +0.001 at seed
+  0 and -0.0005 at seed 1 on the sweep mean. Seed 0's clean-case lead
+  (+0.012 at sigma 0) and its AP@0.3 lead at all eight cells are +0.001 and
+  +0.0006 at seed 1. This is the same val-to-test shrinkage OPV2V showed.
 - **The frozen camera feature never beats the LiDAR embedding** whose bytes
-  it shares, and on test it costs 0.012 AP@0.7 against boxes-only.
+  it shares, and on test it costs 0.012 (seed 0) and 0.005 (seed 1) AP@0.7
+  against boxes-only.
 - Message: boxes-only is FreeAlign's 218 B per agent-frame; either embedding
   trunk is 4,197 B.
 
@@ -275,7 +280,7 @@ of shrinkage but the only arm that works at all, and the sigma-0 cost is its
 price. Re-tuning the rule's threshold on V2X-Real val (caveat 4) is the
 obvious lever and was not pulled.
 
-## A second training seed: the LiDAR lead survives, the camera verdict does not
+## A second training seed on validation: the LiDAR lead survives, the camera verdict does not
 
 Everything above is one checkpoint per trunk. To put a number on
 training-seed variance, all three trunks were retrained with
@@ -318,7 +323,9 @@ trust least from a single training run.
 sign at both training seeds**: +0.012 and +0.016 AP@0.7, +0.009 and +0.010
 AP@0.5, +0.007 and +0.006 AP@0.3, in every case at all eight sigmas. At seed
 1 it also holds the clean end against FreeAlign at AP@0.7 (+0.002) as it did
-at seed 0 (+0.007). This is the finding of the comparison and it replicates.
+at seed 0 (+0.007). This is the finding on the calibration split and it
+replicates there; it does not survive the move to test (the seed-1 test
+replicate at the end of the next section).
 
 **The camera verdict is inside training-seed variance and flips sign**:
 -0.005 at seed 0, +0.010 at seed 1 against boxes-only; against the LiDAR
@@ -333,7 +340,7 @@ sweep mean at every threshold (boxes-only by 0.017-0.024 AP@0.7, LiDAR by
 0.033-0.036), FreeAlign wins sigma 0 and 0.2 at AP@0.3 and AP@0.5 by
 0.01-0.02, and the crossover sits at sigma 0.4-0.6.
 
-## Results on test: the FreeAlign verdict holds everywhere, the trunk verdict shrinks
+## Results on test: the FreeAlign verdict holds everywhere, the trunk verdict does not transfer
 
 Official test split, 14 scenarios, 2,172 frames, five paired noise seeds,
 the seed-0 checkpoints and calibrations from validation, nothing re-chosen.
@@ -382,13 +389,14 @@ comparison showed exactly this pattern (val +0.0045, test -0.0019), so the
 honest reading is that **the embedding helps the clean case and the loose
 threshold on V2X-Real, and is a wash at AP@0.7 under localization noise**.
 Not zero, as on OPV2V; not the +0.012 that val promised either. The seed-1
-checkpoints are being swept on test to put a training-seed bar on this
-number (`seed1_*_test_result.json`, to follow).
+checkpoints, swept on test below, take even the clean-case and AP@0.3 gains
+away.
 
 **The camera trunk costs 0.012 AP@0.7 on test**, negative at seven of eight
 cells against boxes-only and at all eight against the LiDAR trunk (-0.013),
 and 0.011 at AP@0.5. Val's sign flip across training seeds means the size is
-uncertain; test's sign is not. The line to quote stands: frozen ImageNet
+uncertain; test's sign is not (the seed-1 test sweep below puts the cost at
+0.005). The line to quote stands: frozen ImageNet
 features pooled over projected LiDAR boxes never beat the LiDAR embedding
 they are concatenated to, and on test they are worse than sending nothing.
 
@@ -397,6 +405,62 @@ corrects 45-52 % of pairs at sigma 0 and 77-81 % at sigma 2; the IRLS-only
 arm corrects 5-8 % and scores 0.4138 at sigma 0 (-0.0085 against uncorrected)
 and 0.1630 at sigma 2, identical to uncorrected. The per-pair rule is the
 whole method on this dataset.
+
+### The second training seed on test: FreeAlign still loses, the LiDAR lead is gone
+
+Same protocol, the seed-1 checkpoints and their val calibrations, the same
+five paired noise seeds. Rendered from
+`outputs/v2xreal/trunk_comparison_seed1_test_result.json` and the three
+`seed_replicate_B_*_test_result.json` files.
+
+| test, sweep mean | AP@0.7 seed 0 | seed 1 | AP@0.5 seed 0 | seed 1 | AP@0.3 seed 0 | seed 1 |
+|---|---:|---:|---:|---:|---:|---:|
+| boxes only | .3086 | .3034 | .4831 | .4805 | .5469 | .5494 |
+| boxes + LiDAR embedding | .3095 | .3030 | .4878 | .4813 | .5544 | .5500 |
+| boxes + LiDAR + camera | .2967 | .2984 | .4723 | .4762 | .5442 | .5468 |
+| LiDAR - boxes | +.0009 ±.0002 | -.0005 ±.0001 | +.0047 | +.0008 ±.0002 | +.0075 (all 8) | +.0006 ±.0002 |
+| camera - boxes | -.0119 ±.0002 | -.0050 ±.0005 | -.0108 | -.0044 | -.0027 | -.0026 |
+| boxes - FreeAlign | +.0281 | +.0229 | +.0564 | +.0538 | +.0540 | +.0566 |
+| LiDAR - FreeAlign | +.0290 | +.0224 | +.0610 | +.0546 | +.0615 | +.0571 |
+| camera - FreeAlign | +.0162 | +.0178 | +.0455 | +.0494 | +.0513 | +.0539 |
+
+| AP@0.7, test | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| boxes only, seed 1 - seed 0 | +.0050 | -.0007 | -.0057 | -.0065 | -.0080 | -.0074 | -.0096 | -.0087 | -.0052 ±.0002 |
+| LiDAR, seed 1 - seed 0 | -.0055 | -.0058 | -.0092 | -.0091 | -.0074 | -.0059 | -.0069 | -.0028 | -.0066 ±.0003 |
+| camera, seed 1 - seed 0 | +.0014 | +.0043 | +.0029 | +.0039 | +.0041 | -.0001 | -.0000 | -.0031 | +.0017 ±.0003 |
+| LiDAR - boxes, seed 0 | +.0115 | +.0041 | -.0010 | -.0011 | -.0041 | -.0026 | -.0009 | +.0014 | +.0009 ±.0002 |
+| LiDAR - boxes, seed 1 | +.0010 | -.0011 | -.0045 | -.0037 | -.0035 | -.0011 | +.0018 | +.0074 | -.0005 ±.0001 |
+| boxes - FreeAlign, seed 1 | +.0205 | +.0170 | +.0275 | +.0323 | +.0353 | +.0344 | +.0172 | -.0014 | +.0229 ±.0002 |
+
+**The FreeAlign verdict holds at the second seed.** Seed 1 keeps 70 of the
+72 test cells: boxes-only and the camera trunk give up sigma 2 at AP@0.7 by
+0.0014 and 0.0026, the LiDAR trunk keeps all 24. On the sweep mean the
+boxes-only margins are +0.023 / +0.054 / +0.057, against +0.028 / +0.056 /
++0.054 at seed 0; the two seeds together bracket the number to quote.
+
+**The LiDAR embedding's lead does not exist at the second seed.** Seed 0's
++0.0009 on the AP@0.7 sweep mean is -0.0005 at seed 1; the clean-case lead
+of +0.012 is +0.001; the AP@0.3 lead at all eight cells is +0.0006 on the
+mean, behind at sigma 0-0.8 and ahead from sigma 1 up. Nor do the seeds
+agree on where a gain would sit: at seed 0 the embedding led at the clean
+end and trailed under noise, at seed 1 it trails at sigma 0.2-1.0 and leads
+at sigma 1.5 and 2 (+0.002, +0.007). Two seeds that disagree on the shape
+and agree only that the mean is within 0.001 of zero is a wash. The
+clean-case and loose-threshold gains the paragraph above held on to are
+seed-0 properties, and the Verdict now says so.
+
+**Training-seed variance on test is 0.002-0.007 AP@0.7 per trunk, with the
+same sign per trunk as on val**: boxes-only -0.005 (val -0.007), LiDAR
+-0.007 (val -0.003), camera +0.002 (val +0.008). The shift is
+whole-checkpoint and consistent across splits while the trunk *ordering* is
+not, which is the argument for reading any single-checkpoint trunk
+difference under 0.01 as noise on this dataset.
+
+**The camera cost is 0.005 at seed 1 against 0.012 at seed 0**, negative
+against boxes-only at seven of eight sigmas at seed 0 and all eight at seed
+1, and against the LiDAR trunk at both (-0.013, -0.005). Sign replicates;
+size does not.
 
 ## Results under communication delay on test
 
@@ -452,11 +516,13 @@ pose correction touches. Within what is left:
    is right about the world and wrong about the recording is penalised. This
    is the same for every arm, including FreeAlign, and cannot be removed
    without a better ground truth.
-3. **Two training seeds per trunk, on val only.** Training-seed variance is
-   0.003-0.008 AP@0.7 per trunk, ten times the noise-seed spread the error
-   bars report; the LiDAR-versus-boxes lead is larger than it and replicates,
-   the camera-versus-boxes difference is not and flips sign. The test-split
-   numbers are the seed-0 checkpoints alone.
+3. **Two training seeds per trunk.** Training-seed variance is 0.003-0.008
+   AP@0.7 per trunk on val and 0.002-0.007 on test, ten times the noise-seed
+   spread the error bars report. The LiDAR-versus-boxes lead is larger than
+   it on val and replicates there; on test it is +0.001 and -0.0005 at the
+   two seeds. The camera-versus-boxes difference flips sign on val and is
+   negative at both seeds on test. Two seeds bound the variance; they do not
+   estimate it well.
 4. **IRLS and abstention constants transferred from OPV2V**, not re-chosen
    on V2X-Real val. Legitimate to re-tune; not done.
 5. **Frozen ImageNet camera features.** A null on the camera trunk is a null
@@ -472,7 +538,8 @@ pose correction touches. Within what is left:
    stands as run; the fair follow-up is a FreeAlign calibration with more
    than six val scenarios behind it, not a re-tuned AlignFormer.
 9. **Val is six scenarios.** The trunk ordering at AP@0.7 did not transfer
-   from val to test (+0.012 to +0.001), nor did the pose-MAE ordering. Quote
+   from val to test (+0.012 and +0.016 at two seeds on val; +0.001 and
+   -0.0005 on test), nor did the pose-MAE ordering. Quote
    test; use val only for what it was used for, choosing tau and the
    FreeAlign parameters.
 
@@ -577,14 +644,16 @@ for split in val test delay1_test delay2_test delay4_test; do
     --trunk lidar_camera=$V/B_camera_${split}_result.json \
     --output $V/trunk_comparison_${split}_result.json
 done
-python scripts/summarize_v2xreal_trunks.py --reference boxes_only \
-  --trunk boxes_only=$V/seed1_B_boxes_only_val_result.json \
-  --trunk lidar=$V/seed1_B_boxes+embeddings_val_result.json \
-  --trunk lidar_camera=$V/seed1_B_camera_val_result.json \
-  --output $V/trunk_comparison_seed1_val_result.json
-for tag in B_boxes_only B_boxes+embeddings B_camera; do
-  python scripts/summarize_v2xreal_trunks.py --reference seed0 \
-    --trunk seed0=$V/${tag}_val_result.json --trunk seed1=$V/seed1_${tag}_val_result.json \
-    --output $V/seed_replicate_${tag}_val_result.json
+for split in val test; do
+  python scripts/summarize_v2xreal_trunks.py --reference boxes_only \
+    --trunk boxes_only=$V/seed1_B_boxes_only_${split}_result.json \
+    --trunk lidar=$V/seed1_B_boxes+embeddings_${split}_result.json \
+    --trunk lidar_camera=$V/seed1_B_camera_${split}_result.json \
+    --output $V/trunk_comparison_seed1_${split}_result.json
+  for tag in B_boxes_only B_boxes+embeddings B_camera; do
+    python scripts/summarize_v2xreal_trunks.py --reference seed0 \
+      --trunk seed0=$V/${tag}_${split}_result.json --trunk seed1=$V/seed1_${tag}_${split}_result.json \
+      --output $V/seed_replicate_${tag}_${split}_result.json
+  done
 done
 ```
