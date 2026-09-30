@@ -1,0 +1,132 @@
+{
+  "method": "freealign_reimplementation",
+  "metric": "freealign_calibration",
+  "note": "Parameters of THIS PROJECT'S reimplementation of Lei et al., FreeAlign, ICRA 2024 (arXiv 2405.02965). Not the authors' code. Chosen on the scenario-disjoint validation slice only. Edge threshold then re-selected by FreeAlign's AP@0.7 sweep mean on the official val split (3 noise seeds), the metric the report quotes; the other parameters are the MAE-grid selection, which val at stride 1 and val plus 44 train scenarios both reproduced.",
+  "split": "/media/chenyi/basement2/dataset/v2x-real/val",
+  "stride": 4,
+  "sigma_m": 1.0,
+  "pairs": 245,
+  "selected": {
+    "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+    "authors_code_used": false,
+    "gnn_edge_features": false,
+    "edge_feature": "distance_yaw",
+    "edge_threshold_m": 1.0,
+    "anchor_limit_gamma": 2,
+    "min_nodes": 3,
+    "epsilon_power": 1.0,
+    "epsilon_offset": 100.0,
+    "robust_estimator": "ransac",
+    "inlier_threshold_m": 1.0,
+    "ransac_iterations": 512,
+    "yaw_weight": 1.0
+  },
+  "selected_score": {
+    "config": {
+      "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+      "authors_code_used": false,
+      "gnn_edge_features": false,
+      "edge_feature": "distance_yaw",
+      "edge_threshold_m": 0.3,
+      "anchor_limit_gamma": 2,
+      "min_nodes": 3,
+      "epsilon_power": 1.0,
+      "epsilon_offset": 100.0,
+      "robust_estimator": "ransac",
+      "inlier_threshold_m": 1.0,
+      "ransac_iterations": 512,
+      "yaw_weight": 1.0
+    },
+    "translation_mae_m": 1.2108618105817452,
+    "translation_median_m": 0.9415169855941731,
+    "yaw_mae_deg": 1.4118696893103808,
+    "yaw_median_deg": 0.47875213348364865,
+    "coverage": 0.2857142857142857,
+    "error_rate_over_3m": 0.0326530612244898,
+    "answered_translation_mae_m": 0.8389200250845134,
+    "answered_translation_median_m": 0.15984939042070656,
+    "answered_yaw_mae_deg": 2.953541949614706,
+    "answered_error_rate_over_3m": 0.02857142857142857
+  },
+  "grid": [],
+  "abstain_threshold_probe": [],
+  "selection_by_val_ap": {
+    "criterion": "freealign ap_70 sweep mean, global_sorted, val, 3 seeds",
+    "candidates_m": [
+      0.1,
+      0.15,
+      0.2,
+      0.3,
+      0.5,
+      1.0,
+      1.5
+    ],
+    "chosen_m": 1.0,
+    "rows": {
+      "0.1": {
+        "ap_70": 0.25824985602185585,
+        "ap_50": 0.4099995745665885,
+        "ap_30": 0.5000105246402251,
+        "sigma0_ap_70": 0.44916001290610696,
+        "sigma0_translation_mae_m": 0.002838384702422685,
+        "sigma0_coverage": 0.013333333333333334,
+        "file": "outputs/v2xreal/B_boxes_only_fathr0.1_val_result.json"
+      },
+      "0.15": {
+        "ap_70": 0.2659977374552342,
+        "ap_50": 0.41888594715505895,
+        "ap_30": 0.5061807628105119,
+        "sigma0_ap_70": 0.4439309149291979,
+        "sigma0_translation_mae_m": 0.009657327529854855,
+        "sigma0_coverage": 0.048205128205128206,
+        "file": "outputs/v2xreal/B_boxes_only_fathr0.15_val_result.json"
+      },
+      "0.2": {
+        "ap_70": 0.2820532175055713,
+        "ap_50": 0.4366274828055579,
+        "ap_30": 0.5175034027015717,
+        "sigma0_ap_70": 0.43635194878197203,
+        "sigma0_translation_mae_m": 0.10529279643633209,
+        "sigma0_coverage": 0.11794871794871795,
+        "file": "outputs/v2xreal/B_boxes_only_fathr0.2_val_result.json"
+      },
+      "0.3": {
+        "ap_70": 0.32015515525054994,
+        "ap_50": 0.47577269478056505,
+        "ap_30": 0.5428165989702031,
+        "sigma0_ap_70": 0.42481069917425207,
+        "sigma0_translation_mae_m": 0.4326066457183283,
+        "sigma0_coverage": 0.26974358974358975,
+        "file": "outputs/v2xreal/B_boxes_only_val_result.json"
+      },
+      "0.5": {
+        "ap_70": 0.3526453661003902,
+        "ap_50": 0.5038849443290783,
+        "ap_30": 0.558114984591717,
+        "sigma0_ap_70": 0.42060773172706334,
+        "sigma0_translation_mae_m": 0.9796080496874591,
+        "sigma0_coverage": 0.4041025641025641,
+        "file": "outputs/v2xreal/B_boxes_only_fathr0.5_val_result.json"
+      },
+      "1": {
+        "ap_70": 0.370207995766953,
+        "ap_50": 0.5159871803229775,
+        "ap_30": 0.5599203825479646,
+        "sigma0_ap_70": 0.4144426897873619,
+        "sigma0_translation_mae_m": 3.9087674457777353,
+        "sigma0_coverage": 0.5641025641025641,
+        "file": "outputs/v2xreal/B_boxes_only_fathr1_val_result.json"
+      },
+      "1.5": {
+        "ap_70": 0.37025637915129367,
+        "ap_50": 0.5138476189467175,
+        "ap_30": 0.5561536927789509,
+        "sigma0_ap_70": 0.4078057499833687,
+        "sigma0_translation_mae_m": 6.401989729706736,
+        "sigma0_coverage": 0.6461538461538462,
+        "file": "outputs/v2xreal/B_boxes_only_fathr1.5_val_result.json"
+      }
+    },
+    "tie_break": "The AP@0.7 criterion ties 1.0 m and 1.5 m (0.3702 vs 0.3703, below the noise-seed spread); 1.0 m wins AP@0.5 and AP@0.3 by 0.002-0.004 and the clean case, 1.5 m is the criterion's literal argmax. Both are swept on test and both are reported."
+  }
+}

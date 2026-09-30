@@ -1,0 +1,53 @@
+{
+  "method": "freealign_reimplementation",
+  "metric": "freealign_calibration",
+  "note": "Parameters of THIS PROJECT'S reimplementation of Lei et al., FreeAlign, ICRA 2024 (arXiv 2405.02965). Not the authors' code. Chosen on the scenario-disjoint validation slice only. Edge threshold overridden to 1.0 m for selection by val AP; not an MAE-grid selection.",
+  "split": "/media/chenyi/basement2/dataset/v2x-real/val",
+  "stride": 4,
+  "sigma_m": 1.0,
+  "pairs": 245,
+  "selected": {
+    "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+    "authors_code_used": false,
+    "gnn_edge_features": false,
+    "edge_feature": "distance_yaw",
+    "edge_threshold_m": 1.0,
+    "anchor_limit_gamma": 2,
+    "min_nodes": 3,
+    "epsilon_power": 1.0,
+    "epsilon_offset": 100.0,
+    "robust_estimator": "ransac",
+    "inlier_threshold_m": 1.0,
+    "ransac_iterations": 512,
+    "yaw_weight": 1.0
+  },
+  "selected_score": {
+    "config": {
+      "reimplementation_of": "Lei et al., FreeAlign, ICRA 2024, arXiv 2405.02965",
+      "authors_code_used": false,
+      "gnn_edge_features": false,
+      "edge_feature": "distance_yaw",
+      "edge_threshold_m": 0.3,
+      "anchor_limit_gamma": 2,
+      "min_nodes": 3,
+      "epsilon_power": 1.0,
+      "epsilon_offset": 100.0,
+      "robust_estimator": "ransac",
+      "inlier_threshold_m": 1.0,
+      "ransac_iterations": 512,
+      "yaw_weight": 1.0
+    },
+    "translation_mae_m": 1.2108618105817452,
+    "translation_median_m": 0.9415169855941731,
+    "yaw_mae_deg": 1.4118696893103808,
+    "yaw_median_deg": 0.47875213348364865,
+    "coverage": 0.2857142857142857,
+    "error_rate_over_3m": 0.0326530612244898,
+    "answered_translation_mae_m": 0.8389200250845134,
+    "answered_translation_median_m": 0.15984939042070656,
+    "answered_yaw_mae_deg": 2.953541949614706,
+    "answered_error_rate_over_3m": 0.02857142857142857
+  },
+  "grid": [],
+  "abstain_threshold_probe": []
+}

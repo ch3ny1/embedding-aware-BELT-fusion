@@ -57,10 +57,12 @@ from embedding_aware_belt_fusion.alignformer.stage2 import is_fallback
 
 # The grid. Every axis the paper leaves open, plus the two the shipped code
 # fixes (which are included so the authors' own values are measured, not
-# assumed to be best).
+# assumed to be best). The edge threshold runs down to 0.1 m because on
+# V2X-Real every calibration chose 0.3 m while that was the smallest value
+# searched; a selection on the grid's edge is not a selection.
 _GRID = {
     "edge_feature": (EDGE_DISTANCE, EDGE_DISTANCE_YAW),
-    "edge_threshold_m": (0.3, 0.5, 1.0, 1.5),
+    "edge_threshold_m": (0.1, 0.15, 0.2, 0.3, 0.5, 1.0, 1.5),
     "anchor_limit": (1, 2, 3),
     "epsilon_offset": (0.0, 100.0),
     "epsilon_power": (1.0, 3.0),
