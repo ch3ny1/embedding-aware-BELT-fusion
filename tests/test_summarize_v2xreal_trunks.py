@@ -188,3 +188,53 @@ def test_a_missing_condition_row_names_the_condition_and_the_trunk():
 
     with pytest.raises(ValueError, match=r"boxes_only has no 'alignformer_irls' row"):
         summarize(results, reference="boxes_only", condition="alignformer_irls")
+
+
+def test_a_freealign_file_replaces_the_freealign_row_of_every_trunk():
+    """FreeAlign depends on the detections and noise draws only, so a re-run
+    with new parameters supplies the FreeAlign column for every trunk file."""
+    trunks = _three_trunks()
+    recalibrated = _result([0.0, 0.0, 0.0], [0.85, 0.85, 0.85])
+
+    summary = summarize(trunks, reference="boxes_only", condition=DEFAULT_CONDITION, freealign=recalibrated)
+
+    for name, expected in (("boxes_only", [-0.05, -0.03, -0.01]), ("lidar", [-0.04, -0.02, 0.0])):
+        versus = summary["per_metric"]["ap_70"]["trunks"][name]["minus_freealign"]
+        assert versus["per_sigma"]["1"]["per_seed"] == pytest.approx(expected)
+    assert summary["freealign_row"] == "separate file"
+
+
+def test_without_a_freealign_file_the_row_comes_from_each_trunks_own_file():
+    summary = summarize(_three_trunks(), reference="boxes_only", condition=DEFAULT_CONDITION)
+
+    assert summary["freealign_row"] == "own file"
+
+
+def test_a_freealign_file_that_does_not_pair_is_refused():
+    recalibrated = _result([0.0] * 2, [0.85] * 2, seeds=(0, 1))
+
+    with pytest.raises(ValueError, match="freealign.*noise_seeds"):
+        summarize(_three_trunks(), reference="boxes_only", condition=DEFAULT_CONDITION, freealign=recalibrated)
+
+
+def test_the_cli_takes_the_freealign_file_and_records_it(tmp_path):
+    paths = {}
+    for name, result in _three_trunks().items():
+        paths[name] = tmp_path / f"{name}_test_result.json"
+        paths[name].write_text(json.dumps(result))
+    freealign = tmp_path / "recalibrated_test_result.json"
+    freealign.write_text(json.dumps(_result([0.0] * 3, [0.85] * 3)))
+    root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "summary.json"
+
+    run = subprocess.run(
+        [sys.executable, str(root / "scripts" / "summarize_v2xreal_trunks.py"),
+         "--trunk", f"boxes_only={paths['boxes_only']}", "--trunk", f"lidar={paths['lidar']}",
+         "--reference", "boxes_only", "--freealign-from", str(freealign), "--output", str(out)],
+        capture_output=True, text=True, cwd=str(root),
+    )
+
+    assert run.returncode == 0, run.stderr
+    summary = json.loads(out.read_text())
+    assert summary["sources"]["freealign"]["path"] == str(freealign)
+    assert summary["per_metric"]["ap_70"]["trunks"]["lidar"]["minus_freealign"]["per_sigma"]["1"]["mean"] == pytest.approx(-0.02)

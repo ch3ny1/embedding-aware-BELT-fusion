@@ -12,7 +12,10 @@ Two families of head-to-head, both ``left - right`` within each seed:
 - each trunk against the reference trunk (the shipped boxes-only one), the
   question the comparison exists to answer;
 - each trunk against the FreeAlign row of its own file, the question the
-  project exists to answer.
+  project exists to answer -- or, with ``--freealign-from``, against the
+  FreeAlign row of one separate file. FreeAlign depends on the detections
+  and the noise draws only, never on a checkpoint, so a re-run with new
+  parameters made under the same draws supplies the column for every trunk.
 
 Whatever would break the cross-file pairing -- a different seed list, sigma
 grid, split, frame count or detector -- is refused, not warned about.
@@ -32,7 +35,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -118,8 +121,8 @@ def _versus(left: dict, left_condition: str, right: dict, right_condition: str,
     return {"per_sigma": per_sigma, "sweep_mean": sweep_mean}
 
 
-def _trunk_rows(result: dict, condition: str, sigmas: Sequence[float], metric: str) -> dict:
-    """One trunk's own cells, and its head-to-head with the FreeAlign row beside them."""
+def _trunk_rows(result: dict, freealign: dict, condition: str, sigmas: Sequence[float], metric: str) -> dict:
+    """One trunk's own cells, and its head-to-head with the FreeAlign row of ``freealign``."""
     per_sigma = {
         _sigma_key(sigma): spread(_cell_series(result, condition, sigma, metric)).to_dict()
         for sigma in sigmas
@@ -128,23 +131,35 @@ def _trunk_rows(result: dict, condition: str, sigmas: Sequence[float], metric: s
     return {
         "per_sigma": per_sigma,
         "sweep_mean": sweep_mean,
-        "minus_freealign": _versus(result, condition, result, FREEALIGN, sigmas, metric),
+        "minus_freealign": _versus(result, condition, freealign, FREEALIGN, sigmas, metric),
     }
 
 
-def summarize(results: Dict[str, dict], reference: str, condition: str) -> dict:
+def _freealign_rows(results: Dict[str, dict], freealign: Optional[dict]) -> Dict[str, dict]:
+    """The file each trunk's FreeAlign row is read from: its own, or the one separate file."""
+    if freealign is None:
+        return dict(results)
+    check_paired({**results, FREEALIGN: freealign})
+    return {name: freealign for name in results}
+
+
+def summarize(results: Dict[str, dict], reference: str, condition: str, freealign: Optional[dict] = None) -> dict:
     if reference not in results:
         raise ValueError(f"reference {reference!r} is not one of the trunks {list(results)}")
     check_paired(results)
+    freealign_rows = _freealign_rows(results, freealign)
     first = results[reference]
     sigmas = [float(sigma) for sigma in first["sweep_sigmas_m"]]
     for name, result in results.items():
         _require_condition(result, condition, sigmas, name)
-        _require_condition(result, FREEALIGN, sigmas, name)
+        _require_condition(freealign_rows[name], FREEALIGN, sigmas, name if freealign is None else FREEALIGN)
     per_metric = {}
     for metric in AP_KEYS:
         per_metric[metric] = {
-            "trunks": {name: _trunk_rows(result, condition, sigmas, metric) for name, result in results.items()},
+            "trunks": {
+                name: _trunk_rows(result, freealign_rows[name], condition, sigmas, metric)
+                for name, result in results.items()
+            },
             "minus_reference": {
                 name: _versus(result, condition, first, condition, sigmas, metric)
                 for name, result in results.items()
@@ -157,6 +172,7 @@ def summarize(results: Dict[str, dict], reference: str, condition: str) -> dict:
         "reference": reference,
         "sigmas_m": sigmas,
         "seeds": [int(seed) for seed in _seeds(first)],
+        "freealign_row": "own file" if freealign is None else "separate file",
         "per_metric": per_metric,
     }
 
@@ -209,18 +225,25 @@ def main() -> None:
     parser.add_argument("--trunk", action="append", required=True, metavar="NAME=PATH")
     parser.add_argument("--reference", default=None, help="trunk every other is differenced against; the first if omitted")
     parser.add_argument("--condition", default=DEFAULT_CONDITION)
+    parser.add_argument(
+        "--freealign-from", type=Path, default=None, metavar="PATH",
+        help="a result file whose FreeAlign row replaces the one in every --trunk file; "
+             "it must pair with them (same seeds, sigmas, split, frames, detector)",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
     trunks = parse_trunks(args.trunk)
     if len(trunks) < 2:
         parser.error("at least two --trunk entries are needed")
+    sources = dict(trunks) if args.freealign_from is None else {**trunks, FREEALIGN: args.freealign_from}
     try:
-        results = {name: json.loads(path.read_text()) for name, path in trunks.items()}
+        loaded = {name: json.loads(path.read_text()) for name, path in sources.items()}
     except (OSError, json.JSONDecodeError) as error:
-        parser.error(f"could not read a --trunk result file: {error}")
-    summary = summarize(results, args.reference or next(iter(trunks)), args.condition)
-    payload = {**summary, "sources": _sources(trunks, results)}
+        parser.error(f"could not read a result file: {error}")
+    results = {name: loaded[name] for name in trunks}
+    summary = summarize(results, args.reference or next(iter(trunks)), args.condition, loaded.get(FREEALIGN))
+    payload = {**summary, "sources": _sources(sources, loaded)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2) + "\n")
     for metric in AP_KEYS:
