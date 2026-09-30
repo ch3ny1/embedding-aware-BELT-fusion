@@ -961,8 +961,10 @@ at sigma = 0.
 
 That last reason is geometric, not perceptual, which is why the camera
 contingency in the design spec **cannot rescue association here** however good
-the features are. It remains open on a real-traffic dataset such as V2X-Real,
-where competitors within 2 m are common.
+the features are. It was then tried on V2X-Real
+([alignformer_v2xreal.md](alignformer_v2xreal.md)): association Top-1 is
+0.99 there too, the LiDAR embedding's gain is confined to the clean case and
+the loose threshold on test, and a frozen camera feature adds nothing.
 
 ## Tables
 
@@ -2771,7 +2773,11 @@ and BEV resolution -- but not the binding one: no ego object in the validation
 split has a competitor within 2 m, so nearest-centre association already scores
 Top-1 1.0000 and there is nothing for a better descriptor to disambiguate. The
 contingency stays open for **V2X-Real**, where real traffic supplies the
-competitors OPV2V lacks. Whether any matching improvement can move the headline
+competitors OPV2V lacks. That comparison has since been run, in
+[alignformer_v2xreal.md](alignformer_v2xreal.md): on V2X-Real test every
+trunk beats FreeAlign at every cell, the LiDAR embedding's validation lead
+over boxes-only (+0.012 AP@0.7) shrinks to +0.001 on test, and the frozen
+camera feature costs 0.012. Whether any matching improvement can move the headline
 metric at all is bounded by the oracle-correspondence measurement recorded in
 the open items below.
 
