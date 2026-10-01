@@ -2774,10 +2774,15 @@ split has a competitor within 2 m, so nearest-centre association already scores
 Top-1 1.0000 and there is nothing for a better descriptor to disambiguate. The
 contingency stays open for **V2X-Real**, where real traffic supplies the
 competitors OPV2V lacks. That comparison has since been run, in
-[alignformer_v2xreal.md](alignformer_v2xreal.md): on V2X-Real test every
-trunk beats FreeAlign at every cell, the LiDAR embedding's validation lead
-over boxes-only (+0.012 AP@0.7) is a wash on test (+0.001 and -0.0005 at two
-training seeds), and the frozen camera feature costs 0.005-0.012. Whether
+[alignformer_v2xreal.md](alignformer_v2xreal.md): on V2X-Real test a
+FreeAlign whose edge threshold is selected on val AP rather than on mean
+pose error beats every trunk at AP@0.7 and AP@0.5 under localization noise,
+while the trunks keep the clean case and AP@0.3; the LiDAR embedding's
+validation lead over boxes-only (+0.012 AP@0.7) is a wash on test (+0.001
+and -0.0005 at two training seeds), and the frozen camera feature costs
+0.005-0.012. The FreeAlign column in THIS document was calibrated by the
+mean-error criterion that under-calibrated it there, and has not been
+re-checked (see that document's caveat 8). Whether
 any matching improvement can move the headline
 metric at all is bounded by the oracle-correspondence measurement recorded in
 the open items below.

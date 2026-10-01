@@ -9,14 +9,25 @@
 
 ## Verdict
 
-- **Against FreeAlign on V2X-Real test, every trunk wins every cell**: 8
-  sigmas x 3 thresholds, including the clean case, by +0.028 AP@0.7 /
-  +0.056 AP@0.5 / +0.054 AP@0.3 on the sweep mean for the boxes-only trunk.
-  A second training seed keeps 70 of the 72 cells (boxes-only and the camera
-  trunk give up sigma 2 at AP@0.7 by 0.001-0.003) and +0.023 / +0.054 /
-  +0.057 on the sweep mean. Under 100 and 200 ms of delay the same holds at
-  every cell but one; at 400 ms AP@0.7 is a draw and AP@0.5 / AP@0.3 stay
-  ours.
+- **FreeAlign, calibrated on the metric this report quotes, beats every
+  trunk under localization noise on V2X-Real test.** With its edge threshold
+  selected by val AP (1.0 m) instead of by mean pose error (0.3 m), FreeAlign
+  leads at AP@0.7 at every sigma from 0.2 up (by 0.012 at 0.2, 0.073 at 2.0)
+  and on the sweep mean by 0.032-0.045 against all three trunks at both
+  training seeds, and at AP@0.5 from sigma 0.6 up (0.006-0.021 on the sweep
+  mean). The trunks keep the clean case at every threshold (+0.015-0.027
+  AP@0.7 at sigma 0) and AP@0.3 on the sweep mean (+0.006-0.016). Under 100
+  to 400 ms of delay the split is the same: ours at sigma 0 and at AP@0.3,
+  FreeAlign at AP@0.7 and AP@0.5 once localization error is injected.
+- **The verdict this document first carried, "every trunk beats FreeAlign at
+  every cell", was against an under-calibrated FreeAlign.** The mean-error
+  criterion put its edge threshold at 0.3 m (29 % coverage); twenty times
+  the calibration data did not move it, and widening the grid made it pick
+  thresholds at which FreeAlign answers 1-5 % of pairs. Selecting the
+  threshold by FreeAlign's own val AP gives 1.0 m (60 % coverage) and
+  +0.061 AP@0.7 on test. Every table below carries both columns; quote the
+  1.0 m one. "Re-calibrating FreeAlign on the reported metric" has the
+  whole story.
 - **The LiDAR embedding's validation lead over boxes-only (+0.012 AP@0.7,
   replicated at a second training seed) is a wash on test**: +0.001 at seed
   0 and -0.0005 at seed 1 on the sweep mean. Seed 0's clean-case lead
@@ -101,7 +112,11 @@ re-chosen on V2X-Real val at stride 4 and sigma 1.0 m by
 `scripts/calibrate_freealign.py`, and the evaluator reads the whole selected
 block through `--freealign-calibration`. FreeAlign is therefore tuned to
 this dataset by the same procedure as on OPV2V, not run with OPV2V's
-constants. EdgeGAT is still not ported (see P2's "What is ported").
+constants. EdgeGAT is still not ported (see P2's "What is ported"). That
+procedure's criterion -- mean translation error over all pairs at sigma 1 m
+-- turned out to under-calibrate FreeAlign here; "Re-calibrating FreeAlign
+on the reported metric" re-selects the edge threshold on val AP, and every
+test table carries both the 0.3 m and the 1.0 m column.
 
 ## Stage 1: association on real traffic is still not the bottleneck
 
@@ -215,6 +230,10 @@ three trunks and FreeAlign (FreeAlign's rows are bit-identical across the
 three files, which is the check that the pairing is real). Every arm is the
 deployed one: IRLS Huber n = 2 with guard 3.0, per-pair abstention, each
 trunk's own tau. Rendered from `outputs/v2xreal/trunk_comparison_val_result.json`.
+FreeAlign in this section is the MAE-calibrated 0.3 m configuration the
+sweeps were first run with; at the AP-calibrated 1.0 m it scores 0.370
+AP@0.7 on this split against 0.344 / 0.356 / 0.339 for the three trunks
+(see "Re-calibrating FreeAlign on the reported metric").
 
 | AP@0.7, val | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -253,7 +272,7 @@ Top-1 was the worst of the three and its tau and residual sit between the
 other two. Caveat 5 applies: this is a null on ImageNet features pooled over
 projected LiDAR boxes, not on cameras.
 
-**Against FreeAlign, all three trunks win the sweep mean at every threshold,
+**Against the MAE-calibrated FreeAlign, all three trunks win the sweep mean at every threshold,
 and FreeAlign wins the clean end.** At sigma 0 FreeAlign is ahead of every
 trunk at AP@0.3 (by 0.010-0.018) and AP@0.5 (by 0.014-0.023), and ahead of
 boxes-only and camera at AP@0.7; the LiDAR trunk holds AP@0.7 at sigma 0
@@ -335,16 +354,91 @@ overtake the LiDAR embedding at either seed while sharing its bytes. The
 sentence to quote is "the camera feature adds nothing over the LiDAR
 embedding", not "the camera feature hurts".
 
-**Against FreeAlign, both seeds agree on the shape**: every trunk wins the
+**Against the MAE-calibrated FreeAlign, both seeds agree on the shape**: every trunk wins the
 sweep mean at every threshold (boxes-only by 0.017-0.024 AP@0.7, LiDAR by
 0.033-0.036), FreeAlign wins sigma 0 and 0.2 at AP@0.3 and AP@0.5 by
 0.01-0.02, and the crossover sits at sigma 0.4-0.6.
 
-## Results on test: the FreeAlign verdict holds everywhere, the trunk verdict does not transfer
+## Re-calibrating FreeAlign on the reported metric
+
+The first version of this document asked, in its caveat 8, for a FreeAlign
+calibration with more than six val scenarios behind it. That was done, and
+the data was not the problem.
+
+**More calibration data does not move the selection.** The original grid
+(192 configurations, scored on translation MAE over all pairs at sigma 1 m
+with an abstention counted as the uncorrected pose) was re-run on all 717
+val frames (975 pairs, four times the original 245) and on val plus the 44
+train scenarios that share no recording clip with test (50 scenarios, 4,852
+pairs at stride 2). Both pick the same six values as the 245-pair run:
+`distance_yaw`, 0.3 m, gamma 2, offset 100, power 1, RANSAC (the power ties
+with 3, because an offset of 100 makes the subgraph score depend on its size
+alone). Files: `freealign_calibration_val_stride1_result.json`,
+`freealign_calibration_valplus_result.json`.
+
+**Widening the grid makes the criterion worse, not the baseline better.**
+Every run had chosen 0.3 m, the smallest threshold in the grid, so the grid
+was extended down to 0.1 m. The MAE criterion then picks 0.15 m on val
+(4.8 % coverage) and 0.1 m on val plus train (0.6 %): with heavy-tailed
+answered errors and an uncorrected error of only 1.3 m at sigma 1, a mean
+over all pairs that charges nothing for an abstention is minimised by
+abstaining. The calibrator's docstring anticipated this at sigma 0 and
+guarded against it by refusing sigma 0; at sigma 1 on this dataset it
+happens anyway (`*_wide_result.json`).
+
+**Selecting the edge threshold by FreeAlign's own AP on val reverses the
+picture.** The other five parameters were flat under every criterion and
+stay at the MAE selection; the threshold was swept through the deployed
+pipeline on val (three paired noise seeds, the boxes-only trunk beside it;
+`B_boxes_only_fathr*_val_result.json`):
+
+| FreeAlign edge threshold, val | AP@0.7 sweep mean | AP@0.5 | AP@0.3 | AP@0.7 at sigma 0 | emitted at sigma 0 | coverage |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.1 m | .258 | .410 | .500 | .449 | 0.00 m | 1 % |
+| 0.15 m | .266 | .419 | .506 | .444 | 0.01 m | 5 % |
+| 0.2 m | .282 | .437 | .518 | .436 | 0.11 m | 12 % |
+| 0.3 m (MAE selection) | .320 | .476 | .543 | .425 | 0.43 m | 27 % |
+| 0.5 m | .353 | .504 | .558 | .421 | 0.98 m | 40 % |
+| 1.0 m | .3702 | **.516** | **.560** | .414 | 3.9 m | 56 % |
+| 1.5 m (AP@0.7 argmax) | **.3703** | .514 | .556 | .408 | 6.4 m | 65 % |
+| boxes-only AlignFormer, same files | .344 | .508 | .564 | .422 | | |
+| LiDAR AlignFormer | .356 | .518 | .571 | .432 | | |
+
+AP rises monotonically with the threshold up to 1.0 m and is flat from
+there, while the emitted correction at sigma 0 rises from 0.4 m to 6.4 m.
+FreeAlign's mean pose error and its AP move in opposite directions: AP is
+scored on the fused boxes and does not care how far the worst answered pairs
+are thrown, only that the bulk of them are corrected, and the mean-error
+criterion optimised the wrong summary of the same distribution. At 1.0 m
+FreeAlign's val AP@0.7 is above the boxes-only trunk by 0.026 and above the
+LiDAR trunk by 0.014.
+
+**1.0 m and 1.5 m tie at AP@0.7** (0.0001 apart, below the noise-seed
+spread); 1.0 m wins AP@0.5, AP@0.3 and the clean case. Rather than break the
+tie by hand, both were swept on test and both are reported, with 1.0 m the
+column to quote (`freealign_calibration_valap_thr{1,1.5}_result.json`).
+FreeAlign's row depends on the detections and the noise draws and not on any
+checkpoint, so one boxes-only re-run per threshold supplies the column for
+every trunk and training seed (`summarize_v2xreal_trunks.py
+--freealign-from`); the AlignFormer rows of the re-runs reproduce the
+original files to the last digit.
+
+**What was and was not re-tuned.** FreeAlign now has a seven-point search
+on the reported metric behind its one live parameter. AlignFormer's
+abstention constants and tau are still the residual-fitted values (caveat
+4); the symmetric treatment would select them on val AP too, and was not
+done here because it is a method change. The asymmetry runs in FreeAlign's
+favour, which is the direction a fairness check should err in.
+
+## Results on test: the trunk verdict does not transfer, and the FreeAlign verdict turns on its calibration
 
 Official test split, 14 scenarios, 2,172 frames, five paired noise seeds,
-the seed-0 checkpoints and calibrations from validation, nothing re-chosen.
-Rendered from `outputs/v2xreal/trunk_comparison_test_result.json`.
+the seed-0 checkpoints and calibrations from validation, nothing re-chosen
+on test. FreeAlign appears twice: at the MAE-calibrated 0.3 m the sweeps
+were first run with, and at the AP-calibrated 1.0 m (1.5 m in the text).
+Bold marks the best trunk. Rendered from
+`outputs/v2xreal/trunk_comparison_test_result.json` and
+`trunk_comparison_seed0_faap1_test_result.json`.
 
 | AP@0.7, test | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -352,30 +446,46 @@ Rendered from `outputs/v2xreal/trunk_comparison_test_result.json`.
 | boxes only | .3855 | .3447 | **.3168** | **.3036** | **.2950** | .2904 | **.2739** | **.2601** | .3086 |
 | boxes + LiDAR embedding | **.3970** | **.3486** | .3155 | .3017 | .2931 | **.2910** | .2733 | .2595 | **.3095** |
 | boxes + LiDAR + camera | .3882 | .3371 | .3005 | .2882 | .2751 | .2754 | .2599 | .2503 | .2967 |
-| FreeAlign | .3700 | .3274 | .2829 | .2628 | .2542 | .2499 | .2485 | .2493 | .2806 |
+| FreeAlign, 0.3 m (MAE-calibrated) | .3700 | .3274 | .2829 | .2628 | .2542 | .2499 | .2485 | .2493 | .2806 |
+| FreeAlign, 1.0 m (val-AP-calibrated) | .3702 | .3577 | .3420 | .3362 | .3331 | .3321 | .3303 | .3301 | .3415 |
+| FreeAlign, 1.5 m | .3617 | .3516 | .3399 | .3356 | .3328 | .3322 | .3307 | .3304 | .3393 |
 | LiDAR - boxes | +.0115 | +.0041 | -.0010 | -.0011 | -.0041 | -.0026 | -.0009 | +.0014 | **+.0009 ±.0002** |
 | camera - boxes | +.0027 | -.0086 | -.0173 | -.0168 | -.0197 | -.0156 | -.0130 | -.0069 | **-.0119 ±.0002** |
-| boxes - FreeAlign | +.0155 | +.0176 | +.0332 | +.0389 | +.0433 | +.0418 | +.0268 | +.0074 | **+.0281 ±.0002** |
-| LiDAR - FreeAlign | +.0270 | +.0217 | +.0322 | +.0377 | +.0392 | +.0393 | +.0259 | +.0088 | **+.0290 ±.0003** |
+| boxes - FreeAlign 0.3 m | +.0155 | +.0176 | +.0332 | +.0389 | +.0433 | +.0418 | +.0268 | +.0074 | **+.0281 ±.0002** |
+| LiDAR - FreeAlign 0.3 m | +.0270 | +.0217 | +.0322 | +.0377 | +.0392 | +.0393 | +.0259 | +.0088 | **+.0290 ±.0003** |
+| boxes - FreeAlign 1.0 m | +.0154 | -.0119 | -.0270 | -.0349 | -.0360 | -.0399 | -.0548 | -.0733 | **-.0328 ±.0003** |
+| LiDAR - FreeAlign 1.0 m | +.0268 | -.0079 | -.0280 | -.0360 | -.0401 | -.0425 | -.0557 | -.0718 | **-.0319 ±.0004** |
 
-| test, sweep mean | boxes only | LiDAR | camera | LiDAR - boxes | camera - boxes | boxes - FreeAlign | LiDAR - FreeAlign |
+| test, sweep mean | boxes only | LiDAR | camera | LiDAR - boxes | camera - boxes | boxes - FreeAlign 0.3 m | LiDAR - FreeAlign 0.3 m |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | AP@0.5 | .4831 | **.4878** | .4723 | +.0047 (sigma 0 / 0.2: +.012 / +.011) | -.0108 (7 of 8) | **+.0564** (all 8) | **+.0610** (all 8) |
 | AP@0.3 | .5469 | **.5544** | .5442 | **+.0075** (all 8) | -.0027 | **+.0540** (all 8) | **+.0615** (all 8) |
 
-**Every trunk beats FreeAlign at every one of the 24 cells**, and the margin
-is larger than on validation: +0.028 / +0.056 / +0.054 for boxes-only at
-AP@0.7 / 0.5 / 0.3 on the sweep mean (val: +0.024 / +0.033 / +0.021). The
-clean end, which FreeAlign held on validation at AP@0.3 and AP@0.5, is ours on
-test at every threshold (+0.016 / +0.015 / +0.021 for boxes-only). The reason
-is in the pose diagnostics rather than in our trunks: FreeAlign's six
-parameters, chosen on val where they emitted 0.43 m of correction at sigma 0,
-emit **2.68 m** at sigma 0 on test (29 % coverage, unchanged), a regression
-against uncorrected of 0.052 AP@0.7 where ours is 0.025-0.037. Both sides
-were calibrated on val and neither was looked at on test, so this is the
-comparison as protocol defines it; caveat 8 records that the transfer went
-worse for FreeAlign than for us and that a re-tuned FreeAlign is the fair
-follow-up, not a re-tuned AlignFormer.
+| test, sweep mean | FreeAlign 1.0 m | boxes - FreeAlign 1.0 m | LiDAR - FreeAlign 1.0 m | camera - FreeAlign 1.0 m |
+|---|---:|---:|---:|---:|
+| AP@0.7 | .3415 | -.0328 ±.0003 (ours at sigma 0 only, +.015) | -.0319 ±.0004 (sigma 0: +.027) | -.0447 ±.0003 (sigma 0: +.018) |
+| AP@0.5 | .4933 | -.0102 ±.0005 (ours at sigma 0-0.4) | -.0055 ±.0003 (ours at sigma 0-0.4) | -.0210 ±.0003 (ours at sigma 0-0.2) |
+| AP@0.3 | .5390 | **+.0084 ±.0004** (ours at sigma 0-1.0) | **+.0159 ±.0002** (ours at sigma 0-1.5) | **+.0057 ±.0004** (ours at sigma 0-1.0) |
+
+**Against the MAE-calibrated FreeAlign every trunk wins all 24 cells;
+against the AP-calibrated one the split is by sigma and by threshold.** At
+0.3 m FreeAlign's val parameters transferred badly -- 0.43 m of emitted
+correction at sigma 0 on val became 2.68 m on test at the same 29 % coverage
+-- and the trunks lead by +0.028 / +0.056 / +0.054 AP@0.7 / 0.5 / 0.3 on the
+sweep mean. At 1.0 m FreeAlign emits 4.82 m at sigma 0 (60 % coverage) and
+still scores 0.370 AP@0.7 there, the same as at 0.3 m; from sigma 0.2 up its
+AP@0.7 barely moves (0.358 to 0.330) while the trunks fall from 0.345 to
+0.260, because FreeAlign's correction comes from the box graphs and never
+sees the pose, so the injected error costs it only what it costs the
+uncorrected boxes it leaves alone. Result: **the trunks hold sigma 0 at
+every threshold (+0.015-0.027 AP@0.7) and AP@0.3 on the sweep mean
+(+0.006-0.016, ours at every sigma up to 1.0); FreeAlign holds AP@0.7 from
+sigma 0.2 up and AP@0.5 from 0.6 up, by 0.032-0.045 and 0.006-0.021 on the
+sweep means.** At 1.5 m FreeAlign is 0.002-0.008 below its 1.0 m self on
+every sweep mean and the verdict is unchanged (boxes-only: -0.031 / -0.006 /
++0.016). The protocol was the same for both sides -- calibrate on val,
+report on test, never re-choose on test -- and the 1.0 m threshold was fixed
+on val AP before any test sweep with it ran.
 
 **The LiDAR embedding's lead over boxes-only does not transfer at AP@0.7.**
 +0.012 on val, replicated at +0.016 at a second training seed, becomes
@@ -406,7 +516,7 @@ arm corrects 5-8 % and scores 0.4138 at sigma 0 (-0.0085 against uncorrected)
 and 0.1630 at sigma 2, identical to uncorrected. The per-pair rule is the
 whole method on this dataset.
 
-### The second training seed on test: FreeAlign still loses, the LiDAR lead is gone
+### The second training seed on test: the LiDAR lead is gone, the FreeAlign split repeats
 
 Same protocol, the seed-1 checkpoints and their val calibrations, the same
 five paired noise seeds. Rendered from
@@ -420,9 +530,12 @@ five paired noise seeds. Rendered from
 | boxes + LiDAR + camera | .2967 | .2984 | .4723 | .4762 | .5442 | .5468 |
 | LiDAR - boxes | +.0009 ±.0002 | -.0005 ±.0001 | +.0047 | +.0008 ±.0002 | +.0075 (all 8) | +.0006 ±.0002 |
 | camera - boxes | -.0119 ±.0002 | -.0050 ±.0005 | -.0108 | -.0044 | -.0027 | -.0026 |
-| boxes - FreeAlign | +.0281 | +.0229 | +.0564 | +.0538 | +.0540 | +.0566 |
-| LiDAR - FreeAlign | +.0290 | +.0224 | +.0610 | +.0546 | +.0615 | +.0571 |
-| camera - FreeAlign | +.0162 | +.0178 | +.0455 | +.0494 | +.0513 | +.0539 |
+| boxes - FreeAlign 0.3 m | +.0281 | +.0229 | +.0564 | +.0538 | +.0540 | +.0566 |
+| LiDAR - FreeAlign 0.3 m | +.0290 | +.0224 | +.0610 | +.0546 | +.0615 | +.0571 |
+| camera - FreeAlign 0.3 m | +.0162 | +.0178 | +.0455 | +.0494 | +.0513 | +.0539 |
+| boxes - FreeAlign 1.0 m | -.0328 | -.0380 | -.0102 | -.0128 | +.0084 | +.0109 |
+| LiDAR - FreeAlign 1.0 m | -.0319 | -.0385 | -.0055 | -.0120 | +.0159 | +.0115 |
+| camera - FreeAlign 1.0 m | -.0447 | -.0431 | -.0210 | -.0171 | +.0057 | +.0083 |
 
 | AP@0.7, test | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | mean |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -431,13 +544,17 @@ five paired noise seeds. Rendered from
 | camera, seed 1 - seed 0 | +.0014 | +.0043 | +.0029 | +.0039 | +.0041 | -.0001 | -.0000 | -.0031 | +.0017 ±.0003 |
 | LiDAR - boxes, seed 0 | +.0115 | +.0041 | -.0010 | -.0011 | -.0041 | -.0026 | -.0009 | +.0014 | +.0009 ±.0002 |
 | LiDAR - boxes, seed 1 | +.0010 | -.0011 | -.0045 | -.0037 | -.0035 | -.0011 | +.0018 | +.0074 | -.0005 ±.0001 |
-| boxes - FreeAlign, seed 1 | +.0205 | +.0170 | +.0275 | +.0323 | +.0353 | +.0344 | +.0172 | -.0014 | +.0229 ±.0002 |
+| boxes - FreeAlign 0.3 m, seed 1 | +.0205 | +.0170 | +.0275 | +.0323 | +.0353 | +.0344 | +.0172 | -.0014 | +.0229 ±.0002 |
+| boxes - FreeAlign 1.0 m, seed 1 | +.0203 | -.0126 | -.0327 | -.0414 | -.0440 | -.0473 | -.0643 | -.0820 | -.0380 ±.0003 |
 
-**The FreeAlign verdict holds at the second seed.** Seed 1 keeps 70 of the
-72 test cells: boxes-only and the camera trunk give up sigma 2 at AP@0.7 by
-0.0014 and 0.0026, the LiDAR trunk keeps all 24. On the sweep mean the
-boxes-only margins are +0.023 / +0.054 / +0.057, against +0.028 / +0.056 /
-+0.054 at seed 0; the two seeds together bracket the number to quote.
+**The FreeAlign verdict repeats at the second seed, at both calibrations.**
+Against the 0.3 m column seed 1 keeps 70 of the 72 test cells (boxes-only
+and the camera trunk give up sigma 2 at AP@0.7 by 0.0014 and 0.0026) with
++0.023 / +0.054 / +0.057 on the sweep means. Against the 1.0 m column
+(`trunk_comparison_seed1_faap1_test_result.json`) seed 1 is -0.038 / -0.013
+/ +0.011 for boxes-only and -0.039 / -0.012 / +0.012 for LiDAR at AP@0.7 /
+0.5 / 0.3, with the clean case still ours at every threshold (+0.020-0.021
+AP@0.7 at sigma 0). The same split as seed 0, 0.005 wider.
 
 **The LiDAR embedding's lead does not exist at the second seed.** Seed 0's
 +0.0009 on the AP@0.7 sweep mean is -0.0005 at seed 1; the clean-case lead
@@ -467,9 +584,10 @@ size does not.
 Constant delay of 1, 2 and 4 frames (100 / 200 / 400 ms at 10 Hz) on the
 other agent's message, localization error swept at sigma 0 / 0.4 / 1 / 2,
 three paired noise seeds, test split. Rendered from
-`outputs/v2xreal/trunk_comparison_delay{1,2,4}_test_result.json`.
+`outputs/v2xreal/trunk_comparison_delay{1,2,4}_test_result.json` (FreeAlign
+at 0.3 m) and `trunk_comparison_delay{1,2,4}_faap1_test_result.json` (1.0 m).
 
-| test, sweep mean over sigma 0 / 0.4 / 1 / 2 | oracle | boxes only | LiDAR | camera | FreeAlign | boxes - FreeAlign | LiDAR - boxes | camera - boxes |
+| test, sweep mean over sigma 0 / 0.4 / 1 / 2 | oracle | boxes only | LiDAR | camera | FreeAlign 0.3 m | boxes - FreeAlign 0.3 m | LiDAR - boxes | camera - boxes |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | 100 ms, AP@0.7 | .3420 | .2560 | **.2567** | .2478 | .2422 | **+.0139** (all 4) | +.0006 | -.0082 |
 | 100 ms, AP@0.5 | .5588 | .4354 | **.4407** | .4280 | .3872 | **+.0482** (all 4) | +.0053 | -.0074 |
@@ -481,23 +599,36 @@ three paired noise seeds, test split. Rendered from
 | 400 ms, AP@0.5 | .4464 | .3482 | **.3491** | .3418 | .3309 | **+.0161** (sigma 0: -.0006) | +.0010 | -.0064 |
 | 400 ms, AP@0.3 | .4881 | .4226 | **.4260** | .4199 | .3925 | **+.0330** (all 4) | +.0034 | -.0026 |
 
+| test, sweep mean over sigma 0 / 0.4 / 1 / 2 | FreeAlign 1.0 m | boxes - FreeAlign 1.0 m at sigma 0 / 0.4 / 1 / 2 | sweep mean | LiDAR - FreeAlign 1.0 m | camera - FreeAlign 1.0 m |
+|---|---:|---|---:|---:|---:|
+| 100 ms, AP@0.7 | .2841 | +.010 / -.027 / -.039 / -.058 | -.0282 | -.0277 | -.0366 |
+| 100 ms, AP@0.5 | .4425 | +.034 / +.007 / -.016 / -.056 | -.0077 | -.0023 | -.0150 |
+| 100 ms, AP@0.3 | .5126 | +.035 / +.031 / +.021 / -.016 | **+.0176** | **+.0250** | **+.0152** |
+| 200 ms, AP@0.7 | .2572 | +.015 / -.023 / -.034 / -.049 | -.0227 | -.0238 | -.0301 |
+| 200 ms, AP@0.5 | .3838 | +.030 / +.005 / -.017 / -.046 | -.0070 | -.0035 | -.0137 |
+| 200 ms, AP@0.3 | .4544 | +.054 / +.042 / +.024 / -.010 | **+.0275** | **+.0343** | **+.0267** |
+| 400 ms, AP@0.7 | .2529 | +.012 / -.025 / -.036 / -.048 | -.0243 | -.0256 | -.0305 |
+| 400 ms, AP@0.5 | .3602 | +.024 / -.000 / -.026 / -.048 | -.0126 | -.0116 | -.0190 |
+| 400 ms, AP@0.3 | .4045 | +.041 / +.035 / +.013 / -.015 | **+.0183** | **+.0217** | **+.0157** |
+
 The oracle row is the ceiling with perfect poses and a stale message: it
 falls from 0.4223 to 0.3420 / 0.3187 / 0.3136 AP@0.7, so most of what delay
 costs is the other agent's boxes being where the objects were, which no
 pose correction touches. Within what is left:
 
-- **100 ms: ours at every cell and every threshold** for boxes-only and
-  LiDAR; the camera trunk drops one cell (sigma 2, AP@0.7, -0.004).
-- **200 ms: ours at every cell except sigma 2 at AP@0.7**, a draw for
-  boxes-only (-0.0006) and a loss for LiDAR (-0.004); AP@0.5 and AP@0.3 at
-  every cell by 0.03-0.06.
-- **400 ms: AP@0.7 is a draw** on the sweep mean (+0.002, losing sigma 0 by
-  0.003 and sigma 2 by 0.005, winning 0.4 and 1 by 0.007-0.010); AP@0.5 and
-  AP@0.3 are ours by 0.016 and 0.033 with one cell lost (sigma 0, AP@0.5,
-  -0.0006). On OPV2V the 400 ms AP@0.7 cell went to FreeAlign by 0.050; here
-  it does not, because FreeAlign's emitted correction under 400 ms is 3.3 m
-  at sigma 0 (ours 0.76 m) -- the always-correct policy is punished by the
-  same miscalibration as in the clean case.
+- **Against the MAE-calibrated FreeAlign** the trunks win every cell at
+  100 ms, every cell but sigma 2 at AP@0.7 at 200 ms, and at 400 ms draw
+  AP@0.7 (+0.002) while keeping AP@0.5 and AP@0.3 by 0.016 and 0.033.
+- **Against the AP-calibrated FreeAlign the split is the undelayed one, at
+  every delay**: ours at sigma 0 at every threshold (+0.010-0.015 AP@0.7,
+  +0.024-0.034 AP@0.5, +0.035-0.054 AP@0.3), FreeAlign at AP@0.7 from sigma
+  0.4 up by 0.023-0.058 and at AP@0.5 from sigma 1 up, ours at AP@0.3 up to
+  sigma 1 and on its sweep mean (+0.015-0.034). Delay does not move who wins
+  where; it lowers both sides by about the same amount (FreeAlign 0.342 ->
+  0.284 / 0.257 / 0.253 AP@0.7, boxes-only 0.309 -> 0.256 / 0.235 / 0.229).
+  At 1.5 m FreeAlign is within 0.006 of its 1.0 m self at every delay and
+  threshold, and no verdict changes
+  (`trunk_comparison_delay{1,2,4}_faap1.5_test_result.json`).
 - **The trunks do not separate under delay at AP@0.7**: LiDAR minus boxes
   is +0.0006 / -0.0011 / -0.0013, inside the seed bars, with a +0.003-0.007
   edge at AP@0.3. The camera trunk is 0.006-0.008 behind at AP@0.7 at every
@@ -524,19 +655,25 @@ pose correction touches. Within what is left:
    negative at both seeds on test. Two seeds bound the variance; they do not
    estimate it well.
 4. **IRLS and abstention constants transferred from OPV2V**, not re-chosen
-   on V2X-Real val. Legitimate to re-tune; not done.
+   on V2X-Real val. Legitimate to re-tune; not done. After the FreeAlign
+   re-calibration this is the open asymmetry: FreeAlign's one live parameter
+   was selected on val AP, AlignFormer's were not.
 5. **Frozen ImageNet camera features.** A null on the camera trunk is a null
    about frozen features pooled over projected LiDAR boxes, not about cameras.
 6. **FreeAlign without EdgeGAT**, as on OPV2V.
 7. **Delay is constant `sim` mode** with the clamp at scenario start, no
    motion model on either side.
-8. **FreeAlign's val calibration transferred worse than ours.** Its emitted
-   correction at sigma 0 went from 0.43 m on val to 2.68 m on test while its
-   coverage stayed at 29 %, and that is most of why the clean case flips to
-   ours on test. Protocol was the same for both sides (calibrate on val,
-   report on test, never look at test to re-choose), so the comparison
-   stands as run; the fair follow-up is a FreeAlign calibration with more
-   than six val scenarios behind it, not a re-tuned AlignFormer.
+8. **FreeAlign's calibration criterion, not its data, set the first
+   verdict.** The mean-error criterion put the edge threshold at 0.3 m and
+   did not move with twenty times the pairs; selected on val AP the
+   threshold is 1.0 m and the verdict under noise reverses. The grid now
+   runs to 0.1 m and the threshold is selected on the reported metric; the
+   other five parameters are still the MAE selection, which was flat across
+   them. A residual fit of the same family set AlignFormer's tau and
+   abstention constants, and those were not re-selected on AP (caveat 4),
+   so the comparison now errs in FreeAlign's favour. The OPV2V FreeAlign
+   column in [alignformer_p2.md](alignformer_p2.md) was calibrated by the
+   same MAE criterion and has not been re-checked.
 9. **Val is six scenarios.** The trunk ordering at AP@0.7 did not transfer
    from val to test (+0.012 and +0.016 at two seeds on val; +0.001 and
    -0.0005 on test), nor did the pose-MAE ordering. Quote
@@ -545,115 +682,6 @@ pose correction touches. Within what is left:
 
 ## Reproducing
 
-```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda activate opencood
-export PYTHONPATH=src:external/OpenCOOD
-D=/media/chenyi/basement2/dataset/v2x-real; V=outputs/v2xreal
-AF=configs/alignformer_v2xreal.yaml; AFC=configs/alignformer_v2xreal_camera.yaml
-DET=configs/v2xreal_detector.yaml
-ROBUST="--robust-solve huber --robust-iterations 2 --robust-min-evidence 3.0"
-
-# Detector (15 epochs; checkpoint epoch chosen by val loss, named in $DET).
-# Cache with camera features, all three splits (~40 min; resumes).
-python -m embedding_aware_belt_fusion.alignformer.cache --config $DET \
-  --splits $D/train $D/val $D/test \
-  --cache-root /media/chenyi/basement2/cache/alignformer_v2xreal --camera
-
-# Stage 1, three trunks (~17 min each on an RTX 4090).
-python -m embedding_aware_belt_fusion.alignformer.train --config $AF --stage 1 --output-dir $V/stage1
-python -m embedding_aware_belt_fusion.alignformer.train --config $AF --stage 1 --zero-embeddings --output-dir $V/stage1_zero_embeddings
-python -m embedding_aware_belt_fusion.alignformer.train --config $AFC --stage 1 --output-dir $V/stage1_camera
-
-# Correspondence variance on val; the four numbers are pasted into both configs.
-python scripts/fit_correspondence_variance.py --config $AF --output $V/variance_fit_result.json
-
-# Stage 2 (~28 min each) and shrinkage on val, per trunk.
-for spec in "boxes+embeddings|$AF|stage1|B_boxes+embeddings" \
-            "boxes_only|$AF|stage1_zero_embeddings|B_boxes_only" \
-            "boxes+embeddings+camera|$AFC|stage1_camera|B_camera"; do
-  IFS='|' read -r content cfg s1 tag <<<"$spec"
-  python -m embedding_aware_belt_fusion.alignformer.train --config $cfg --stage 2 --head B \
-    --message-content $content --stage1-checkpoint $V/$s1/best.pth \
-    --variance-weighting scalar --output-dir $V/stage2_$tag
-  python -m embedding_aware_belt_fusion.alignformer.evaluate --config $cfg --metric shrinkage \
-    --checkpoint $V/stage2_$tag/best.pth $ROBUST --output $V/shrinkage_${tag}_calibration_result.json
-done
-
-# FreeAlign's six parameters on val.
-python scripts/calibrate_freealign.py --config $DET --alignformer-config $AF \
-  --split $D/val --stride 4 --sigma 1.0 --output $V/freealign_calibration_result.json
-FA="--freealign --freealign-calibration $V/freealign_calibration_result.json"
-
-# Sweeps: val 3 seeds (pipeline check), test 5 seeds (report), delay 1/2/4 on test 3 seeds.
-sweep() { local tag=$1 cfg=$2 split=$3 seeds=$4; shift 4
-  python -m embedding_aware_belt_fusion.alignformer.evaluate --metric noisy_ap --config $DET \
-    --alignformer-config $cfg --split $D/$split --checkpoint $V/stage2_$tag/best.pth \
-    --shrinkage $V/shrinkage_${tag}_calibration_result.json $ROBUST --abstain-arm per_pair $FA \
-    --ap-seeds $seeds "$@"; }
-for spec in "B_boxes_only|$AF" "B_boxes+embeddings|$AF" "B_camera|$AFC"; do
-  IFS='|' read -r tag cfg <<<"$spec"
-  sweep $tag $cfg val 3 --output $V/${tag}_val_result.json
-  sweep $tag $cfg test 5 --output $V/${tag}_test_result.json
-  for d in 1 2 4; do
-    sweep $tag $cfg test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --output $V/${tag}_delay${d}_test_result.json
-  done
-done
-
-# Message bytes (structural; the camera trunk shares the LiDAR trunk's bytes).
-python - <<'PY'
-import json; from pathlib import Path
-from embedding_aware_belt_fusion.alignformer.bandwidth import alignformer_message_bytes, alignment_overhead_bytes
-m = alignformer_message_bytes(Path("/media/chenyi/basement2/cache/alignformer_v2xreal/test"), 128, 64)
-n = m["objects_per_agent_mean"]
-Path("outputs/v2xreal/bandwidth_result.json").write_text(json.dumps({
-  "method": "v2xreal_bandwidth", "metric": "bytes_per_frame_per_agent", "precision": "float32",
-  "alignformer": m, "alignment_overhead": {k: alignment_overhead_bytes(n, e) for k, e in
-  [("freealign", 0), ("alignformer_boxes_only", 0), ("alignformer_boxes_embedding", 128), ("alignformer_boxes_embedding_camera", 128)]}}, indent=2))
-PY
-
-# Training-seed replicate: seed-1 copies of the configs for TRAINING only;
-# the sweep runs on the shipped config (whose training.seed also seeds the
-# noise draws) with the seed-1 checkpoint and shrinkage swapped in.
-sed 's/^  seed: 0$/  seed: 1/' $AF > $V/alignformer_v2xreal_seed1.yaml
-sed 's/^  seed: 0$/  seed: 1/' $AFC > $V/alignformer_v2xreal_camera_seed1.yaml
-for spec in "boxes_only|$V/alignformer_v2xreal_seed1.yaml|$AF|--zero-embeddings|B_boxes_only" \
-            "boxes+embeddings|$V/alignformer_v2xreal_seed1.yaml|$AF||B_boxes+embeddings" \
-            "boxes+embeddings+camera|$V/alignformer_v2xreal_camera_seed1.yaml|$AFC||B_camera"; do
-  IFS='|' read -r content tcfg ecfg zero tag <<<"$spec"
-  python -m embedding_aware_belt_fusion.alignformer.train --config $tcfg --stage 1 $zero --output-dir $V/seed1_stage1_$tag
-  python -m embedding_aware_belt_fusion.alignformer.train --config $tcfg --stage 2 --head B \
-    --message-content $content --stage1-checkpoint $V/seed1_stage1_$tag/best.pth \
-    --variance-weighting scalar --output-dir $V/seed1_stage2_$tag
-  python -m embedding_aware_belt_fusion.alignformer.evaluate --config $ecfg --metric shrinkage \
-    --checkpoint $V/seed1_stage2_$tag/best.pth $ROBUST --output $V/shrinkage_seed1_${tag}_calibration_result.json
-  python -m embedding_aware_belt_fusion.alignformer.evaluate --metric noisy_ap --config $DET \
-    --alignformer-config $ecfg --split $D/val --checkpoint $V/seed1_stage2_$tag/best.pth \
-    --shrinkage $V/shrinkage_seed1_${tag}_calibration_result.json $ROBUST --abstain-arm per_pair $FA \
-    --ap-seeds 3 --output $V/seed1_${tag}_val_result.json
-  python -m embedding_aware_belt_fusion.alignformer.evaluate --metric noisy_ap --config $DET \
-    --alignformer-config $ecfg --split $D/test --checkpoint $V/seed1_stage2_$tag/best.pth \
-    --shrinkage $V/shrinkage_seed1_${tag}_calibration_result.json $ROBUST --abstain-arm per_pair $FA \
-    --ap-seeds 5 --output $V/seed1_${tag}_test_result.json
-done
-
-# Every table under "Results" is rendered from those JSONs.
-for split in val test delay1_test delay2_test delay4_test; do
-  python scripts/summarize_v2xreal_trunks.py --reference boxes_only \
-    --trunk boxes_only=$V/B_boxes_only_${split}_result.json \
-    --trunk lidar=$V/B_boxes+embeddings_${split}_result.json \
-    --trunk lidar_camera=$V/B_camera_${split}_result.json \
-    --output $V/trunk_comparison_${split}_result.json
-done
-for split in val test; do
-  python scripts/summarize_v2xreal_trunks.py --reference boxes_only \
-    --trunk boxes_only=$V/seed1_B_boxes_only_${split}_result.json \
-    --trunk lidar=$V/seed1_B_boxes+embeddings_${split}_result.json \
-    --trunk lidar_camera=$V/seed1_B_camera_${split}_result.json \
-    --output $V/trunk_comparison_seed1_${split}_result.json
-  for tag in B_boxes_only B_boxes+embeddings B_camera; do
-    python scripts/summarize_v2xreal_trunks.py --reference seed0 \
-      --trunk seed0=$V/${tag}_${split}_result.json --trunk seed1=$V/seed1_${tag}_${split}_result.json \
-      --output $V/seed_replicate_${tag}_${split}_result.json
-  done
-done
-```
+The full command sequence, from the cache build to the FreeAlign re-calibration
+and the paired summaries, is in
+[alignformer_v2xreal_reproducing.md](alignformer_v2xreal_reproducing.md).
