@@ -205,6 +205,20 @@ trunk; file `B_boxes_only_icp_default_val_result.json`, selection
   oracle .60 on this split). The sparse bucket is where the remaining 0.08 to
   the oracle lives and is the pose graph's job.
 
+**The other two gate settings** (same split, seeds and arms):
+
+| val, sweep mean AP@0.7 | re-solve | re-solve + agree 1.0 | paired vs default |
+|---|---|---|---|
+| default: gates 2.0 / 1.0 / 0.5 m, 3 hard pairs | .3688 | .3728 | |
+| wide: 3.0 / 1.5 / 0.75 / 0.5 m, 3 pairs | .3690 | .3718 | -0.0000 / -0.0012 (+/- 0.0002) |
+| 2 hard pairs, default gates | .3699 | .3744 | +0.0009 / +0.0017 (+/- 0.0001) |
+
+The setting barely matters: the gain is the hard re-solve itself, not its
+gate. Two hard pairs would have been selected over three by 0.001-0.002,
+below the 0.002-0.008 training-seed variance; the default, the
+pre-registered setting, is the one on test, and the two-pair setting is
+recorded as a sensitivity rather than re-run.
+
 ## The agreement rule: two estimators, one decision
 
 With the re-solve every pair has two estimates of its correction, the soft
@@ -242,10 +256,38 @@ and Wald statistic with the base arm's decision rule applied at the
 chi-square limit; on the smoke it held sigma 2 at the re-solve's .394 with
 98 % coverage against 90 %, and cost 0.014 at sigma 0 by filling sparse
 pairs with 1.9 m errors the gate let through: the composed precision is
-optimistic, as the per-pair Wald precision already was. Validation (chain
-L, after chain K) decides the mode and whether the gate needs a stricter
-level than the base arm's; result files
+optimistic, as the per-pair Wald precision already was.
+
+**Validation (chain L): a null, in both modes.** Same split, seeds and
+arms as above, graph built on `abstain 0.2, re-solve`, files
 `B_boxes_only_graph_{fill,joint}_val_result.json`.
+
+| val, sweep mean, paired vs the re-solve it builds on | AP@0.7 | AP@0.5 | AP@0.3 | sigma 0 | sigma 2 |
+|---|---|---|---|---|---|
+| re-solve (abstain 0.2) | .3688 | .5280 | .5755 | .4312 | .3456 |
+| graph, fill | .3680 (-0.0005 +/- 0.0003) | .5262 (-0.0017) | .5716 (-0.0037) | .4205 | .3480 |
+| graph, joint | .3642 (-0.0044 +/- 0.0001) | .5230 (-0.0047) | .5697 (-0.0055) | .4164 | .3363 |
+
+- **The filled pairs are not solved, they are answered.** Fill mode raises
+  coverage of the 1-2-shared bucket from 59 % to 84 % at sigma 2 and of the
+  0-shared bucket from 8 % to 40 %, but the filled corrections carry 6-8 m
+  mean error and the buckets' AP does not move (.125 to .124 and .085 to
+  .087 at sigma 2). The third agent's measurement of a sparse pair is as
+  unreliable as the ego's: in a frame where the ego shares one object with a
+  CAV, the other CAVs usually share few with it too, and the CAV-CAV
+  estimates come with the same optimistic precision.
+- **The gate did not protect the clean case.** Fill costs 0.011 at sigma 0
+  and 0.2 and gains 0.002-0.003 from 0.6 m up, which nets to nothing; a
+  stricter level would only hand the arm back to the re-solve.
+- **Joint mode moves the dense pairs** (answered error 0.38 m to 0.54 m at
+  sigma 2) exactly as the smoke said.
+
+Verdict: in this form the pose graph is not taken to test. What it needs
+is better cross measurements, not a better solver: either a quality gate on
+the CAV-CAV estimates (only measurements whose re-solve engaged on three or
+more hard pairs), or anchors whose pose carries no error, which is the
+infrastructure-unit protocol question for the group (45 % of pairs). Both
+are cheap to try once the GPU is free; neither is a one-day certainty.
 
 ## Camera colour on real traffic: coverage passes, signal does not
 
