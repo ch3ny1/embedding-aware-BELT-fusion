@@ -162,3 +162,103 @@ def test_the_cross_measurement_is_what_projecting_boxes_with_noisy_poses_produce
 
     # The correction a must apply to its noisy view of j to reach the truth in its frame:
     torch.testing.assert_close(apply_se2(predicted, noisy_in_a), true_in_a, atol=1e-4, rtol=0)
+
+
+# ---------------------------------------------------------------------------
+# 7. From a frame's estimates to graph-corrected estimates
+# ---------------------------------------------------------------------------
+
+from embedding_aware_belt_fusion.alignformer.model import PoseEstimate  # noqa: E402
+from embedding_aware_belt_fusion.alignformer.posegraph import (  # noqa: E402
+    graph_estimates,
+    graph_name,
+    se2_from_transform,
+)
+
+
+def _estimate(se2: SE2, precision=None, zero=False) -> PoseEstimate:
+    psi = torch.zeros(1) if zero else se2.psi.reshape(1).float()
+    t = torch.zeros(1, 2) if zero else se2.t.reshape(1, 2).float()
+    return PoseEstimate(psi=psi, t=t, confidence=torch.tensor([3.0]),
+                        offset_statistic=torch.tensor([9.0]), offset_dof=torch.tensor([3.0]),
+                        offset_precision=None if precision is None else precision.reshape(1, 3, 3).float())
+
+
+def test_se2_from_a_4x4_transform_reads_yaw_and_translation():
+    psi = 0.3
+    matrix = torch.eye(4)
+    matrix[0, 0], matrix[0, 1], matrix[1, 0], matrix[1, 1] = math.cos(psi), -math.sin(psi), math.sin(psi), math.cos(psi)
+    matrix[0, 3], matrix[1, 3] = 4.0, -2.0
+
+    se2 = se2_from_transform(matrix)
+
+    assert float(se2.psi) == pytest.approx(psi)
+    torch.testing.assert_close(se2.t, torch.tensor([4.0, -2.0]))
+
+
+def test_graph_estimates_fill_a_cav_the_ego_abstained_on_from_a_third_agent():
+    truth, frames = _frame()
+    ego_estimates = {"a": _estimate(truth["a"]), "b": _estimate(truth["b"], zero=True)}  # ego abstained on b
+    cross = {("a", "b"): _estimate(_cross(truth, frames, "a", "b"))}
+
+    graphed = graph_estimates(ego_estimates, cross, frames)
+
+    assert set(graphed) == {"a", "b"}
+    torch.testing.assert_close(graphed["b"].t, truth["b"].t.reshape(1, 2).float(), atol=2e-3, rtol=0)
+    assert float(graphed["b"].psi) == pytest.approx(float(truth["b"].psi), abs=1e-4)
+    torch.testing.assert_close(graphed["a"].t, truth["a"].t.reshape(1, 2).float(), atol=2e-3, rtol=0)
+    assert graphed["a"].offset_statistic is ego_estimates["a"].offset_statistic  # decision inputs ride along
+
+
+def test_graph_estimates_leave_a_cav_nobody_answered_at_the_identity():
+    truth, frames = _frame()
+    ego_estimates = {"a": _estimate(truth["a"]), "b": _estimate(truth["b"], zero=True)}
+
+    graphed = graph_estimates(ego_estimates, {}, frames)
+
+    assert graphed["b"].t.abs().max().item() == 0.0 and graphed["b"].psi.abs().max().item() == 0.0
+
+
+def test_graph_estimates_use_the_fits_precision_when_present():
+    truth, frames = _frame()
+    wrong = SE2(psi=truth["a"].psi, t=truth["a"].t + torch.tensor([2.0, 0.0], dtype=torch.float64))
+    sharp, blunt = torch.eye(3) * 100.0, torch.eye(3)
+    ego_estimates = {"a": _estimate(wrong, blunt), "b": _estimate(truth["b"], sharp)}
+    # b sees a sharply and correctly: T_b<-ego C_a C_b^-1 T_ego<-b
+    cross = {("b", "a"): _estimate(_cross(truth, frames, "b", "a"), sharp)}
+
+    graphed = graph_estimates(ego_estimates, cross, frames)
+
+    assert abs(float(graphed["a"].t[0, 0]) - float(truth["a"].t[0])) < 0.05
+
+
+def test_graph_name_and_sweep_estimators():
+    from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_estimators
+    from embedding_aware_belt_fusion.alignformer.robust import HUBER, RobustSolveConfig
+
+    assert graph_name("alignformer_abstain_0.2_icp") == "alignformer_abstain_0.2_icp_graph"
+    robust = RobustSolveConfig(mode=HUBER, iterations=2)
+    arms = [AbstentionConfig.parse("abstain:0.2")]
+
+    names = sweep_estimators([], False, robust, arms, graph_arm="alignformer_abstain_0.2")
+
+    assert names == ["alignformer", "alignformer_irls", "alignformer_abstain_0.2", "alignformer_abstain_0.2_graph"]
+    with pytest.raises(ValueError):
+        sweep_estimators([], False, robust, arms, graph_arm="alignformer_abstain_0.2_icp")  # not produced
+
+
+def test_a_frame_with_no_cav_yields_no_estimates_and_no_error():
+    assert graph_estimates({}, {}, {}) == {}
+    assert solve_pose_graph(EGO, [], {}, []) == {}
+
+
+def test_the_solve_runs_under_no_grad_and_returns_in_the_input_dtype():
+    truth, frames = _frame()
+    ego_estimates = {"a": _estimate(truth["a"]), "b": _estimate(truth["b"], zero=True)}
+    cross = {("a", "b"): _estimate(_cross(truth, frames, "a", "b"))}
+
+    with torch.no_grad():
+        graphed = graph_estimates(ego_estimates, cross, frames)
+
+    assert graphed["b"].t.dtype == torch.float32 and not graphed["b"].t.requires_grad

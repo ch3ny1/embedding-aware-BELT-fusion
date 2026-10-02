@@ -96,6 +96,11 @@ from embedding_aware_belt_fusion.alignformer.abstain import (
     AbstentionConfig,
     decide,
 )
+from embedding_aware_belt_fusion.alignformer.posegraph import (
+    graph_estimates,
+    graph_name,
+    se2_from_transform,
+)
 from embedding_aware_belt_fusion.alignformer.refine import (
     AgreementConfig,
     RefineConfig,
@@ -184,6 +189,7 @@ def sweep_estimators(
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
     agreement: Sequence[AgreementConfig] = (),
+    graph_arm: Optional[str] = None,
 ) -> List[str]:
     """The correction arms one sweep invocation produces, in a fixed order.
 
@@ -232,6 +238,12 @@ def sweep_estimators(
             for tol in agreement
             for config in enabled_abstention
         )
+    # The frame-level pose graph (alignformer.posegraph) is built on ONE of
+    # the arms above and adds exactly one condition beside it.
+    if graph_arm is not None:
+        if graph_arm not in names:
+            raise ValueError(f"--graph-arm {graph_arm!r} is not an arm this sweep produces: {names}")
+        names.append(graph_name(graph_arm))
     names.extend(oracle_match)
     if freealign:
         names.append(FREEALIGN)
@@ -269,6 +281,7 @@ def unshrunk_conditions(
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
     agreement: Sequence[AgreementConfig] = (),
+    graph_arm: Optional[str] = None,
 ) -> Tuple[str, ...]:
     """Every condition the global-tau calibration must not be applied to.
 
@@ -285,7 +298,8 @@ def unshrunk_conditions(
     agreed = tuple(
         agreement_name(name, tol.tolerance_m) for tol in agreement for name in decision_arms
     )
-    return UNSHRUNK_CONDITIONS + decision_arms + refined + agreed
+    graphed = (graph_name(graph_arm),) if graph_arm is not None else ()
+    return UNSHRUNK_CONDITIONS + decision_arms + refined + agreed + graphed
 
 
 def _truncate_by_score(
@@ -599,6 +613,7 @@ def run_noise_sweep(
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
     agreement: Sequence[AgreementConfig] = (),
+    graph_arm: Optional[str] = None,
     camera_backbone=None,
 ) -> Tuple[
     Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]],
@@ -686,9 +701,9 @@ def run_noise_sweep(
     variance_models = _oracle_variance_models(modules) if oracle_match else {}
     abstention = [config for config in abstention if config.enabled]
     estimators = sweep_estimators(
-        list(variance_models), freealign is not None, robust, abstention, refine, agreement
+        list(variance_models), freealign is not None, robust, abstention, refine, agreement, graph_arm
     )
-    unshrunk = unshrunk_conditions(abstention, refine, agreement)
+    unshrunk = unshrunk_conditions(abstention, refine, agreement, graph_arm)
     if ALIGNFORMER_IRLS in estimators and not hasattr(modules["pose"], "variance_model"):
         raise ValueError(
             "the robust re-weighted solve needs head B; the loaded checkpoint's "
@@ -794,7 +809,8 @@ def run_noise_sweep(
             drawn_poses = sweep_noisy_poses(
                 poses, cav_keys, sigma=sigma, seed=seed, frame=index
             )
-            for agent, key in enumerate(cav_keys):
+            per_cav: Dict[str, Tuple[Any, Dict[str, Any]]] = {}
+            for key in cav_keys:
                 noisy_pose = drawn_poses[key]
                 noisy_transform = torch.as_tensor(
                     x1_to_x2(noisy_pose, ego_pose), dtype=torch.float32, device=device
@@ -829,6 +845,19 @@ def run_noise_sweep(
                             variance_model=variance_model,
                         )
 
+                per_cav[key] = (noisy_detections, estimates)
+
+            if graph_arm is not None:
+                _add_graph_arm(
+                    per_cav, graph_arm, packs, drawn_poses, ego_pose, cav_keys, device,
+                    lambda pair: _alignformer_estimates(
+                        modules, pair, ablate_embeddings, robust, abstention, refine, agreement
+                    ),
+                )
+
+            for agent, key in enumerate(cav_keys):
+                noisy_detections, estimates = per_cav[key]
+                noisy_pose = drawn_poses[key]
                 dx, dy, dpsi_deg = relative_pose_error(ego_pose, poses[key], noisy_pose)
                 shared = shared_this_frame[agent]
                 # One perturbed set in, one scored estimate and one corrected
@@ -1001,6 +1030,44 @@ def _alignformer_estimates(
                         irls, refined, estimates[config.name], tol, heading_lambda
                     )
     return estimates
+
+
+def _add_graph_arm(
+    per_cav: Dict[str, Tuple[Any, Dict[str, Any]]],
+    graph_arm: str,
+    packs: Mapping[str, Mapping[str, Any]],
+    drawn_poses: Mapping[str, Sequence[float]],
+    ego_pose: Sequence[float],
+    cav_keys: Sequence[str],
+    device,
+    estimate_pair,
+) -> None:
+    """Add the graph-corrected condition to every CAV's estimates, in place of nothing.
+
+    One extra model pass per unordered CAV pair: CAV ``i`` projects CAV
+    ``j``'s boxes into ITS frame with both noisy poses, exactly as the ego
+    does, and the ``graph_arm`` estimate of that pair is CAV ``i``'s
+    measurement of ``j`` (``alignformer.posegraph``).
+    """
+    from opencood.utils.transformation_utils import x1_to_x2
+
+    from embedding_aware_belt_fusion.alignformer.evaluate import _pose_correction
+
+    cross: Dict[Tuple[str, str], Any] = {}
+    frames = {}
+    for index, i in enumerate(cav_keys):
+        frames[i] = se2_from_transform(
+            torch.as_tensor(x1_to_x2(ego_pose, drawn_poses[i]), dtype=torch.float32, device=device)
+        )
+        for j in cav_keys[index + 1:]:
+            j_to_i = torch.as_tensor(x1_to_x2(drawn_poses[j], drawn_poses[i]), dtype=torch.float32, device=device)
+            psi, t = _pose_correction(j_to_i)
+            pack_j = dict(packs[j])
+            pack_j["boxes"] = correct_boxes(packs[j]["boxes"], psi, t)
+            cross[(i, j)] = estimate_pair(_object_set(packs[i], pack_j))[graph_arm]
+    ego_estimates = {key: estimates[graph_arm] for key, (_, estimates) in per_cav.items()}
+    for key, graphed in graph_estimates(ego_estimates, cross, frames).items():
+        per_cav[key][1][graph_name(graph_arm)] = graphed
 
 
 def _fuse(

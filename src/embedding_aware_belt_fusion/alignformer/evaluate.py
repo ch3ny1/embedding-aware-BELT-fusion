@@ -267,6 +267,13 @@ def parse_args() -> argparse.Namespace:
              "the decision arm's own output where the re-solve did not engage.",
     )
     parser.add_argument(
+        "--graph-arm", default=None, metavar="CONDITION",
+        help="--metric noisy_ap only: add the frame-level pose graph "
+             "(alignformer.posegraph) built on this arm's estimates, as the "
+             "condition '<arm>_graph': every CAV's correction solved jointly from "
+             "the ego's estimates and one extra model pass per CAV-CAV pair.",
+    )
+    parser.add_argument(
         "--delay-frames", type=int, default=0,
         help="--metric noisy_ap only: transmission delay, in WHOLE 10 Hz "
              "frames (100 ms each). The CAV sends what it saw at t-d with its "
@@ -981,6 +988,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         draw_seeds,
         run_noise_sweep,
     )
+    from embedding_aware_belt_fusion.alignformer.posegraph import graph_name
     from embedding_aware_belt_fusion.alignformer.refine import agreement_name, refined_name
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
 
@@ -1064,6 +1072,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         abstention=abstention,
         refine=refine,
         agreement=agreement,
+        graph_arm=args.graph_arm,
         camera_backbone=camera_backbone_for(checkpoint["config"], dataset, device),
     )
 
@@ -1133,6 +1142,8 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             "agreement": [
                 agreement_name(c.name, tol.tolerance_m) for tol in agreement for c in abstention
             ],
+            # The frame-level pose graph's condition and the arm it is built on.
+            "graph": None if args.graph_arm is None else {"arm": args.graph_arm, "condition": graph_name(args.graph_arm)},
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the

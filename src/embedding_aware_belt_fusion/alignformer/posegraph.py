@@ -144,8 +144,9 @@ def _validate(ego: str, cavs: Sequence[str], frames: Mapping[str, SE2], measurem
 
 
 def _to_double(m: Measurement) -> Measurement:
-    value = SE2(psi=m.value.psi.to(torch.float64), t=m.value.t.to(torch.float64))
-    precision = None if m.precision is None else m.precision.to(torch.float64)
+    """The solve runs on the CPU in float64: a few unknowns, no reason for a device."""
+    value = SE2(psi=m.value.psi.detach().cpu().to(torch.float64), t=m.value.t.detach().cpu().to(torch.float64))
+    precision = None if m.precision is None else m.precision.detach().cpu().to(torch.float64)
     return Measurement(m.observer, m.target, value, precision)
 
 
@@ -165,18 +166,25 @@ def solve_pose_graph(
     in the dtype of the first measurement (float64 internally).
     """
     _validate(ego, cavs, frames, measurements)
+    if not cavs:
+        return {}
     slot = {cav: index for index, cav in enumerate(cavs)}
     doubles = [_to_double(m) for m in measurements]
-    frames64 = {k: SE2(v.psi.to(torch.float64), v.t.to(torch.float64)) for k, v in frames.items()}
+    frames64 = {
+        k: SE2(v.psi.detach().cpu().to(torch.float64), v.t.detach().cpu().to(torch.float64))
+        for k, v in frames.items()
+    }
     x = _initial(cavs, doubles, ego)
     residual = lambda params: _residuals(params, doubles, ego, slot, frames64, prior_precision)  # noqa: E731
-    for _ in range(iterations):
-        jacobian = torch.autograd.functional.jacobian(residual, x)
-        r = residual(x)
-        step = torch.linalg.lstsq(jacobian, -r.unsqueeze(-1)).solution.squeeze(-1)
-        x = x + step
-        if float(step.norm()) < CONVERGED_STEP:
-            break
+    # The sweep runs under no_grad; the Jacobian needs the graph back on.
+    with torch.enable_grad():
+        for _ in range(iterations):
+            jacobian = torch.autograd.functional.jacobian(residual, x)
+            r = residual(x)
+            step = torch.linalg.lstsq(jacobian, -r.unsqueeze(-1)).solution.squeeze(-1)
+            x = x + step
+            if float(step.norm()) < CONVERGED_STEP:
+                break
     dtype = measurements[0].value.t.dtype if measurements else torch.float32
     return {
         cav: SE2(psi=wrap(_unpack(x, index).psi).to(dtype), t=_unpack(x, index).t.to(dtype))
@@ -184,7 +192,79 @@ def solve_pose_graph(
     }
 
 
+# ---------------------------------------------------------------------------
+# From a frame's estimates to graph-corrected estimates
+# ---------------------------------------------------------------------------
+
+GRAPH_SUFFIX = "_graph"
+
+
+def graph_name(arm: str) -> str:
+    """The graph-corrected arm built on ``arm``."""
+    return arm + GRAPH_SUFFIX
+
+
+def se2_from_transform(matrix: Tensor) -> SE2:
+    """The SE(2) a 4x4 OpenCOOD transform implies (yaw from the rotation block)."""
+    return SE2(psi=torch.atan2(matrix[1, 0], matrix[0, 0]), t=matrix[:2, 3])
+
+
+def _answered(estimate) -> bool:
+    """An estimate that emitted a correction; a zero one is a decision to abstain, not a measurement."""
+    return bool((estimate.t.abs().sum() + estimate.psi.abs().sum()).item() > 0.0)
+
+
+def _measurement(observer: str, target: str, estimate) -> Measurement:
+    precision = estimate.offset_precision
+    return Measurement(
+        observer,
+        target,
+        SE2(psi=estimate.psi[0], t=estimate.t[0]),
+        None if precision is None else precision[0],
+    )
+
+
+def graph_estimates(
+    ego_estimates: Mapping[str, object],
+    cross_estimates: Mapping[tuple, object],
+    frames: Mapping[str, SE2],
+    *,
+    ego: str = "ego",
+) -> Dict[str, object]:
+    """One graph-corrected :class:`PoseEstimate` per CAV, from the frame's pairwise estimates.
+
+    ``ego_estimates[j]`` is the ego's estimate for CAV ``j`` (batch of one);
+    ``cross_estimates[(i, j)]`` is CAV ``i``'s estimate for CAV ``j`` in
+    ``i``'s frame; ``frames[i]`` is ``T_i<-ego``. Only estimates that emitted
+    a correction become measurements. Every returned estimate keeps its ego
+    estimate's other fields (statistic, dof, precision, refined flag), so the
+    decision inputs ride along unchanged.
+    """
+    from dataclasses import replace
+
+    cavs = list(ego_estimates)
+    measurements: List[Measurement] = [
+        _measurement(ego, cav, estimate) for cav, estimate in ego_estimates.items() if _answered(estimate)
+    ]
+    measurements.extend(
+        _measurement(i, j, estimate) for (i, j), estimate in cross_estimates.items() if _answered(estimate)
+    )
+    solved = solve_pose_graph(ego, cavs, frames, measurements)
+    return {
+        cav: replace(
+            ego_estimates[cav],
+            psi=solved[cav].psi.reshape(1).to(ego_estimates[cav].psi),
+            t=solved[cav].t.reshape(1, 2).to(ego_estimates[cav].t),
+        )
+        for cav in cavs
+    }
+
+
 __all__ = [
+    "GRAPH_SUFFIX",
+    "graph_estimates",
+    "graph_name",
+    "se2_from_transform",
     "DEFAULT_ITERATIONS",
     "DEFAULT_PRIOR_PRECISION",
     "Measurement",
