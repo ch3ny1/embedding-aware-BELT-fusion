@@ -643,90 +643,17 @@ pose correction touches. Within what is left:
   edge at AP@0.3. The camera trunk is 0.006-0.008 behind at AP@0.7 at every
   delay. Delay is not where the embedding was going to earn its bytes.
 
-## Giving AlignFormer the same treatment: its decision rule selected on val AP
+## Giving AlignFormer the same treatment, and what is left
 
-The FreeAlign reversal came from selecting its one open parameter on val AP
-instead of mean pose error (previous section). AlignFormer's deployed
-inference rule was set on OPV2V by residual-fit criteria of the same family,
-so the comparison was asymmetric (caveat 4). The per-pair decision-rule
-family was therefore swept on the official val split through the deployed
-pipeline, boxes-only trunk, 3 noise seeds, the same paired draws, and ranked
-by the criterion that picked FreeAlign's threshold: AP@0.7 sweep mean. The
-family: the global threshold `alignformer` (tau), the per-pair James-Stein
-shrinkage `per_pair` that ships, a hard Wald threshold `abstain:L` at levels
-0.5 / 0.2 / 0.1 / 0.05 / 0.01 (full correction above, abstention below), and
-threshold-then-shrink `both:L` at 0.5 / 0.2 / 0.05. The IRLS solve is on in
-every arm, so `alignformer_irls` equals `alignformer` here. The directional
-rule needs the fit's precision matrix, which this estimate does not carry,
-and was dropped. Selection by `scripts/select_alignformer_arm.py`; result
-`alignformer_arm_selection_val_result.json`.
-
-| val, 3 seeds, sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | sigma 0 AP@0.7 | sigma 2 AP@0.7 | sigma 0 MAE / cov | sigma 2 cov |
-|---|---|---|---|---|---|---|---|
-| per_pair (deployed) | .3436 | .5080 | .5628 | .4216 | .2893 | 1.38 m / 47 % | 78 % |
-| **abstain 0.2 (selected)** | **.3456** | .5117 | .5663 | .4230 | .2942 | 1.07 m / 24 % | 69 % |
-| both 0.2 | .3445 | .5112 | .5678 | .4305 | .2896 | 1.01 m / 24 % | 69 % |
-| abstain 0.1 | .3441 | .5122 | .5686 | .4302 | .2936 | 0.89 m / 16 % | 63 % |
-| abstain 0.05 | .3419 | .5119 | .5693 | .4361 | .2934 | 0.69 m / 8 % | 59 % |
-| abstain 0.01 | .3336 | .5056 | .5669 | **.4441** | .2888 | 0.43 m / 2 % | 47 % |
-| abstain 0.5 | .3428 | .5053 | .5587 | .3973 | .2942 | 1.62 m / 49 % | 78 % |
-| alignformer (= irls) | .2534 | .3996 | .4875 | .4423 | .1948 | 1.23 m / 8 % | 13 % |
-| FreeAlign 1.0 m | **.3702** | **.5160** | .5599 | .4144 | **.3505** | 3.91 m / 56 % | 56 % |
-
-Every thresholded arm sits within 0.012 AP@0.7 of every other, and the best
-of them is 0.025 under FreeAlign on the selection metric. The family beats
-FreeAlign at sigma 0 at every level and on AP@0.3 (.569 against .560); it
-loses at sigma 2 by 0.056 while *emitting more corrections* (69 % against
-56 %). The corrections AlignFormer emits at high sigma are worse than
-FreeAlign's; a decision rule chooses when to act and cannot repair the
-estimate it acts on.
-
-**On test** (2,172 frames, 5 seeds; deployed, selected and the two
-runners-up in one file, `B_boxes_only_arms_test_result.json`, FreeAlign 1.0 m
-beside them):
-
-| test AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | sweep mean |
-|---|---|---|---|---|---|---|---|---|---|
-| per_pair (deployed) | .3855 | .3447 | .3168 | .3036 | .2950 | .2904 | .2739 | .2601 | .3088 |
-| abstain 0.2 (selected) | .3932 | .3404 | .3100 | .3032 | .2993 | .2940 | .2797 | .2661 | .3107 |
-| both 0.2 | .4029 | .3477 | .3152 | .3022 | .2933 | .2890 | .2734 | .2594 | .3104 |
-| abstain 0.1 | .4049 | .3406 | .3040 | .2978 | .2929 | .2906 | .2767 | .2644 | .3090 |
-| FreeAlign 1.0 m | .3702 | .3577 | .3420 | .3362 | .3331 | .3321 | .3303 | .3301 | .3415 |
-
-| test, sweep mean, paired by seed | AP@0.7 | AP@0.5 | AP@0.3 |
-|---|---|---|---|
-| selected minus deployed | +0.0021 +/- 0.0001 | +0.0027 +/- 0.0002 | +0.0026 +/- 0.0001 |
-| selected minus FreeAlign 1.0 m | -0.0307 +/- 0.0003 | -0.0074 +/- 0.0005 | **+0.0110 +/- 0.0003** |
-| deployed minus FreeAlign 1.0 m | -0.0328 +/- 0.0003 | -0.0102 +/- 0.0005 | +0.0084 +/- 0.0004 |
-
-Selected-arm pose on test: sigma 0 MAE 0.48 m at 32 % coverage (deployed
-0.56 m at 51 %), sigma 2 1.61 m at 71 % (deployed 1.61 m at 80 %); FreeAlign
-4.8 to 5.9 m at 60 % throughout.
-
-- **The verdict does not move.** The selected rule gains 0.002-0.003 over the
-  deployed one at every threshold, the size of a selection effect, and
-  FreeAlign still takes AP@0.7 and AP@0.5 under noise. The transfer from val
-  to test is clean: +0.002 on val, +0.002 on test.
-- **The clean case widens in our favour.** Every thresholded arm beats the
-  deployed rule at sigma 0 (.393 to .405 against .386) by answering fewer
-  pairs; the strictest arm in the test set, `abstain 0.1`, is 0.017 under
-  the oracle there and 0.035 above FreeAlign.
-- **The remaining gap is structural**, not a calibration artefact. FreeAlign
-  matches on distances between boxes of the same agent, which do not move
-  when that agent's pose is wrong; its coverage is 60 % at every sigma and
-  its AP@0.7 falls 0.04 across the sweep. AlignFormer's stage-1 tokens are
-  the sender's boxes projected into the ego frame through the noisy pose,
-  so at sigma 2 every token is displaced by about 2 m and 2 deg before the
-  transformer sees it. The oracle is .4223 at every sigma, so FreeAlign is
-  0.052 / 0.092 / 0.081 (sigma 0 / sigma 2 / sweep mean) under the ceiling
-  and is not the bound. The next step is a pose-invariant stage 1
-  (FreeAlign's association, or a learned EdgeGAT-style matcher over
-  intra-agent pairwise geometry) in front of our weighted solve, variance
-  model and Wald abstention, which is what holds the clean case.
-
-The delay re-run (100 / 200 / 400 ms) and the LiDAR-trunk re-run with the
-selected arm are in flight; files `B_boxes_only_arms_delay{1,2,4}_test_result.json`
-and `B_boxes+embeddings_arms_test_result.json`.
+The AlignFormer-side follow-up to the re-calibration is in
+[alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md):
+the decision rule selected on val AP (a hard Wald threshold at 0.2, +0.002
+over the deployed rule on val and on test; the verdict does not move), the
+attribution of the gap by shared-object bucket (two thirds of the frames
+share three or more objects and lose 0.10 AP@0.7 to FreeAlign at sigma 2 on
+solver precision, not association; the clean-case loss is the 1-2 bucket
+answering with wrong matches), the exact re-solve built on that finding, and
+the camera-colour probe.
 
 ## Caveats, in descending order of how much they could matter
 

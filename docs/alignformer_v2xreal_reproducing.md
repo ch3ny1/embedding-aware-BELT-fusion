@@ -162,4 +162,17 @@ for d in 1 2 4; do
 done
 sweep "B_boxes+embeddings" $AF test 5 --freealign-calibration $FAAP $(cat $V/.arms_for_delay) \
   --output "$V/B_boxes+embeddings_arms_test_result.json"
+
+# The exact re-solve (alignformer.refine) on val: three gate/evidence settings beside the deployed and
+# selected decision arms and FreeAlign 1.0 m; selected on val AP@0.7 sweep mean, then test.
+ARMS2="--abstain-arm per_pair --abstain-arm abstain:0.2"
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp --refine-gates 2.0 1.0 0.5 --refine-min-pairs 3 \
+  --output $V/B_boxes_only_icp_default_val_result.json
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp --refine-gates 3.0 1.5 0.75 0.5 --refine-min-pairs 3 \
+  --output $V/B_boxes_only_icp_wide_val_result.json
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp --refine-gates 2.0 1.0 0.5 --refine-min-pairs 2 \
+  --output $V/B_boxes_only_icp_minp2_val_result.json
+# Camera colour on V2X-Real val (CPU, ~7 min): pre-registered bars, split by shared-object bucket.
+python scripts/analyze_v2xreal_colour_separability.py --root $D/val --pairs 400 \
+  --output $V/colour_separability_val_result.json
 ```

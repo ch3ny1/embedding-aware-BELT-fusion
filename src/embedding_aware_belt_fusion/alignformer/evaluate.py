@@ -70,6 +70,13 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
     match_frames,
 )
 from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig
+from embedding_aware_belt_fusion.alignformer.refine import (
+    DEFAULT_GATES_M,
+    DEFAULT_MIN_PAIRS,
+    REFINE_MODES,
+    REFINE_NONE,
+    RefineConfig,
+)
 from embedding_aware_belt_fusion.alignformer.robust import (
     DEFAULT_ITERATIONS,
     DEFAULT_MIN_EVIDENCE,
@@ -233,6 +240,22 @@ def parse_args() -> argparse.Namespace:
              "both. Each arm REPLACES the --shrinkage calibration rather than "
              "stacking on it, so the deployed arms in the same run still "
              "reproduce bit for bit.",
+    )
+    parser.add_argument(
+        "--refine", choices=REFINE_MODES, default=REFINE_NONE,
+        help="--metric noisy_ap only: add the exact re-solve (alignformer.refine) "
+             "as one refined arm per --robust-solve / --abstain-arm arm: hard "
+             "mutually-nearest correspondences under the soft estimate, an "
+             "unweighted closed-form SE(2) fit over them, iterated with the "
+             "gates of --refine-gates. 'none' adds nothing.",
+    )
+    parser.add_argument(
+        "--refine-gates", type=float, nargs="+", default=list(DEFAULT_GATES_M), metavar="M",
+        help="nearest-neighbour gate per re-solve iteration, metres; chosen on validation",
+    )
+    parser.add_argument(
+        "--refine-min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
+        help="hard correspondences below which --refine keeps the soft estimate",
     )
     parser.add_argument(
         "--delay-frames", type=int, default=0,
@@ -949,6 +972,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         draw_seeds,
         run_noise_sweep,
     )
+    from embedding_aware_belt_fusion.alignformer.refine import refined_name
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
 
     hypes = load_yaml(str(args.config), None)
@@ -981,6 +1005,9 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     abstention = [
         AbstentionConfig.parse(spec) for spec in (args.abstain_arm or [])
     ]
+    refine = RefineConfig(
+        mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs
+    )
     # A disabled arm produces no rows, so recording one in the result file
     # would advertise a condition nothing measured. Refuse it here rather than
     # filtering it away silently.
@@ -1025,6 +1052,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         freealign=freealign,
         robust=robust,
         abstention=abstention,
+        refine=refine,
         camera_backbone=camera_backbone_for(checkpoint["config"], dataset, device),
     )
 
@@ -1085,6 +1113,12 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             # calibration instead of the global tau, so `shrinkage` above does
             # NOT describe them.
             "abstention": [config.name for config in abstention],
+            # The exact re-solve's arms (alignformer.refine): one per
+            # IRLS-based arm above, same decision inputs, re-solved (psi, t).
+            "refined": (
+                [refined_name(ALIGNFORMER_IRLS)] + [refined_name(c.name) for c in abstention]
+                if refine.enabled else []
+            ),
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the
@@ -1098,6 +1132,8 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         # Every constant each abstention arm ran under, so a result file states
         # what it was measured with rather than leaving it to a shell history.
         "abstention_arms": [config.to_dict() for config in abstention],
+        # The exact re-solve's constants (gate schedule, evidence floor).
+        "refine_config": refine.to_dict(),
         "ap": ap,
         # The multi-seed measurement (task 23). Independent noise draws of the
         # same frames, shared across conditions within a draw, so the per-seed
