@@ -155,6 +155,48 @@ each decision arm, each pair differing in the solve alone. Gate schedule and
 evidence floor are selected on val (three settings, chain J); results follow
 in this section when the sweeps land.
 
+## The agreement rule: two estimators, one decision
+
+With the re-solve every pair has two estimates of its correction, the soft
+weighted fit and the hard exact fit, reached by different routes from the
+same detections. `alignformer.refine.agree` answers with the exact fit where
+the two agree within a tolerance (translation gap plus `heading_lambda`
+times the heading gap, in metres), abstains where they disagree, and hands
+back the decision arm it wraps where the re-solve did not engage. It is
+aimed at the clean-case loss, pairs answered with a wrong match. Arms
+`<decision arm>_agree_<tolerance>`, tolerances 0.3 / 0.5 / 1.0 m on val
+(chain K). On the 170-frame smoke (198 pairs, one seed) the 0.5 m rule
+answered 77 % of pairs at sigma 0 with a 0.43 m mean error against the
+Wald rule's 33 % at 0.75 m, for the same AP@0.7; full validation decides.
+
+## The pose graph: a sparse pair solved through a third agent
+
+Every val frame and 58 % of test frames carry four agents, and 45 % of
+pairs have a fixed infrastructure unit as the noised partner.
+`alignformer.posegraph` solves every CAV's ego-frame correction jointly
+from the frame's pairwise estimates: the ego's estimate of CAV `j`
+measures `C_j` directly; CAV `i`'s estimate of `j`, from projecting `j`'s
+boxes into `i`'s frame with both noisy poses (one extra model pass per
+unordered CAV pair), measures `T_i<-ego C_j C_i^-1 T_ego<-i`. Measurements
+are weighted by the fits' own precision matrices; Gauss-Newton in float64
+with autograd Jacobians; a weak prior at the identity pins a CAV nobody
+measured. The convention is derived in the module docstring and pinned by a
+test against the projection itself.
+
+Two modes. `joint` gives every CAV the joint solution; on the smoke it
+moved dense pairs the ego had already solved well (dense answered error
+0.32 m to 0.49 m) and lost 0.017 AP@0.7 at sigma 2 against the re-solve.
+`fill` keeps every answered ego estimate as the same object and fills only
+the CAVs the ego abstained on, each carrying the graph's marginal precision
+and Wald statistic with the base arm's decision rule applied at the
+chi-square limit; on the smoke it held sigma 2 at the re-solve's .394 with
+98 % coverage against 90 %, and cost 0.014 at sigma 0 by filling sparse
+pairs with 1.9 m errors the gate let through: the composed precision is
+optimistic, as the per-pair Wald precision already was. Validation (chain
+L, after chain K) decides the mode and whether the gate needs a stricter
+level than the base arm's; result files
+`B_boxes_only_graph_{fill,joint}_val_result.json`.
+
 ## Camera colour on real traffic: coverage passes, signal does not
 
 `scripts/analyze_v2xreal_colour_separability.py` is the OPV2V probe moved to

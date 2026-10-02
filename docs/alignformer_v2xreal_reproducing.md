@@ -175,4 +175,12 @@ sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp -
 # Camera colour on V2X-Real val (CPU, ~7 min): pre-registered bars, split by shared-object bucket.
 python scripts/analyze_v2xreal_colour_separability.py --root $D/val --pairs 400 \
   --output $V/colour_separability_val_result.json
+# Chain K adds the agreement arms to every re-solve setting: append to each sweep above
+#   --agree-tolerance 0.3 --agree-tolerance 0.5 --agree-tolerance 1.0
+# Chain L, after K: the pose graph on top of the default-gate re-solve (fill, then joint).
+for mode in fill joint; do
+  sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --agree-tolerance 0.5 \
+    --refine icp --refine-gates 2.0 1.0 0.5 --refine-min-pairs 3 \
+    --graph-arm alignformer_abstain_0.2_icp --graph-mode $mode --output $V/B_boxes_only_graph_${mode}_val_result.json
+done
 ```
