@@ -146,4 +146,20 @@ python scripts/summarize_v2xreal_trunks.py --reference boxes_only \
   --trunk boxes_only=$V/B_boxes_only_test_result.json --trunk lidar=$V/B_boxes+embeddings_test_result.json \
   --trunk lidar_camera=$V/B_camera_test_result.json --freealign-from $V/B_boxes_only_faap1_test_result.json \
   --output $V/trunk_comparison_seed0_faap1_test_result.json
+
+# AlignFormer's decision rule, the same treatment: every arm on val, selected on AP@0.7 sweep mean,
+# deployed + selected + two runners-up on test, deployed + selected under delay and on the LiDAR trunk.
+ARMS="--abstain-arm per_pair --abstain-arm abstain:0.5 --abstain-arm abstain:0.2 --abstain-arm abstain:0.1 \
+  --abstain-arm abstain:0.05 --abstain-arm abstain:0.01 --abstain-arm both:0.5 --abstain-arm both:0.2 --abstain-arm both:0.05"
+FAAP=$V/freealign_calibration_valap_thr1_result.json
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS --output $V/B_boxes_only_arms_val_result.json
+python scripts/select_alignformer_arm.py --result $V/B_boxes_only_arms_val_result.json \
+  --output $V/alignformer_arm_selection_val_result.json          # also writes $V/.arms_for_test, $V/.arms_for_delay
+sweep B_boxes_only $AF test 5 --freealign-calibration $FAAP $(cat $V/.arms_for_test) --output $V/B_boxes_only_arms_test_result.json
+for d in 1 2 4; do
+  sweep B_boxes_only $AF test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --freealign-calibration $FAAP \
+    $(cat $V/.arms_for_delay) --output $V/B_boxes_only_arms_delay${d}_test_result.json
+done
+sweep "B_boxes+embeddings" $AF test 5 --freealign-calibration $FAAP $(cat $V/.arms_for_delay) \
+  --output "$V/B_boxes+embeddings_arms_test_result.json"
 ```
