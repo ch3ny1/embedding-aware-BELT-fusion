@@ -212,6 +212,71 @@ trunk; file `B_boxes_only_icp_default_val_result.json`, selection
   oracle .60 on this split). The sparse bucket is where the remaining 0.08 to
   the oracle lives and is the pose graph's job.
 
+**Test** (2,172 frames, 5 paired noise seeds, boxes-only trunk, default
+gates, the deployed inference constants unchanged; file
+`B_boxes_only_icp_test_result.json`):
+
+| test AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | sweep mean |
+|---|---|---|---|---|---|---|---|---|---|
+| per_pair (deployed) | .3855 | .3447 | .3168 | .3036 | .2950 | .2904 | .2739 | .2601 | .3088 |
+| abstain 0.2 (selected rule) | .3932 | .3404 | .3100 | .3032 | .2993 | .2940 | .2797 | .2661 | .3107 |
+| abstain 0.2, re-solve | **.4024** | .3519 | .3269 | .3237 | .3236 | .3239 | .3220 | .3188 | .3366 |
+| abstain 0.2, re-solve, agree 1.0 | .3868 | **.3664** | **.3463** | **.3404** | .3330 | .3280 | .3146 | .3057 | .3401 |
+| per_pair, re-solve | .3981 | .3554 | .3308 | .3201 | .3187 | .3157 | .3065 | .2999 | .3306 |
+| FreeAlign 1.0 m | .3702 | .3577 | .3420 | .3362 | **.3331** | **.3321** | **.3303** | **.3301** | **.3415** |
+| uncorrected (= oracle at 0) | .4223 | .3185 | .2155 | .1771 | .1621 | .1580 | .1584 | .1632 | .2219 |
+
+| test sweep means | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---|---|---|
+| abstain 0.2 | .3107 | .4854 | .5502 |
+| abstain 0.2, re-solve | .3366 | **.5038** | **.5583** |
+| abstain 0.2, re-solve, agree 1.0 | .3401 | .5011 | .5520 |
+| FreeAlign 1.0 m | **.3415** | .4933 | .5390 |
+
+| paired by seed, sweep mean (5 seeds) | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---|---|---|
+| re-solve minus the rule it refines | +0.0256 +/- 0.0003 | +0.0177 +/- 0.0003 | +0.0084 +/- 0.0002 |
+| re-solve on the deployed rule minus deployed | +0.0220 +/- 0.0001 | +0.0180 +/- 0.0003 | +0.0086 +/- 0.0002 |
+| re-solve minus FreeAlign | -0.0051 +/- 0.0003 | **+0.0103 +/- 0.0005** | **+0.0194 +/- 0.0004** |
+| re-solve + agree 1.0 minus FreeAlign | -0.0014 +/- 0.0002 | **+0.0082 +/- 0.0004** | **+0.0137 +/- 0.0003** |
+
+Per sigma, agree 1.0 minus FreeAlign at AP@0.7: +0.017, +0.010, +0.004,
++0.001 through 0.6 m, then -0.001, -0.004, -0.011, -0.027. The re-solve
+alone: +0.032 at sigma 0, -0.004 to -0.016 from 0.2 m up.
+
+| test AP@0.7 by bucket | sigma | abstain 0.2 | re-solve | re-solve + agree 1.0 | FreeAlign | oracle |
+|---|---|---|---|---|---|---|
+| 3+ shared (67 % of frames) | 0 | .412 | **.424** | .405 | .399 | .437 |
+| | 1.0 | .337 | .376 | .385 | **.395** | .437 |
+| | 2.0 | .298 | .370 | .354 | **.395** | .437 |
+| 1-2 shared (23 %) | 0 | **.380** | .380 | .371 | .376 | .426 |
+| | 2.0 | .240 | .243 | **.244** | .200 | .426 |
+| 0 shared (10 %) | any | as uncorrected | same | same | as uncorrected | .327 |
+
+Dense-pair answered error at sigma 2: 0.65 m (abstain 0.2), 0.55 m
+(re-solve), 0.53 m (agree 1.0); FreeAlign 6.1 m mean.
+
+- **The re-solve transfers from val to test and then some**: +0.026 /
+  +0.018 / +0.008 AP@0.7 / 0.5 / 0.3 over the rule it refines (val +0.022 /
+  +0.016 / +0.009), +0.022 over the deployed rule, at every one of the 24
+  cells, with no new bytes, no training and the deployed constants.
+- **The AP@0.7 gap to FreeAlign goes from 0.031 to 0.005**, and to 0.001
+  with the agreement rule; **AP@0.5 and AP@0.3 reverse** (+0.010 and +0.019,
+  five standard errors and more); **the clean case widens to +0.032**.
+  FreeAlign keeps AP@0.7 from 0.8 m up, by 0.001 to 0.027, which is the
+  dense bucket at large noise: .370 against .395 at sigma 2, with the
+  re-solve's answered residual still 0.55 m there against the 0.38 m it
+  reached on val.
+- **The val selection picked the agreement rule and test agrees on the
+  ordering at AP@0.7** (agree 1.0 above the re-solve by 0.004, on val by
+  0.004) but not at the other two thresholds, where the re-solve alone is
+  better by 0.002 and 0.006; and agree 1.0's val lead over FreeAlign
+  (+0.002) is -0.001 on test. The two arms are a trade: agree 1.0 answers
+  twice as many pairs in the clean case and wins 0.2-0.6 m; the re-solve
+  wins sigma 0 and the loose thresholds.
+- **The sparse buckets are untouched by construction**, which is where the
+  remaining 0.09 to the oracle sits, and where the pose graph was a null.
+
 **The other two gate settings** (same split, seeds and arms):
 
 | val, sweep mean AP@0.7 | re-solve | re-solve + agree 1.0 | paired vs default |

@@ -28,6 +28,14 @@
   +0.061 AP@0.7 on test. Every table below carries both columns; quote the
   1.0 m one. "Re-calibrating FreeAlign on the reported metric" has the
   whole story.
+- **An exact re-solve after the soft association closes most of the gap,
+  at no new bytes and no training** (2026-10-02, test, 5 seeds): the AP@0.7
+  gap to FreeAlign 1.0 m goes from -0.031 to -0.005 (-0.001 with an
+  agreement rule between the soft and the exact fit), AP@0.5 and AP@0.3
+  reverse (+0.010 / +0.019), the clean case widens to +0.032; FreeAlign
+  keeps AP@0.7 from 0.8 m up. The loss had been solver precision on the
+  dense pairs (a Sinkhorn mixture blurs the fit); see
+  [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
 - **Giving AlignFormer the same treatment does not close the gap.** Its
   per-pair decision-rule family, selected on val AP exactly as FreeAlign's
   threshold was, picks a hard Wald threshold at level 0.2 that gains
