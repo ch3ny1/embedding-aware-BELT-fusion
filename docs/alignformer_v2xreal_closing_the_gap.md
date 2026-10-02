@@ -135,9 +135,16 @@ FreeAlign answers 185 with a 27 m error.
   bucket at every sigma and at the uncorrected line in the other two; the
   oracle is .4223 at every sigma, 0.08 above its sweep mean.
 
-The delay re-run (100 / 200 / 400 ms) and the LiDAR-trunk re-run with the
-selected arm are in flight; files `B_boxes_only_arms_delay{1,2,4}_test_result.json`
-and `B_boxes+embeddings_arms_test_result.json`.
+**Under delay and on the LiDAR trunk the selected rule is the deployed
+rule** (files `B_boxes_only_arms_delay{1,2,4}_test_result.json`,
+`B_boxes+embeddings_arms_test_result.json`). Delay, 3 seeds, sweep mean
+over sigma 0 / 0.4 / 1 / 2, selected minus deployed: +0.001 / +0.002 /
++0.004 AP@0.7 at 100 / 200 / 400 ms, +0.002 to +0.004 at the other two
+thresholds; selected minus FreeAlign 1.0 m: -0.027 / -0.021 / -0.021 AP@0.7,
+-0.004 to -0.009 AP@0.5, +0.020 to +0.030 AP@0.3. LiDAR trunk, 5 seeds:
+selected minus deployed +0.001 / -0.002 / -0.001, FreeAlign still +0.031
+ahead at AP@0.7. The decision rule was never the lever; the next section
+is.
 
 ## The exact re-solve
 
