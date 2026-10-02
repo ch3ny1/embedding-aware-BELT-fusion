@@ -152,8 +152,58 @@ step with two points will snap to the wrong neighbour. The refined arm keeps
 the soft fit's Wald statistic, so every decision rule applies to it
 unchanged: `alignformer_icp` beside `alignformer_irls`, `<arm>_icp` beside
 each decision arm, each pair differing in the solve alone. Gate schedule and
-evidence floor are selected on val (three settings, chain J); results follow
-in this section when the sweeps land.
+evidence floor are selected on val (three settings, chain K: default gates
+2.0 / 1.0 / 0.5 m with three hard pairs, wide 3.0 / 1.5 / 0.75 / 0.5, and the
+default gates with two pairs).
+
+**Validation, default gates** (717 frames, 3 paired noise seeds, boxes-only
+trunk; file `B_boxes_only_icp_default_val_result.json`, selection
+`alignformer_resolve_selection_default_val_result.json`):
+
+| val AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | sweep mean |
+|---|---|---|---|---|---|---|---|---|---|
+| abstain 0.2 (selected rule) | .4230 | .3699 | .3473 | .3397 | .3414 | .3335 | .3154 | .2942 | .3456 |
+| abstain 0.2, re-solve | **.4312** | .3807 | .3626 | .3572 | **.3621** | **.3590** | **.3523** | .3456 | .3688 |
+| abstain 0.2, re-solve, agree 0.5 | .4129 | .3928 | .3750 | .3643 | .3564 | .3592 | .3381 | .3242 | .3653 |
+| abstain 0.2, re-solve, agree 1.0 | .4107 | .3931 | **.3791** | **.3715** | .3666 | .3663 | .3552 | .3399 | **.3728** |
+| per_pair (deployed) | .4216 | .3730 | .3503 | .3402 | .3359 | .3286 | .3100 | .2893 | .3436 |
+| per_pair, re-solve | .4289 | .3819 | .3664 | .3543 | .3550 | .3520 | .3425 | .3266 | .3635 |
+| FreeAlign 1.0 m | .4144 | **.3940** | .3735 | .3633 | .3564 | .3577 | .3519 | **.3505** | .3702 |
+
+| val sweep means | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---|---|---|
+| abstain 0.2 | .3456 | .5117 | .5663 |
+| abstain 0.2, re-solve | .3688 | .5280 | **.5755** |
+| abstain 0.2, re-solve, agree 1.0 | **.3728** | **.5295** | .5741 |
+| FreeAlign 1.0 m | .3702 | .5160 | .5599 |
+
+| paired by seed, sweep mean | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---|---|---|
+| re-solve minus the rule it refines | +0.0222 +/- 0.0007 | +0.0158 +/- 0.0006 | +0.0087 +/- 0.0003 |
+| re-solve minus FreeAlign | -0.0019 +/- 0.0004 | +0.0110 +/- 0.0007 | +0.0146 +/- 0.0006 |
+| re-solve + agree 1.0 minus FreeAlign | **+0.0022 +/- 0.0004** | **+0.0124 +/- 0.0006** | **+0.0131 +/- 0.0006** |
+| agree 1.0 minus re-solve | +0.0041 +/- 0.0007 | +0.0014 +/- 0.0002 | -0.0015 +/- 0.0003 |
+
+- **The re-solve does what the attribution said it would.** On the dense
+  pairs at sigma 2 AP@0.7 goes from .419 to .531 (FreeAlign .562) and the
+  answered error from 0.52 m to 0.38 m; the sparse bucket is untouched by
+  construction (.125 at sigma 2 either way). +0.022 AP@0.7 on the sweep
+  mean, every cell, with no change to the clean case except a gain (.423 to
+  .431: the exact fit on correct pairs at sigma 0 returns a smaller
+  correction than the soft mixture did).
+- **It ties FreeAlign on AP@0.7 and beats it on everything else.** -0.002
+  on AP@0.7, +0.011 AP@0.5, +0.015 AP@0.3, +0.017 at sigma 0; FreeAlign
+  keeps sigma 2 by 0.005 and the 1.5 m cell.
+- **The agreement rule at 1.0 m is the first AlignFormer arm ahead of
+  FreeAlign on all three sweep means**, by +0.002 / +0.012 / +0.013. It pays
+  in the clean case (.411 against the re-solve's .431; it answers 67 % of
+  pairs at sigma 0 with a 1.75 m mean error against the Wald rule's 24 %) and
+  earns it from 0.2 m to 1.0 m, where answering with the exact fit beats
+  abstaining. The selection criterion (AP@0.7 sweep mean) picks it; both go
+  to test.
+- **What is left on dense pairs is 0.03 at sigma 2** (.531 against .562,
+  oracle .60 on this split). The sparse bucket is where the remaining 0.08 to
+  the oracle lives and is the pose graph's job.
 
 ## The agreement rule: two estimators, one decision
 
