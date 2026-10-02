@@ -97,6 +97,7 @@ from embedding_aware_belt_fusion.alignformer.abstain import (
     decide,
 )
 from embedding_aware_belt_fusion.alignformer.posegraph import (
+    GRAPH_FILL,
     graph_estimates,
     graph_name,
     se2_from_transform,
@@ -614,6 +615,7 @@ def run_noise_sweep(
     refine: Optional[RefineConfig] = None,
     agreement: Sequence[AgreementConfig] = (),
     graph_arm: Optional[str] = None,
+    graph_mode: str = GRAPH_FILL,
     camera_backbone=None,
 ) -> Tuple[
     Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]],
@@ -853,6 +855,8 @@ def run_noise_sweep(
                     lambda pair: _alignformer_estimates(
                         modules, pair, ablate_embeddings, robust, abstention, refine, agreement
                     ),
+                    mode=graph_mode,
+                    decision=_base_decision(graph_arm, abstention),
                 )
 
             for agent, key in enumerate(cav_keys):
@@ -1032,6 +1036,16 @@ def _alignformer_estimates(
     return estimates
 
 
+def _base_decision(graph_arm: str, abstention: Sequence[AbstentionConfig]) -> Optional[AbstentionConfig]:
+    """The decision rule the graph arm is built on, if it is built on one.
+
+    ``alignformer_abstain_0.2_icp`` -> the ``abstain:0.2`` config; an arm with
+    no decision rule in its lineage (``alignformer_irls``) -> ``None``.
+    """
+    matches = [c for c in abstention if c.enabled and graph_arm.startswith(c.name)]
+    return max(matches, key=lambda c: len(c.name)) if matches else None
+
+
 def _add_graph_arm(
     per_cav: Dict[str, Tuple[Any, Dict[str, Any]]],
     graph_arm: str,
@@ -1041,6 +1055,9 @@ def _add_graph_arm(
     cav_keys: Sequence[str],
     device,
     estimate_pair,
+    *,
+    mode: str = GRAPH_FILL,
+    decision: Optional[AbstentionConfig] = None,
 ) -> None:
     """Add the graph-corrected condition to every CAV's estimates, in place of nothing.
 
@@ -1066,7 +1083,8 @@ def _add_graph_arm(
             pack_j["boxes"] = correct_boxes(packs[j]["boxes"], psi, t)
             cross[(i, j)] = estimate_pair(_object_set(packs[i], pack_j))[graph_arm]
     ego_estimates = {key: estimates[graph_arm] for key, (_, estimates) in per_cav.items()}
-    for key, graphed in graph_estimates(ego_estimates, cross, frames).items():
+    graphed_all = graph_estimates(ego_estimates, cross, frames, mode=mode, decision=decision)
+    for key, graphed in graphed_all.items():
         per_cav[key][1][graph_name(graph_arm)] = graphed
 
 

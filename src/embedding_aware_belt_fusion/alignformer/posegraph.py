@@ -60,6 +60,15 @@ class SE2:
 
 
 @dataclass(frozen=True)
+class GraphSolution:
+    """Per-CAV ego-frame correction and its marginal precision ``(3, 3)``, ordered ``(t_x, t_y, psi)``."""
+
+    corrections: Dict[str, SE2]
+    precision: Dict[str, Tensor]
+    measured: Dict[str, bool]  # whether any measurement touched the node
+
+
+@dataclass(frozen=True)
 class Measurement:
     """``observer`` estimated ``value`` for ``target``; ``precision`` is ``(3, 3)`` or ``None``."""
 
@@ -150,7 +159,19 @@ def _to_double(m: Measurement) -> Measurement:
     return Measurement(m.observer, m.target, value, precision)
 
 
-def solve_pose_graph(
+def _marginal_precisions(jacobian: Tensor, cavs: Sequence[str]) -> Dict[str, Tensor]:
+    """Per-node ``(3, 3)`` precision: the inverse of the node's block of the posterior covariance."""
+    information = jacobian.T @ jacobian
+    covariance = torch.linalg.pinv(information)
+    out = {}
+    for index, cav in enumerate(cavs):
+        block = covariance[PARAMS_PER_NODE * index : PARAMS_PER_NODE * (index + 1),
+                           PARAMS_PER_NODE * index : PARAMS_PER_NODE * (index + 1)]
+        out[cav] = torch.linalg.pinv(block)
+    return out
+
+
+def solve_pose_graph_with_precision(
     ego: str,
     cavs: Sequence[str],
     frames: Mapping[str, SE2],
@@ -158,16 +179,11 @@ def solve_pose_graph(
     *,
     iterations: int = DEFAULT_ITERATIONS,
     prior_precision: float = DEFAULT_PRIOR_PRECISION,
-) -> Dict[str, SE2]:
-    """Ego-frame correction per CAV that best explains every measurement.
-
-    ``frames[i]`` is ``T_i<-ego`` for each CAV (the noisy relative pose the
-    sweep projects with). Returns one :class:`SE2` per CAV, in the ego frame,
-    in the dtype of the first measurement (float64 internally).
-    """
+) -> GraphSolution:
+    """:func:`solve_pose_graph` plus each node's marginal precision and whether it was measured."""
     _validate(ego, cavs, frames, measurements)
     if not cavs:
-        return {}
+        return GraphSolution({}, {}, {})
     slot = {cav: index for index, cav in enumerate(cavs)}
     doubles = [_to_double(m) for m in measurements]
     frames64 = {
@@ -185,11 +201,37 @@ def solve_pose_graph(
             x = x + step
             if float(step.norm()) < CONVERGED_STEP:
                 break
+        jacobian = torch.autograd.functional.jacobian(residual, x)
     dtype = measurements[0].value.t.dtype if measurements else torch.float32
-    return {
-        cav: SE2(psi=wrap(_unpack(x, index).psi).to(dtype), t=_unpack(x, index).t.to(dtype))
-        for cav, index in slot.items()
-    }
+    touched = {m.observer for m in measurements} | {m.target for m in measurements}
+    return GraphSolution(
+        corrections={
+            cav: SE2(psi=wrap(_unpack(x, index).psi).to(dtype), t=_unpack(x, index).t.to(dtype))
+            for cav, index in slot.items()
+        },
+        precision={cav: p.to(dtype) for cav, p in _marginal_precisions(jacobian, cavs).items()},
+        measured={cav: cav in touched for cav in cavs},
+    )
+
+
+def solve_pose_graph(
+    ego: str,
+    cavs: Sequence[str],
+    frames: Mapping[str, SE2],
+    measurements: Sequence[Measurement],
+    *,
+    iterations: int = DEFAULT_ITERATIONS,
+    prior_precision: float = DEFAULT_PRIOR_PRECISION,
+) -> Dict[str, SE2]:
+    """Ego-frame correction per CAV that best explains every measurement.
+
+    ``frames[i]`` is ``T_i<-ego`` for each CAV (the noisy relative pose the
+    sweep projects with). Returns one :class:`SE2` per CAV, in the ego frame,
+    in the dtype of the first measurement (float64 internally).
+    """
+    return solve_pose_graph_with_precision(
+        ego, cavs, frames, measurements, iterations=iterations, prior_precision=prior_precision
+    ).corrections
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +239,15 @@ def solve_pose_graph(
 # ---------------------------------------------------------------------------
 
 GRAPH_SUFFIX = "_graph"
+# ``fill``: the ego's answered estimates stand; the graph fills only the CAVs
+# the ego abstained on, each gated by the decision rule on the graph's own
+# statistic. ``joint``: every CAV takes the joint solution.
+GRAPH_FILL = "fill"
+GRAPH_JOINT = "joint"
+GRAPH_MODES = (GRAPH_FILL, GRAPH_JOINT)
+# The graph's covariance comes from the fits' own estimated precisions, so
+# the Wald reference is the chi-square limit of the F table (its largest dof).
+GRAPH_STATISTIC_DOF = 4000.0
 
 
 def graph_name(arm: str) -> str:
@@ -224,24 +275,52 @@ def _measurement(observer: str, target: str, estimate) -> Measurement:
     )
 
 
+def _graph_candidate(base, solution: GraphSolution, cav: str, statistic: bool):
+    """The ego estimate for ``cav`` with the graph's ``(psi, t)``, and, if asked, the graph's own Wald inputs."""
+    from dataclasses import replace
+
+    correction = solution.corrections[cav]
+    psi = correction.psi.reshape(1).to(base.psi)
+    t = correction.t.reshape(1, 2).to(base.t)
+    if not statistic:
+        return replace(base, psi=psi, t=t)
+    precision = solution.precision[cav].to(base.t)
+    theta = torch.cat([t[0], psi])
+    return replace(
+        base,
+        psi=psi,
+        t=t,
+        offset_precision=precision.unsqueeze(0),
+        offset_statistic=(theta @ precision @ theta).reshape(1),
+        offset_dof=torch.full((1,), GRAPH_STATISTIC_DOF, dtype=base.psi.dtype, device=base.psi.device),
+    )
+
+
 def graph_estimates(
     ego_estimates: Mapping[str, object],
     cross_estimates: Mapping[tuple, object],
     frames: Mapping[str, SE2],
     *,
     ego: str = "ego",
+    mode: str = GRAPH_JOINT,
+    decision=None,
 ) -> Dict[str, object]:
     """One graph-corrected :class:`PoseEstimate` per CAV, from the frame's pairwise estimates.
 
     ``ego_estimates[j]`` is the ego's estimate for CAV ``j`` (batch of one);
     ``cross_estimates[(i, j)]`` is CAV ``i``'s estimate for CAV ``j`` in
     ``i``'s frame; ``frames[i]`` is ``T_i<-ego``. Only estimates that emitted
-    a correction become measurements. Every returned estimate keeps its ego
-    estimate's other fields (statistic, dof, precision, refined flag), so the
-    decision inputs ride along unchanged.
-    """
-    from dataclasses import replace
+    a correction become measurements.
 
+    ``joint``: every CAV takes the joint solution, other fields ride along.
+    ``fill``: an answered ego estimate is returned as the very same object;
+    a CAV the ego abstained on takes the graph's solution when some
+    measurement touched it, carrying the graph's own precision and Wald
+    statistic, and ``decision`` (an ``AbstentionConfig``) is applied to it;
+    a CAV nothing measured is returned as the ego left it.
+    """
+    if mode not in GRAPH_MODES:
+        raise ValueError(f"mode must be one of {GRAPH_MODES}, got {mode!r}")
     cavs = list(ego_estimates)
     measurements: List[Measurement] = [
         _measurement(ego, cav, estimate) for cav, estimate in ego_estimates.items() if _answered(estimate)
@@ -249,19 +328,30 @@ def graph_estimates(
     measurements.extend(
         _measurement(i, j, estimate) for (i, j), estimate in cross_estimates.items() if _answered(estimate)
     )
-    solved = solve_pose_graph(ego, cavs, frames, measurements)
-    return {
-        cav: replace(
-            ego_estimates[cav],
-            psi=solved[cav].psi.reshape(1).to(ego_estimates[cav].psi),
-            t=solved[cav].t.reshape(1, 2).to(ego_estimates[cav].t),
-        )
-        for cav in cavs
-    }
+    solution = solve_pose_graph_with_precision(ego, cavs, frames, measurements)
+    if mode == GRAPH_JOINT:
+        return {cav: _graph_candidate(ego_estimates[cav], solution, cav, statistic=False) for cav in cavs}
+    return {cav: _fill_one(ego_estimates[cav], solution, cav, decision) for cav in cavs}
+
+
+def _fill_one(base, solution: GraphSolution, cav: str, decision):
+    if _answered(base) or not solution.measured.get(cav, False):
+        return base
+    candidate = _graph_candidate(base, solution, cav, statistic=True)
+    if decision is None:
+        return candidate
+    from embedding_aware_belt_fusion.alignformer.abstain import decide
+
+    return decide(candidate, decision)
 
 
 __all__ = [
+    "GRAPH_FILL",
+    "GRAPH_JOINT",
+    "GRAPH_MODES",
     "GRAPH_SUFFIX",
+    "GraphSolution",
+    "solve_pose_graph_with_precision",
     "graph_estimates",
     "graph_name",
     "se2_from_transform",

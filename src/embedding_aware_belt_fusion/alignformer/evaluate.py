@@ -274,6 +274,13 @@ def parse_args() -> argparse.Namespace:
              "the ego's estimates and one extra model pass per CAV-CAV pair.",
     )
     parser.add_argument(
+        "--graph-mode", choices=("fill", "joint"), default="fill",
+        help="--graph-arm only: 'fill' keeps the ego's answered estimates and fills "
+             "the CAVs it abstained on from the graph, each gated by the base arm's "
+             "decision rule on the graph's own statistic; 'joint' gives every CAV "
+             "the joint solution.",
+    )
+    parser.add_argument(
         "--delay-frames", type=int, default=0,
         help="--metric noisy_ap only: transmission delay, in WHOLE 10 Hz "
              "frames (100 ms each). The CAV sends what it saw at t-d with its "
@@ -1073,6 +1080,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         refine=refine,
         agreement=agreement,
         graph_arm=args.graph_arm,
+        graph_mode=args.graph_mode,
         camera_backbone=camera_backbone_for(checkpoint["config"], dataset, device),
     )
 
@@ -1143,7 +1151,9 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
                 agreement_name(c.name, tol.tolerance_m) for tol in agreement for c in abstention
             ],
             # The frame-level pose graph's condition and the arm it is built on.
-            "graph": None if args.graph_arm is None else {"arm": args.graph_arm, "condition": graph_name(args.graph_arm)},
+            "graph": None if args.graph_arm is None else {
+                "arm": args.graph_arm, "condition": graph_name(args.graph_arm), "mode": args.graph_mode,
+            },
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the

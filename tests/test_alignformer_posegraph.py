@@ -262,3 +262,71 @@ def test_the_solve_runs_under_no_grad_and_returns_in_the_input_dtype():
         graphed = graph_estimates(ego_estimates, cross, frames)
 
     assert graphed["b"].t.dtype == torch.float32 and not graphed["b"].t.requires_grad
+
+
+# ---------------------------------------------------------------------------
+# 8. Fill-only mode with the graph's own significance test
+# ---------------------------------------------------------------------------
+
+from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig  # noqa: E402
+from embedding_aware_belt_fusion.alignformer.posegraph import (  # noqa: E402
+    GRAPH_MODES,
+    GraphSolution,
+    solve_pose_graph_with_precision,
+)
+
+
+def test_the_solution_carries_a_precision_per_node_that_tracks_the_measurements():
+    truth, frames = _frame()
+    sharp, blunt = torch.eye(3, dtype=torch.float64) * 100.0, torch.eye(3, dtype=torch.float64)
+    measurements = [Measurement(EGO, "a", truth["a"], sharp), Measurement(EGO, "b", truth["b"], blunt)]
+
+    solution = solve_pose_graph_with_precision(EGO, ["a", "b"], frames, measurements)
+
+    assert isinstance(solution, GraphSolution)
+    assert float(torch.linalg.det(solution.precision["a"])) > float(torch.linalg.det(solution.precision["b"]))
+    torch.testing.assert_close(solution.precision["a"], sharp, atol=1e-3, rtol=0)
+
+
+def test_fill_mode_keeps_an_answered_ego_estimate_bit_for_bit_and_fills_an_abstained_one():
+    truth, frames = _frame()
+    answered = _estimate(truth["a"])
+    ego_estimates = {"a": answered, "b": _estimate(truth["b"], zero=True)}
+    cross = {("a", "b"): _estimate(_cross(truth, frames, "a", "b"))}
+
+    graphed = graph_estimates(ego_estimates, cross, frames, mode="fill")
+
+    assert graphed["a"] is answered
+    torch.testing.assert_close(graphed["b"].t, truth["b"].t.reshape(1, 2).float(), atol=2e-3, rtol=0)
+    assert graphed["b"].offset_precision is not None and graphed["b"].offset_statistic is not None
+
+
+def test_fill_mode_applies_the_decision_rule_with_the_graphs_own_statistic():
+    truth, frames = _frame()
+    tiny = SE2(psi=torch.tensor(0.0, dtype=torch.float64), t=torch.tensor([0.02, 0.0], dtype=torch.float64))
+    truth_small = {"a": truth["a"], "b": tiny}
+    # A blunt cross measurement of a tiny correction: not significant -> abstain.
+    blunt_cross = {("a", "b"): _estimate(_cross(truth_small, frames, "a", "b"), torch.eye(3))}
+    # A sharp cross measurement of a large correction: significant -> answered.
+    sharp_cross = {("a", "b"): _estimate(_cross(truth, frames, "a", "b"), torch.eye(3) * 1e4)}
+    ego_estimates = {"a": _estimate(truth["a"], torch.eye(3) * 1e4), "b": _estimate(truth["b"], zero=True)}
+    rule = AbstentionConfig.parse("abstain:0.2")
+
+    abstained = graph_estimates(ego_estimates, blunt_cross, frames, mode="fill", decision=rule)
+    answered = graph_estimates(ego_estimates, sharp_cross, frames, mode="fill", decision=rule)
+
+    assert abstained["b"].t.abs().max().item() == 0.0
+    torch.testing.assert_close(answered["b"].t, truth["b"].t.reshape(1, 2).float(), atol=5e-3, rtol=0)
+
+
+def test_fill_mode_leaves_a_cav_with_no_measurement_at_all_as_the_ego_left_it():
+    truth, frames = _frame()
+    zero = _estimate(truth["b"], zero=True)
+    ego_estimates = {"a": _estimate(truth["a"]), "b": zero}
+
+    graphed = graph_estimates(ego_estimates, {}, frames, mode="fill")
+
+    assert graphed["b"] is zero
+    assert GRAPH_MODES == ("fill", "joint")
+    with pytest.raises(ValueError):
+        graph_estimates(ego_estimates, {}, frames, mode="average")
