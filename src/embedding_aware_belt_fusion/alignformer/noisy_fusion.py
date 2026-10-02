@@ -97,7 +97,10 @@ from embedding_aware_belt_fusion.alignformer.abstain import (
     decide,
 )
 from embedding_aware_belt_fusion.alignformer.refine import (
+    AgreementConfig,
     RefineConfig,
+    agree,
+    agreement_name,
     icp_refine,
     refined_name,
 )
@@ -180,6 +183,7 @@ def sweep_estimators(
     robust: Optional[RobustSolveConfig],
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
+    agreement: Sequence[AgreementConfig] = (),
 ) -> List[str]:
     """The correction arms one sweep invocation produces, in a fixed order.
 
@@ -218,6 +222,16 @@ def sweep_estimators(
             )
         names.append(refined_name(ALIGNFORMER_IRLS))
         names.extend(refined_name(config.name) for config in enabled_abstention)
+    # The agreement rule (alignformer.refine) needs both estimates, so it
+    # exists only beside the re-solve: one arm per decision arm per tolerance.
+    if agreement:
+        if refine is None or not refine.enabled:
+            raise ValueError("the agreement arms compare the soft and the exact fit; enable --refine")
+        names.extend(
+            agreement_name(config.name, tol.tolerance_m)
+            for tol in agreement
+            for config in enabled_abstention
+        )
     names.extend(oracle_match)
     if freealign:
         names.append(FREEALIGN)
@@ -254,6 +268,7 @@ def _require_fitted_variance_model(
 def unshrunk_conditions(
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
+    agreement: Sequence[AgreementConfig] = (),
 ) -> Tuple[str, ...]:
     """Every condition the global-tau calibration must not be applied to.
 
@@ -267,7 +282,10 @@ def unshrunk_conditions(
         if refine is not None and refine.enabled
         else ()
     )
-    return UNSHRUNK_CONDITIONS + decision_arms + refined
+    agreed = tuple(
+        agreement_name(name, tol.tolerance_m) for tol in agreement for name in decision_arms
+    )
+    return UNSHRUNK_CONDITIONS + decision_arms + refined + agreed
 
 
 def _truncate_by_score(
@@ -580,6 +598,7 @@ def run_noise_sweep(
     robust: Optional[RobustSolveConfig] = None,
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
+    agreement: Sequence[AgreementConfig] = (),
     camera_backbone=None,
 ) -> Tuple[
     Dict[int, Dict[str, List[Tuple[Tensor, Tensor]]]],
@@ -667,9 +686,9 @@ def run_noise_sweep(
     variance_models = _oracle_variance_models(modules) if oracle_match else {}
     abstention = [config for config in abstention if config.enabled]
     estimators = sweep_estimators(
-        list(variance_models), freealign is not None, robust, abstention, refine
+        list(variance_models), freealign is not None, robust, abstention, refine, agreement
     )
-    unshrunk = unshrunk_conditions(abstention, refine)
+    unshrunk = unshrunk_conditions(abstention, refine, agreement)
     if ALIGNFORMER_IRLS in estimators and not hasattr(modules["pose"], "variance_model"):
         raise ValueError(
             "the robust re-weighted solve needs head B; the loaded checkpoint's "
@@ -792,7 +811,7 @@ def run_noise_sweep(
 
                 pair = _object_set(ego_pack, cav_pack)
                 estimates = _alignformer_estimates(
-                    modules, pair, ablate_embeddings, robust, abstention, refine
+                    modules, pair, ablate_embeddings, robust, abstention, refine, agreement
                 )
                 if freealign is not None:
                     estimates[FREEALIGN] = freealign_estimate(pair, freealign)
@@ -945,6 +964,7 @@ def _alignformer_estimates(
     robust: Optional[RobustSolveConfig],
     abstention: Sequence[AbstentionConfig] = (),
     refine: Optional[RefineConfig] = None,
+    agreement: Sequence[AgreementConfig] = (),
 ) -> Dict[str, Any]:
     """Every AlignFormer arm for one pair, from ONE pass of the embedding head.
 
@@ -975,6 +995,11 @@ def _alignformer_estimates(
             estimates[refined_name(ALIGNFORMER_IRLS)] = refined
             for config in enabled:
                 estimates[refined_name(config.name)] = decide(refined, config)
+            for tol in agreement:
+                for config in enabled:
+                    estimates[agreement_name(config.name, tol.tolerance_m)] = agree(
+                        irls, refined, estimates[config.name], tol, heading_lambda
+                    )
     return estimates
 
 

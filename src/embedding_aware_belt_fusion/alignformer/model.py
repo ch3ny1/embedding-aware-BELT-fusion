@@ -79,6 +79,11 @@ class PoseEstimate:
     # for a statistic, so nothing older changes shape; the statistic is its
     # quadratic form, ``theta^T offset_precision theta``.
     offset_precision: Optional[Tensor] = None
+    # ``(B,)`` bool: which samples the exact re-solve (``alignformer.refine``)
+    # actually re-solved. ``None`` on every estimate the refinement never saw,
+    # so nothing older changes shape; the agreement rule reads it to know
+    # whether a second estimate exists at all for a sample.
+    refined: Optional[Tensor] = None
 
 
 @dataclass(frozen=True)

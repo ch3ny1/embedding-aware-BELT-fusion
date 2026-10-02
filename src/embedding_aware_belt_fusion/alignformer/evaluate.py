@@ -71,6 +71,7 @@ from embedding_aware_belt_fusion.alignformer.fusion import (
 )
 from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig
 from embedding_aware_belt_fusion.alignformer.refine import (
+    AgreementConfig,
     DEFAULT_GATES_M,
     DEFAULT_MIN_PAIRS,
     REFINE_MODES,
@@ -256,6 +257,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refine-min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
         help="hard correspondences below which --refine keeps the soft estimate",
+    )
+    parser.add_argument(
+        "--agree-tolerance", type=float, action="append", default=None, metavar="M",
+        help="--metric noisy_ap with --refine, repeatable: add one agreement arm per "
+             "--abstain-arm per tolerance (alignformer.refine.agree): the exact fit "
+             "where soft and exact agree within M metres (heading counted at "
+             "heading_lambda metres per radian), abstention where they disagree, "
+             "the decision arm's own output where the re-solve did not engage.",
     )
     parser.add_argument(
         "--delay-frames", type=int, default=0,
@@ -972,7 +981,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         draw_seeds,
         run_noise_sweep,
     )
-    from embedding_aware_belt_fusion.alignformer.refine import refined_name
+    from embedding_aware_belt_fusion.alignformer.refine import agreement_name, refined_name
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
 
     hypes = load_yaml(str(args.config), None)
@@ -1008,6 +1017,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     refine = RefineConfig(
         mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs
     )
+    agreement = [AgreementConfig(tolerance_m=tol) for tol in (args.agree_tolerance or [])]
     # A disabled arm produces no rows, so recording one in the result file
     # would advertise a condition nothing measured. Refuse it here rather than
     # filtering it away silently.
@@ -1053,6 +1063,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         robust=robust,
         abstention=abstention,
         refine=refine,
+        agreement=agreement,
         camera_backbone=camera_backbone_for(checkpoint["config"], dataset, device),
     )
 
@@ -1119,6 +1130,9 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
                 [refined_name(ALIGNFORMER_IRLS)] + [refined_name(c.name) for c in abstention]
                 if refine.enabled else []
             ),
+            "agreement": [
+                agreement_name(c.name, tol.tolerance_m) for tol in agreement for c in abstention
+            ],
             "key_format": condition_key(ALIGNFORMER, 1.0),
         },
         # Labelled unambiguously: this row is OUR reimplementation of the
@@ -1134,6 +1148,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         "abstention_arms": [config.to_dict() for config in abstention],
         # The exact re-solve's constants (gate schedule, evidence floor).
         "refine_config": refine.to_dict(),
+        "agreement_arms": [tol.to_dict() for tol in agreement],
         "ap": ap,
         # The multi-seed measurement (task 23). Independent noise draws of the
         # same frames, shared across conditions within a draw, so the per-seed

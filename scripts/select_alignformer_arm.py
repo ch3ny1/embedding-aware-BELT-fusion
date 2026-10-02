@@ -36,7 +36,8 @@ def sweep_rows(result: dict) -> dict:
     """AP sweep means per condition plus the sigma-0 / sigma-2 pose summary."""
     sigmas = result["sweep_sigmas_m"]
     ap = result["ap"]
-    conditions = list(GLOBAL_RULES) + list(result["conditions"]["abstention"]) + ["freealign"]
+    extra = list(result["conditions"].get("refined", [])) + list(result["conditions"].get("agreement", []))
+    conditions = list(GLOBAL_RULES) + list(result["conditions"]["abstention"]) + extra + ["freealign"]
 
     def row(condition: str) -> dict:
         means = {m: sum(ap[_sigma_key(condition, s)][m]["global_sorted"] for s in sigmas) / len(sigmas) for m in METRICS}
@@ -74,8 +75,18 @@ def select(result: dict) -> dict:
 
 
 def arm_spec(condition: str) -> str:
-    """``alignformer_abstain_0.2`` -> ``abstain:0.2``; ``alignformer_per_pair`` -> ``per_pair``."""
-    tail = condition[len("alignformer_"):]
+    """The ``--abstain-arm`` flag of the DECISION arm a condition is built on.
+
+    ``alignformer_abstain_0.2`` -> ``abstain:0.2``; ``alignformer_per_pair`` ->
+    ``per_pair``; a refined (``_icp``) or agreement (``_agree_<tol>``) arm
+    reports its base decision arm's flag, and the bare refined solve
+    ``alignformer_icp`` reports the deployed ``per_pair``.
+    """
+    base = condition.split("_agree_")[0]
+    base = base[: -len("_icp")] if base.endswith("_icp") else base
+    if base == "alignformer":
+        return "per_pair"
+    tail = base[len("alignformer_"):]
     mode, _, level = tail.rpartition("_")
     return f"{mode}:{level}" if mode and _is_number(level) else tail
 
@@ -89,7 +100,7 @@ def _is_number(text: str) -> bool:
 
 
 def _is_per_pair_arm(condition: str) -> bool:
-    return condition.startswith("alignformer_") and condition not in GLOBAL_RULES
+    return condition.startswith("alignformer_") and condition not in GLOBAL_RULES and condition != "alignformer_icp"
 
 
 def arms_for_test(ranked: Sequence[str]) -> list:

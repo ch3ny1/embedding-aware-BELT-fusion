@@ -238,3 +238,101 @@ def test_sweep_estimators_add_one_refined_arm_per_irls_based_arm():
     assert sweep_estimators([], False, robust, arms, refine=RefineConfig()) == names[:4]
     with pytest.raises(ValueError):
         sweep_estimators([], False, None, [], refine=RefineConfig(mode=ICP))
+
+
+# ---------------------------------------------------------------------------
+# 7. The agreement rule: two estimators, one decision
+# ---------------------------------------------------------------------------
+
+from embedding_aware_belt_fusion.alignformer.refine import (  # noqa: E402
+    AgreementConfig,
+    agree,
+    agreement_name,
+    disagreement_m,
+)
+
+
+def _two(psi_soft, t_soft, psi_exact, t_exact, engaged):
+    soft = _estimate(psi_soft, t_soft)
+    exact = PoseEstimate(
+        psi=torch.tensor([psi_exact]), t=torch.tensor([list(t_exact)]), confidence=soft.confidence,
+        offset_statistic=soft.offset_statistic, offset_dof=soft.offset_dof,
+        refined=torch.tensor([engaged]),
+    )
+    return soft, exact
+
+
+def test_icp_refine_reports_which_samples_it_engaged_on():
+    dense, psi, t = _pair(count=6)
+    sparse, _, _ = _pair(count=2)
+    blurred = _estimate(psi, (t[0] + 0.5, t[1]))
+
+    assert icp_refine(blurred, dense, RefineConfig(mode=ICP), HEADING_LAMBDA).refined.tolist() == [True]
+    assert icp_refine(blurred, sparse, RefineConfig(mode=ICP), HEADING_LAMBDA).refined.tolist() == [False]
+
+
+def test_disagreement_is_metres_of_translation_plus_lambda_times_heading():
+    soft, exact = _two(0.0, (0.0, 0.0), 0.1, (0.3, 0.4), True)
+
+    assert disagreement_m(soft, exact, HEADING_LAMBDA).item() == pytest.approx(0.5 + HEADING_LAMBDA * 0.1)
+
+
+def test_disagreement_wraps_the_heading_difference():
+    soft, exact = _two(math.pi - 0.05, (0.0, 0.0), -math.pi + 0.05, (0.0, 0.0), True)
+
+    assert disagreement_m(soft, exact, HEADING_LAMBDA).item() == pytest.approx(HEADING_LAMBDA * 0.1, abs=1e-6)
+
+
+def test_agreeing_estimates_answer_with_the_exact_one():
+    soft, exact = _two(0.02, (1.0, 0.0), 0.0, (1.2, 0.1), True)
+    fallback = _estimate(0.0, (0.0, 0.0))
+
+    decided = agree(soft, exact, fallback, AgreementConfig(tolerance_m=0.5), HEADING_LAMBDA)
+
+    torch.testing.assert_close(decided.t, exact.t)
+    torch.testing.assert_close(decided.psi, exact.psi)
+
+
+def test_disagreeing_estimates_abstain():
+    soft, exact = _two(0.0, (1.0, 0.0), 0.0, (3.0, 0.0), True)
+    fallback = _estimate(0.0, (9.0, 9.0))
+
+    decided = agree(soft, exact, fallback, AgreementConfig(tolerance_m=0.5), HEADING_LAMBDA)
+
+    assert decided.t.abs().max().item() == 0.0 and decided.psi.abs().max().item() == 0.0
+
+
+def test_a_pair_the_refinement_did_not_engage_on_takes_the_fallback_decision():
+    soft, exact = _two(0.0, (1.0, 0.0), 0.0, (1.0, 0.0), False)
+    fallback = _estimate(0.0, (0.7, 0.0))
+
+    decided = agree(soft, exact, fallback, AgreementConfig(tolerance_m=0.5), HEADING_LAMBDA)
+
+    torch.testing.assert_close(decided.t, fallback.t)
+
+
+def test_agreement_config_and_names():
+    with pytest.raises(ValueError):
+        AgreementConfig(tolerance_m=0.0)
+    assert AgreementConfig(tolerance_m=0.5).to_dict() == {"tolerance_m": 0.5}
+    assert agreement_name("alignformer_abstain_0.2", 0.5) == "alignformer_abstain_0.2_agree_0.5"
+    assert agreement_name("alignformer_per_pair", 1.0) == "alignformer_per_pair_agree_1"
+
+
+def test_sweep_estimators_add_one_agreement_arm_per_decision_arm_and_tolerance():
+    from embedding_aware_belt_fusion.alignformer.abstain import AbstentionConfig
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import sweep_estimators
+    from embedding_aware_belt_fusion.alignformer.robust import HUBER, RobustSolveConfig
+
+    robust = RobustSolveConfig(mode=HUBER, iterations=2)
+    arms = [AbstentionConfig.parse("abstain:0.2")]
+    tolerances = [AgreementConfig(0.5), AgreementConfig(1.0)]
+
+    names = sweep_estimators([], False, robust, arms, refine=RefineConfig(mode=ICP), agreement=tolerances)
+
+    assert names == [
+        "alignformer", "alignformer_irls", "alignformer_abstain_0.2", "alignformer_icp", "alignformer_abstain_0.2_icp",
+        "alignformer_abstain_0.2_agree_0.5", "alignformer_abstain_0.2_agree_1",
+    ]
+    with pytest.raises(ValueError):
+        sweep_estimators([], False, robust, arms, refine=RefineConfig(), agreement=tolerances)

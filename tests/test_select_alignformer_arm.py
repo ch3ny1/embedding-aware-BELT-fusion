@@ -63,6 +63,24 @@ def _result() -> dict:
     }
 
 
+def test_refined_and_agreement_arms_are_candidates_when_the_result_carries_them():
+    result = _result()
+    result["conditions"]["refined"] = ["alignformer_icp", "alignformer_abstain_0.2_icp"]
+    result["conditions"]["agreement"] = ["alignformer_abstain_0.2_agree_0.5"]
+    for name, a0, a1 in (("alignformer_icp", 0.40, 0.30), ("alignformer_abstain_0.2_icp", 0.41, 0.31),
+                         ("alignformer_abstain_0.2_agree_0.5", 0.42, 0.32)):
+        result["ap"][f"{name}_sigma_0m"] = _ap(a0)
+        result["ap"][f"{name}_sigma_1m"] = _ap(a1)
+
+    selection = select(result)
+
+    assert selection["chosen"] == "alignformer_abstain_0.2_agree_0.5"
+    assert selection["ranked"][:3] == ["alignformer_abstain_0.2_agree_0.5", "alignformer_abstain_0.2_icp", "alignformer_icp"]
+    assert arm_spec("alignformer_abstain_0.2_icp") == "abstain:0.2"  # the base decision arm's flag
+    assert arm_spec("alignformer_abstain_0.2_agree_0.5") == "abstain:0.2"
+    assert arm_spec("alignformer_icp") == "per_pair"
+
+
 def test_sweep_rows_average_ap_over_the_sigmas_and_carry_the_pose_summary():
     rows = sweep_rows(_result())
 

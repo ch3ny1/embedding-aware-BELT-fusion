@@ -168,7 +168,7 @@ def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
         return estimate
     ego_mask = batch.get("ego_mask")
     cav_mask = batch.get("cav_mask")
-    psis, ts = [], []
+    psis, ts, engaged = [], [], []
     for b in range(estimate.psi.shape[0]):
         ego_boxes = batch["ego_boxes"][b]
         cav_boxes = batch["cav_boxes"][b]
@@ -176,13 +176,87 @@ def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
             ego_boxes = ego_boxes[ego_mask[b]]
         if cav_mask is not None:
             cav_boxes = cav_boxes[cav_mask[b]]
-        psi, t, _ = _refine_one(estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda)
+        psi, t, did = _refine_one(estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda)
         psis.append(psi)
         ts.append(t)
-    return replace(estimate, psi=torch.stack(psis), t=torch.stack(ts))
+        engaged.append(did)
+    return replace(
+        estimate,
+        psi=torch.stack(psis),
+        t=torch.stack(ts),
+        refined=torch.tensor(engaged, dtype=torch.bool, device=estimate.psi.device),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The agreement rule
+# ---------------------------------------------------------------------------
+#
+# With the re-solve in hand every pair has two estimates of its correction:
+# the soft weighted fit and the exact hard fit. They are built from the same
+# detections but reach the answer by different routes (a Sinkhorn mixture
+# against a decided correspondence), and the clean-case loss on V2X-Real is
+# pairs answered with a wrong match (-0.09 AP@0.7 on the 1-2-shared bucket at
+# sigma 0). Two routes landing in the same place within detection noise is
+# evidence the correction is real; landing apart is grounds to abstain. On a
+# sample the re-solve did not engage on there is no second estimate, and the
+# rule hands back the decision arm it wraps.
+
+AGREEMENT_SUFFIX = "_agree_"
+
+
+@dataclass(frozen=True)
+class AgreementConfig:
+    """``tolerance_m``: the soft/exact disagreement, in metres, above which the pair abstains."""
+
+    tolerance_m: float
+
+    def __post_init__(self) -> None:
+        if not (self.tolerance_m > 0.0 and math.isfinite(self.tolerance_m)):
+            raise ValueError(f"tolerance_m must be finite and positive, got {self.tolerance_m}")
+
+    def to_dict(self) -> dict:
+        return {"tolerance_m": self.tolerance_m}
+
+
+def agreement_name(decision_arm: str, tolerance_m: float) -> str:
+    return f"{decision_arm}{AGREEMENT_SUFFIX}{tolerance_m:g}"
+
+
+def _wrap(angle: Tensor) -> Tensor:
+    return torch.atan2(torch.sin(angle), torch.cos(angle))
+
+
+def disagreement_m(soft, exact, heading_lambda: float) -> Tensor:
+    """``(B,)`` metres: translation gap plus ``heading_lambda`` times the heading gap.
+
+    The same metre-equivalent the heading augmentation uses, so one tolerance
+    covers both components.
+    """
+    translation = (exact.t - soft.t).norm(dim=-1)
+    heading = _wrap(exact.psi - soft.psi).abs()
+    return translation + heading_lambda * heading
+
+
+def agree(soft, exact, fallback, config: AgreementConfig, heading_lambda: float):
+    """A **new** estimate: the exact fit where the two agree, zero where they
+    disagree, ``fallback`` where the re-solve did not engage."""
+    if exact.refined is None:
+        raise ValueError("the agreement rule needs an estimate the re-solve produced (refined is None)")
+    engaged = exact.refined
+    agreeing = engaged & (disagreement_m(soft, exact, heading_lambda) <= config.tolerance_m)
+    zero_t, zero_psi = torch.zeros_like(exact.t), torch.zeros_like(exact.psi)
+    t = torch.where(engaged.unsqueeze(-1), torch.where(agreeing.unsqueeze(-1), exact.t, zero_t), fallback.t)
+    psi = torch.where(engaged, torch.where(agreeing, exact.psi, zero_psi), fallback.psi)
+    return replace(fallback, psi=psi, t=t)
 
 
 __all__ = [
+    "AGREEMENT_SUFFIX",
+    "AgreementConfig",
+    "agree",
+    "agreement_name",
+    "disagreement_m",
     "DEFAULT_GATES_M",
     "DEFAULT_MIN_PAIRS",
     "ICP",
