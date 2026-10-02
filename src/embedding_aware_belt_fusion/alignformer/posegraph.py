@@ -41,11 +41,13 @@ from torch import Tensor
 
 PARAMS_PER_NODE = 3
 DEFAULT_ITERATIONS = 10
-# Precision of the prior pulling every CAV toward the identity. Small enough
-# to be invisible beside a real measurement (it moves a unit-weight
-# measurement of 1 m by a micrometre; a fitted precision is ~1/0.25^2 per
-# metre squared and larger), large enough to pin an unobserved node.
-DEFAULT_PRIOR_PRECISION = 1e-6
+# Precision of the prior pulling every CAV toward the identity. It exists to
+# pin an unobserved node, and it has to be far weaker than it looks: a cross
+# measurement through a 30 m lever arm determines the combination "heading
+# plus 30 m times translation" at only ~1/900 of unit information, so a prior
+# of 1e-6 already moved a measured node by 0.4 mm. At 1e-10 the pull is
+# below a micrometre on any measured node and still well-posed in float64.
+DEFAULT_PRIOR_PRECISION = 1e-10
 CONVERGED_STEP = 1e-9
 
 
