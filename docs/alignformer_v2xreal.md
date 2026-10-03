@@ -33,8 +33,11 @@
   gap to FreeAlign 1.0 m goes from -0.031 to -0.005 (-0.001 with an
   agreement rule between the soft and the exact fit), AP@0.5 and AP@0.3
   reverse (+0.010 / +0.019), the clean case widens to +0.032; FreeAlign
-  keeps AP@0.7 from 0.8 m up. The loss had been solver precision on the
-  dense pairs (a Sinkhorn mixture blurs the fit); see
+  keeps AP@0.7 from 0.8 m up. Under 100 / 200 / 400 ms of delay the same
+  holds (3 seeds): AP@0.7 a draw on the sweep mean (-0.003 / -0.000 /
+  -0.003), AP@0.5 and AP@0.3 ours by 0.009-0.020 and 0.025-0.040. The loss
+  had been solver precision on the dense pairs (a Sinkhorn mixture blurs
+  the fit); see
   [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
 - **Giving AlignFormer the same treatment does not close the gap.** Its
   per-pair decision-rule family, selected on val AP exactly as FreeAlign's
@@ -650,6 +653,13 @@ pose correction touches. Within what is left:
   is +0.0006 / -0.0011 / -0.0013, inside the seed bars, with a +0.003-0.007
   edge at AP@0.3. The camera trunk is 0.006-0.008 behind at AP@0.7 at every
   delay. Delay is not where the embedding was going to earn its bytes.
+- **With the exact re-solve the AP@0.7 deficit under delay closes to a
+  draw** (`B_boxes_only_icp_delay{1,2,4}_test_result.json`, 3 seeds): the
+  re-solved boxes-only trunk is .2813 / .2576 / .2502 AP@0.7 on the sweep
+  mean against FreeAlign's .2841 / .2572 / .2529 (-0.003 / -0.000 /
+  -0.003), and ahead at AP@0.5 (+0.020 / +0.017 / +0.009) and AP@0.3
+  (+0.031 / +0.040 / +0.029). FreeAlign keeps AP@0.7 from sigma 0.4 up by
+  0.008-0.016; tables and the bucket split are in the companion file.
 
 ## Giving AlignFormer the same treatment, and what is left
 

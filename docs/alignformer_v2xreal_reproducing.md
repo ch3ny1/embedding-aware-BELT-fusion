@@ -183,4 +183,13 @@ for mode in fill joint; do
     --refine icp --refine-gates 2.0 1.0 0.5 --refine-min-pairs 3 \
     --graph-arm alignformer_abstain_0.2_icp --graph-mode $mode --output $V/B_boxes_only_graph_${mode}_val_result.json
 done
+
+# Chain M: the exact re-solve (default gates, pre-registered) with the agreement rule at 0.5 / 1.0 m on TEST,
+# deployed + selected decision arms and FreeAlign 1.0 m beside them; 5 seeds; then delay 1 / 2 / 4 at 3 seeds.
+ARMS3="$ARMS2 --agree-tolerance 0.5 --agree-tolerance 1.0 --refine icp --refine-gates 2.0 1.0 0.5 --refine-min-pairs 3"
+sweep B_boxes_only $AF test 5 --freealign-calibration $FAAP $ARMS3 --output $V/B_boxes_only_icp_test_result.json
+for d in 1 2 4; do
+  sweep B_boxes_only $AF test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --freealign-calibration $FAAP $ARMS3 \
+    --output $V/B_boxes_only_icp_delay${d}_test_result.json
+done
 ```

@@ -277,6 +277,52 @@ Dense-pair answered error at sigma 2: 0.65 m (abstain 0.2), 0.55 m
 - **The sparse buckets are untouched by construction**, which is where the
   remaining 0.09 to the oracle sits, and where the pose graph was a null.
 
+**Under communication delay the ordering holds** (`B_boxes_only_icp_delay{1,2,4}_test_result.json`;
+constant 1 / 2 / 4 frames = 100 / 200 / 400 ms on the other agent's message,
+sigma 0 / 0.4 / 1 / 2, 3 paired seeds, 2,172 frames; same arms, same
+constants). Sweep means:
+
+| test, sweep mean | oracle | abstain 0.2 | re-solve | re-solve + agree 1.0 | FreeAlign 1.0 m | re-solve - FreeAlign | agree 1.0 - FreeAlign |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 100 ms, AP@0.7 | .3420 | .2572 | .2813 | .2820 | **.2841** | -.0034 | -.0029 |
+| 100 ms, AP@0.5 | .5588 | .4390 | **.4631** | .4595 | .4425 | **+.0199** | **+.0153** |
+| 100 ms, AP@0.3 | .6075 | .5330 | **.5433** | .5376 | .5126 | **+.0307** | **+.0236** |
+| 200 ms, AP@0.7 | .3187 | .2364 | .2576 | **.2579** | .2572 | -.0003 | +.0001 |
+| 200 ms, AP@0.5 | .4814 | .3786 | **.4009** | .3997 | .3838 | **+.0166** | **+.0151** |
+| 200 ms, AP@0.3 | .5673 | .4844 | **.4947** | .4876 | .4544 | **+.0401** | **+.0325** |
+| 400 ms, AP@0.7 | .3136 | .2325 | .2502 | .2520 | **.2529** | -.0031 | -.0013 |
+| 400 ms, AP@0.5 | .4464 | .3507 | .3685 | **.3693** | .3602 | **+.0092** | **+.0093** |
+| 400 ms, AP@0.3 | .4881 | .4244 | **.4326** | .4293 | .4045 | **+.0288** | **+.0246** |
+
+Paired standard errors over the three seeds are 0.0002-0.0011. Per sigma,
+re-solve minus FreeAlign at AP@0.7: +.025 / -.016 / -.010 / -.012 at 100 ms,
++.031 / -.015 / -.009 / -.008 at 200 ms, +.032 / -.016 / -.015 / -.013 at
+400 ms; agree 1.0 minus FreeAlign: +.013 / +.002 / -.005 / -.022,
++.018 / +.004 / -.004 / -.018, +.025 / +.001 / -.009 / -.022.
+
+- **The re-solve's gain over the rule it refines survives delay but
+  shrinks with it**: +0.024 / +0.021 / +0.018 AP@0.7 on the sweep mean at
+  100 / 200 / 400 ms (undelayed +0.026), growing with sigma at every delay
+  (+0.009 at sigma 0 to +0.042 / +0.036 / +0.031 at sigma 2). A stale
+  message moves the other agent's boxes with the objects, so the hard
+  pairs the re-solve fits are themselves displaced: the dense-pair
+  answered residual at sigma 2 is 0.62 / 0.74 / 0.82 m against 0.55 m
+  undelayed.
+- **Against FreeAlign the undelayed verdict carries over at every delay**:
+  AP@0.7 is a draw on the sweep mean (-0.003 / -0.000 / -0.003 for the
+  re-solve, -0.003 / +0.000 / -0.001 with agreement; the selected-rule gap
+  had been -0.027 / -0.021 / -0.021), AP@0.5 and AP@0.3 are ours by
+  0.009-0.020 and 0.025-0.040, and the clean case is ours by 0.025-0.032.
+  FreeAlign keeps AP@0.7 from sigma 0.4 up for the re-solve alone, and
+  from sigma 1 up with the agreement rule, which again holds sigma 0.4
+  (+0.001 to +0.004).
+- **Where FreeAlign's AP@0.7 lead lives under delay is the dense bucket
+  at large noise, as before**: at sigma 2, 3+ shared objects, .289 / .261 /
+  .248 for the re-solve against .309 / .276 / .272 for FreeAlign (oracle
+  .339 / .313 / .314). The 1-2 bucket is ours at every delay (.215 / .202 /
+  .206 against .187 / .184 / .199), and the 0 bucket is the uncorrected
+  pose for everyone.
+
 **The other two gate settings** (same split, seeds and arms):
 
 | val, sweep mean AP@0.7 | re-solve | re-solve + agree 1.0 | paired vs default |
