@@ -636,6 +636,13 @@ falls from 0.4223 to 0.3420 / 0.3187 / 0.3136 AP@0.7, so most of what delay
 costs is the other agent's boxes being where the objects were, which no
 pose correction touches. Within what is left:
 
+- **Trained cross-view appearance works, but not on the pairs where it
+  would pay** (2026-10-05, val): zero-shot DINOv2 is a null like colour
+  (AUC 0.68 against the 0.80 bar), a projection head trained on the
+  dataset's own cross-agent pairs reaches 0.83-0.85 and clears the bar,
+  yet on pairs sharing one or two objects, the matcher's loss bucket, it is
+  at chance (0.54). Not carried into stage 1; see the appearance section of
+  [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
 - **Against the MAE-calibrated FreeAlign** the trunks win every cell at
   100 ms, every cell but sigma 2 at AP@0.7 at 200 ms, and at 400 ms draw
   AP@0.7 (+0.002) while keeping AP@0.5 and AP@0.3 by 0.016 and 0.033.

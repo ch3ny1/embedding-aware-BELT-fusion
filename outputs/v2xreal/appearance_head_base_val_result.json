@@ -1,0 +1,581 @@
+{
+  "method": "v2xreal_appearance_head_on_frozen_dinov2",
+  "config": {
+    "train_dir": "/media/chenyi/basement2/cache/alignformer_v2xreal_appearance/train",
+    "val_dir": "/media/chenyi/basement2/cache/alignformer_v2xreal_appearance/val",
+    "val_root": "/media/chenyi/basement2/dataset/v2x-real/val",
+    "val_pairs": 400,
+    "epochs": 20,
+    "batch": 512,
+    "lr": 0.001,
+    "temperature": 0.07,
+    "hard_negatives": 8,
+    "seed": 0,
+    "checkpoint": "outputs/v2xreal/appearance_head_base.pth",
+    "output": "outputs/v2xreal/appearance_head_base_val_result.json"
+  },
+  "pre_registered_bars": {
+    "signal_auc": 0.8,
+    "control_tolerance": 0.05
+  },
+  "train_agent_frames": 11509,
+  "val_agent_frames": 2770,
+  "zero_shot_val": {
+    "pairs_scored": 257,
+    "all_objects": {
+      "zero_shot_cls": {
+        "n": 924,
+        "auc_paired": 0.6136363636363636,
+        "partner_mean": 0.43710923817611824,
+        "distractor_mean": 0.3977621018322195
+      },
+      "zero_shot_patch_mean": {
+        "n": 924,
+        "auc_paired": 0.6666666666666666,
+        "partner_mean": 0.5688116259794875,
+        "distractor_mean": 0.5170457314341044
+      }
+    },
+    "ambiguous": {
+      "zero_shot_cls": {
+        "n": 502,
+        "auc_paired": 0.6454183266932271,
+        "partner_mean": 0.43997533696398294,
+        "distractor_mean": 0.3888646989502302
+      },
+      "zero_shot_patch_mean": {
+        "n": 502,
+        "auc_paired": 0.6812749003984063,
+        "partner_mean": 0.5627234262920435,
+        "distractor_mean": 0.4840931469008765
+      }
+    },
+    "ambiguous_by_shared": {
+      "shared_1_2": {
+        "zero_shot_cls": {
+          "n": 21,
+          "auc_paired": 0.5238095238095238,
+          "partner_mean": 0.17005538992655275,
+          "distractor_mean": 0.16670784753493917
+        },
+        "zero_shot_patch_mean": {
+          "n": 21,
+          "auc_paired": 0.47619047619047616,
+          "partner_mean": 0.1997389357960306,
+          "distractor_mean": 0.21068250900323876
+        }
+      },
+      "shared_3plus": {
+        "zero_shot_cls": {
+          "n": 481,
+          "auc_paired": 0.6507276507276507,
+          "partner_mean": 0.4517597837161369,
+          "distractor_mean": 0.398563854625326
+        },
+        "zero_shot_patch_mean": {
+          "n": 481,
+          "auc_paired": 0.6902286902286903,
+          "partner_mean": 0.5785709820101647,
+          "distractor_mean": 0.4960299938776965
+        }
+      }
+    },
+    "ambiguous_by_range": {
+      "0-25m": {
+        "zero_shot_cls": {
+          "n": 172,
+          "auc_paired": 0.627906976744186,
+          "partner_mean": 0.4351633254232099,
+          "distractor_mean": 0.3977906589859151
+        },
+        "zero_shot_patch_mean": {
+          "n": 172,
+          "auc_paired": 0.6976744186046512,
+          "partner_mean": 0.5666535538342351,
+          "distractor_mean": 0.5104669235659709
+        }
+      },
+      "25-40m": {
+        "zero_shot_cls": {
+          "n": 207,
+          "auc_paired": 0.6521739130434783,
+          "partner_mean": 0.4660395954165008,
+          "distractor_mean": 0.40043686824602787
+        },
+        "zero_shot_patch_mean": {
+          "n": 207,
+          "auc_paired": 0.6859903381642513,
+          "partner_mean": 0.5700291302965624,
+          "distractor_mean": 0.471795434909001
+        }
+      },
+      "40-70m": {
+        "zero_shot_cls": {
+          "n": 105,
+          "auc_paired": 0.6952380952380952,
+          "partner_mean": 0.41903932914899233,
+          "distractor_mean": 0.3684891956965788
+        },
+        "zero_shot_patch_mean": {
+          "n": 105,
+          "auc_paired": 0.6476190476190476,
+          "partner_mean": 0.5730172502440992,
+          "distractor_mean": 0.4887494502561775
+        }
+      },
+      "70m+": {
+        "zero_shot_cls": {
+          "n": 18,
+          "auc_paired": 0.4444444444444444,
+          "partner_mean": 0.30834452062597184,
+          "distractor_mean": 0.2893493473538663
+        },
+        "zero_shot_patch_mean": {
+          "n": 18,
+          "auc_paired": 0.6666666666666666,
+          "partner_mean": 0.3811059717832522,
+          "distractor_mean": 0.34633897710173345
+        }
+      }
+    },
+    "shuffled_control": {
+      "zero_shot_cls": {
+        "n": 924,
+        "auc_paired": 0.49783549783549785,
+        "partner_mean": 0.38552905859633235,
+        "distractor_mean": 0.38240781156390335
+      },
+      "zero_shot_patch_mean": {
+        "n": 924,
+        "auc_paired": 0.5064935064935064,
+        "partner_mean": 0.524267228030481,
+        "distractor_mean": 0.5219548861804255
+      }
+    }
+  },
+  "fit": {
+    "pairs": 76330,
+    "curve": [
+      {
+        "epoch": 1,
+        "loss": 2.7100277604195293
+      },
+      {
+        "epoch": 2,
+        "loss": 1.5840935396520304
+      },
+      {
+        "epoch": 3,
+        "loss": 1.3120020962895313
+      },
+      {
+        "epoch": 4,
+        "loss": 1.158543777611845
+      },
+      {
+        "epoch": 5,
+        "loss": 1.0662409202820287,
+        "val_ambiguous_auc": 0.850597609561753
+      },
+      {
+        "epoch": 6,
+        "loss": 0.9894615284631
+      },
+      {
+        "epoch": 7,
+        "loss": 0.9361272693336299
+      },
+      {
+        "epoch": 8,
+        "loss": 0.8948496456658811
+      },
+      {
+        "epoch": 9,
+        "loss": 0.8590696389680138
+      },
+      {
+        "epoch": 10,
+        "loss": 0.8342847033782663,
+        "val_ambiguous_auc": 0.8565737051792829
+      },
+      {
+        "epoch": 11,
+        "loss": 0.7991107119803939
+      },
+      {
+        "epoch": 12,
+        "loss": 0.7841722518763973
+      },
+      {
+        "epoch": 13,
+        "loss": 0.7635674773436394
+      },
+      {
+        "epoch": 14,
+        "loss": 0.7479565548991276
+      },
+      {
+        "epoch": 15,
+        "loss": 0.7280719252359612,
+        "val_ambiguous_auc": 0.8326693227091634
+      },
+      {
+        "epoch": 16,
+        "loss": 0.7155526542029499
+      },
+      {
+        "epoch": 17,
+        "loss": 0.70746678109174
+      },
+      {
+        "epoch": 18,
+        "loss": 0.6904919482005247
+      },
+      {
+        "epoch": 19,
+        "loss": 0.6783037144547753
+      },
+      {
+        "epoch": 20,
+        "loss": 0.663125948044516,
+        "val_ambiguous_auc": 0.8306772908366534
+      }
+    ]
+  },
+  "control_fit": {
+    "pairs": 71254,
+    "curve": [
+      {
+        "epoch": 1,
+        "loss": 5.467160060088728
+      },
+      {
+        "epoch": 2,
+        "loss": 4.813705054723293
+      },
+      {
+        "epoch": 3,
+        "loss": 4.531454888462743
+      },
+      {
+        "epoch": 4,
+        "loss": 4.355895827680974
+      },
+      {
+        "epoch": 5,
+        "loss": 4.233841427411071,
+        "val_ambiguous_auc": 0.6195219123505976
+      },
+      {
+        "epoch": 6,
+        "loss": 4.144758758782625
+      },
+      {
+        "epoch": 7,
+        "loss": 4.065449950964528
+      },
+      {
+        "epoch": 8,
+        "loss": 4.002862296866123
+      },
+      {
+        "epoch": 9,
+        "loss": 3.9480369437081166
+      },
+      {
+        "epoch": 10,
+        "loss": 3.900347585236691,
+        "val_ambiguous_auc": 0.6334661354581673
+      },
+      {
+        "epoch": 11,
+        "loss": 3.8576708071377794
+      },
+      {
+        "epoch": 12,
+        "loss": 3.8255308745876193
+      },
+      {
+        "epoch": 13,
+        "loss": 3.776418706712057
+      },
+      {
+        "epoch": 14,
+        "loss": 3.746617761814521
+      },
+      {
+        "epoch": 15,
+        "loss": 3.7179902033597454,
+        "val_ambiguous_auc": 0.5677290836653387
+      },
+      {
+        "epoch": 16,
+        "loss": 3.68456364040689
+      },
+      {
+        "epoch": 17,
+        "loss": 3.6513313784307395
+      },
+      {
+        "epoch": 18,
+        "loss": 3.6138046559942967
+      },
+      {
+        "epoch": 19,
+        "loss": 3.588775105931039
+      },
+      {
+        "epoch": 20,
+        "loss": 3.556055779735081,
+        "val_ambiguous_auc": 0.6274900398406374
+      }
+    ]
+  },
+  "val": {
+    "pairs_scored": 257,
+    "all_objects": {
+      "head": {
+        "n": 924,
+        "auc_paired": 0.8311688311688312,
+        "partner_mean": 0.33552757422312557,
+        "distractor_mean": 0.10869226537768692
+      }
+    },
+    "ambiguous": {
+      "head": {
+        "n": 502,
+        "auc_paired": 0.8306772908366534,
+        "partner_mean": 0.34363252467040134,
+        "distractor_mean": 0.12814611289721559
+      }
+    },
+    "ambiguous_by_shared": {
+      "shared_1_2": {
+        "head": {
+          "n": 21,
+          "auc_paired": 0.2857142857142857,
+          "partner_mean": 0.02161499468882974,
+          "distractor_mean": 0.04228079362918157
+        }
+      },
+      "shared_3plus": {
+        "head": {
+          "n": 481,
+          "auc_paired": 0.8544698544698545,
+          "partner_mean": 0.35769150207084427,
+          "distractor_mean": 0.1318949106199364
+        }
+      }
+    },
+    "ambiguous_by_range": {
+      "0-25m": {
+        "head": {
+          "n": 172,
+          "auc_paired": 0.8488372093023255,
+          "partner_mean": 0.31750611660426226,
+          "distractor_mean": 0.10908351200272107
+        }
+      },
+      "25-40m": {
+        "head": {
+          "n": 207,
+          "auc_paired": 0.8888888888888888,
+          "partner_mean": 0.3925319105740037,
+          "distractor_mean": 0.1376804925409457
+        }
+      },
+      "40-70m": {
+        "head": {
+          "n": 105,
+          "auc_paired": 0.7523809523809524,
+          "partner_mean": 0.32444185738196596,
+          "distractor_mean": 0.14913485195596354
+        }
+      },
+      "70m+": {
+        "head": {
+          "n": 18,
+          "auc_paired": 0.4444444444444444,
+          "partner_mean": 0.14288748970462414,
+          "distractor_mean": 0.07822017769901547
+        }
+      }
+    },
+    "shuffled_control": {
+      "head": {
+        "n": 924,
+        "auc_paired": 0.48917748917748916,
+        "partner_mean": 0.08573266172593147,
+        "distractor_mean": 0.08694330826456376
+      }
+    }
+  },
+  "control_val": {
+    "pairs_scored": 257,
+    "all_objects": {
+      "head": {
+        "n": 924,
+        "auc_paired": 0.6190476190476191,
+        "partner_mean": 0.37111384703234396,
+        "distractor_mean": 0.3099904542363676
+      }
+    },
+    "ambiguous": {
+      "head": {
+        "n": 502,
+        "auc_paired": 0.6274900398406374,
+        "partner_mean": 0.38011796127182235,
+        "distractor_mean": 0.3161545238709872
+      }
+    },
+    "ambiguous_by_shared": {
+      "shared_1_2": {
+        "head": {
+          "n": 21,
+          "auc_paired": 0.38095238095238093,
+          "partner_mean": 0.13984941467270284,
+          "distractor_mean": 0.18179089864216524
+        }
+      },
+      "shared_3plus": {
+        "head": {
+          "n": 481,
+          "auc_paired": 0.6382536382536382,
+          "partner_mean": 0.39060785623768823,
+          "distractor_mean": 0.3220207112510397
+        }
+      }
+    },
+    "ambiguous_by_range": {
+      "0-25m": {
+        "head": {
+          "n": 172,
+          "auc_paired": 0.6337209302325582,
+          "partner_mean": 0.35959706547479336,
+          "distractor_mean": 0.2961493645207968
+        }
+      },
+      "25-40m": {
+        "head": {
+          "n": 207,
+          "auc_paired": 0.642512077294686,
+          "partner_mean": 0.4075637966046305,
+          "distractor_mean": 0.34427880063782684
+        }
+      },
+      "40-70m": {
+        "head": {
+          "n": 105,
+          "auc_paired": 0.6,
+          "partner_mean": 0.3830643362414769,
+          "distractor_mean": 0.31396496495561965
+        }
+      },
+      "70m+": {
+        "head": {
+          "n": 18,
+          "auc_paired": 0.5555555555555556,
+          "partner_mean": 0.24339222745982247,
+          "distractor_mean": 0.19665817962712692
+        }
+      }
+    },
+    "shuffled_control": {
+      "head": {
+        "n": 924,
+        "auc_paired": 0.5054112554112554,
+        "partner_mean": 0.2997917821384909,
+        "distractor_mean": 0.2959488000431021
+      }
+    }
+  },
+  "train_probe": {
+    "pairs_scored": 312,
+    "all_objects": {
+      "head": {
+        "n": 978,
+        "auc_paired": 0.9969325153374233,
+        "partner_mean": 0.6617047363359375,
+        "distractor_mean": 0.19139381682327453
+      }
+    },
+    "ambiguous": {
+      "head": {
+        "n": 347,
+        "auc_paired": 1.0,
+        "partner_mean": 0.6887083849311268,
+        "distractor_mean": 0.28314598532685253
+      }
+    },
+    "ambiguous_by_shared": {
+      "shared_1_2": {
+        "head": {
+          "n": 6,
+          "auc_paired": 1.0,
+          "partner_mean": 0.6161158659350721,
+          "distractor_mean": 0.22470704907439162
+        }
+      },
+      "shared_3plus": {
+        "head": {
+          "n": 341,
+          "auc_paired": 1.0,
+          "partner_mean": 0.6899856726553976,
+          "distractor_mean": 0.2841742364046084
+        }
+      }
+    },
+    "ambiguous_by_range": {
+      "0-25m": {
+        "head": {
+          "n": 104,
+          "auc_paired": 1.0,
+          "partner_mean": 0.6965409465415022,
+          "distractor_mean": 0.26565049323302264
+        }
+      },
+      "25-40m": {
+        "head": {
+          "n": 136,
+          "auc_paired": 1.0,
+          "partner_mean": 0.7007128813346357,
+          "distractor_mean": 0.28313619915138516
+        }
+      },
+      "40-70m": {
+        "head": {
+          "n": 82,
+          "auc_paired": 1.0,
+          "partner_mean": 0.6744030407057193,
+          "distractor_mean": 0.2968639341472933
+        }
+      },
+      "70m+": {
+        "head": {
+          "n": 25,
+          "auc_paired": 1.0,
+          "partner_mean": 0.6377419972562128,
+          "distractor_mean": 0.3109855971006815
+        }
+      }
+    },
+    "shuffled_control": {
+      "head": {
+        "n": 978,
+        "auc_paired": 0.4867075664621677,
+        "partner_mean": 0.17303011253258485,
+        "distractor_mean": 0.16676813088104722
+      }
+    }
+  },
+  "minutes": 1.3312408010164896,
+  "verdict": {
+    "ambiguous_auc": 0.8306772908366534,
+    "control_ambiguous_auc": 0.6274900398406374,
+    "bars": {
+      "signal": true
+    },
+    "control_valid": false,
+    "worth_building": false
+  }
+}

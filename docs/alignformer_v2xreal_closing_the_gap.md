@@ -456,3 +456,92 @@ trained on cross-agent correspondences (42,036 train pairs supply the
 positives) with camera-invariance as an explicit objective, quantized, and
 it has to clear the boxes-only control on the 1-2 bucket before it is worth
 a byte.
+
+## Appearance, round three: a foundation model, zero-shot and then trained
+
+The camera trunk's null was about a frozen ImageNet ResNet-18 pooled over
+projected boxes, and the colour probe's about paint; neither said
+appearance cannot carry cross-agent identity. Two further questions were
+asked on 2026-10-05, through the same pre-registered probe (same 400 val
+pairs, gates, nearest-neighbour distractor within 8 m, shuffle control,
+bars AUC 0.80 / coverage 0.40 / far-field 0.25). Code:
+`alignformer/foundation_features.py` (frozen DINOv2, timm, 224-px
+letterboxed crop with 10 % context; descriptors = pooled class token and
+the silhouette-masked mean of patch tokens), `alignformer/appearance_head.py`
+and `scripts/{cache_v2xreal_appearance_features,train_v2xreal_appearance_head}.py`.
+
+**Zero-shot DINOv2 is a null** (`appearance_separability_{colour_dinov2_small,dinov2_base}_val_result.json`;
+colour reproduced alongside, 0.632 / 0.612):
+
+| val, 400 pairs, ambiguous subset (n 502) | AUC | same-agent bound (n 95) |
+|---|---:|---:|
+| colour, hue-saturation | .632 | .421 |
+| DINOv2 ViT-S/14, masked patch mean | .653 | .611 |
+| DINOv2 ViT-B/14, masked patch mean | .681 | .653 |
+| DINOv2 ViT-B/14, class token | .645 | .726 |
+
+Coverage 0.468 and far-field 0.361 pass; shuffle controls 0.49-0.51. The
+same-agent bound is the telling number: two cameras of ONE vehicle at ONE
+instant barely separate it from its neighbour, so viewpoint dominates the
+raw feature and a bigger frozen backbone is not the lever.
+
+**A projection head trained for viewpoint invariance clears the signal bar
+but not where it would pay.** Supervision comes from the dataset itself:
+every vehicle annotated in two agents' frames at one timestamp is a
+cross-view positive, the nearest other vehicles in the partner frame are
+hard negatives (InfoNCE, symmetric, in-batch false negatives of the same
+object masked), a two-layer head over the frozen 1536-d ViT-B descriptors.
+Train split at every second frame (11,509 agent-frames, 76,330 pairs), 20
+fixed epochs, val scored along the way but not selected on
+(`appearance_head_base_val_result.json`; the checkpoint is not committed).
+
+| val ambiguous AUC | 400 probe pairs (n 502) | every val pair (n 9,801) | shared 1-2 (n 21 / 374) | shared 3+ (n 481 / 9,427) | 40-70 m | 70 m+ |
+|---|---:|---:|---:|---:|---:|---:|
+| zero-shot ViT-B patch mean | .681 | .694 | .476 / .468 | .690 / .703 | .648 / .698 | .667 / .610 |
+| untrained head (random projection, 5 inits) | .657 | .696 | - / .607 | - / .700 | - / .713 | - / .659 |
+| control: trained on shuffled identities | .627 | - | .381 / - | .638 / - | .600 / - | .556 / - |
+| **trained head** | **.831** | **.845** | **.286 / .537** | **.854 / .857** | **.752 / .804** | **.444 / .700** |
+| trained head, train-split probe | 1.000 | | | | | |
+
+(`appearance_head_base_allpairs_val_result.json` is the every-pair
+diagnostic: the same split, more pairs, no selection.)
+
+- **Signal bar met**: 0.831 on the pre-registered pairs, 0.845 on all of
+  val, against 0.80; +0.15 over zero-shot and over an untrained head. A
+  head trained on cross-agent pairs does make DINOv2 features carry
+  identity across the viewpoint change. That is the answer to "should we
+  train for view invariance": yes, it works, in 1.3 minutes of training.
+- **The control bar was mis-specified and fails as written.** It asked a
+  head trained on shuffled identities to score within 0.05 of 0.5; it
+  scores 0.627. But any projection of a feature whose zero-shot AUC is 0.68
+  keeps part of that geometry: an untrained head scores 0.657, and the
+  control sits below both. The right reading of the control is "no higher
+  than zero-shot", which it meets; the script's literal verdict
+  (`worth_building: false`) is recorded as is, with this note. The
+  shuffled-pair control of the probe itself is 0.50 for every column.
+- **It overfits**: train-probe AUC 1.000, val 0.857 at epoch 10 and 0.831
+  at 20 with the loss still falling. A held-out slice of train for early
+  stopping, dropout or a smaller head would recover some of 0.03; none of
+  that was selected on val.
+- **On the pairs that share one or two objects it is at chance**: 0.537
+  on 374 ambiguous objects across all of val (0.286 on the 21 in the probe
+  sample), with zero-shot below chance there (0.47). That bucket is where
+  the matcher loses in the clean case (0.09 AP@0.7 on 23 % of test frames)
+  and the whole reason an identity cue was wanted. Where the head works
+  (3+ shared objects, 0.857) the exact re-solve already closes the gap by
+  geometry. The sparse pairs are the far, oblique, often rear-versus-front
+  views that make up few training pairs and the hardest ones; a head
+  trained to the average pair does not reach them.
+
+**Where this leaves appearance.** Trained cross-view appearance is real
+and cheap, which colour and frozen features could not show, and it is
+the first appearance result on this project that passes its signal bar.
+Taking it into stage 1 as the per-object embedding would most likely help
+the dense bucket, where geometry already wins, and not the sparse one. It
+is therefore not carried into the matcher now. If appearance is to earn
+bytes it has to be trained toward the sparse pairs: weight or oversample
+1-2-shared pairs, give far objects a higher-resolution crop, add the
+object's own temporal track as extra positives, and judge on the 1-2
+bucket (bar: AUC 0.80 there, n in the hundreds). That is a day's work
+with the cache in place.
+
