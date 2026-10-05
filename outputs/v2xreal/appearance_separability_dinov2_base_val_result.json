@@ -1,0 +1,252 @@
+{
+  "method": "v2xreal_camera_appearance_separability",
+  "descriptors": "dinov2_base",
+  "descriptor_names": [
+    "dino_cls_base",
+    "dino_patch_mean_base"
+  ],
+  "split": "/media/chenyi/basement2/dataset/v2x-real/val",
+  "pairs_read": 400,
+  "probe_radius_m": 8.0,
+  "min_crop_pixels": 50,
+  "max_occlusion": 0.5,
+  "pre_registered_bars": {
+    "signal_auc": 0.8,
+    "coverage": 0.4,
+    "far_field_coverage": 0.25
+  },
+  "opv2v_reference": {
+    "ambiguous_auc_hue_sat": 0.598,
+    "same_agent_bound": 0.707,
+    "coverage": 0.392
+  },
+  "coverage": {
+    "shared_objects": 1979,
+    "usable_in_both": 926,
+    "fraction": 0.46791308741788784,
+    "by_range": {
+      "0-25m": {
+        "both": 341,
+        "shared": 703,
+        "fraction": 0.4850640113798009
+      },
+      "25-40m": {
+        "both": 362,
+        "shared": 639,
+        "fraction": 0.5665101721439749
+      },
+      "40-70m": {
+        "both": 175,
+        "shared": 485,
+        "fraction": 0.36082474226804123
+      },
+      "70m+": {
+        "both": 48,
+        "shared": 152,
+        "fraction": 0.3157894736842105
+      }
+    },
+    "by_shared": {
+      "shared_1_2": {
+        "both": 57,
+        "shared": 142,
+        "pairs": 107,
+        "fraction": 0.4014084507042254
+      },
+      "shared_3plus": {
+        "both": 869,
+        "shared": 1837,
+        "pairs": 218,
+        "fraction": 0.47305389221556887
+      }
+    }
+  },
+  "all_objects": {
+    "dino_cls_base": {
+      "n": 924,
+      "auc_paired": 0.6136363636363636,
+      "partner_mean": 0.4371092382203678,
+      "distractor_mean": 0.39776210188905886
+    },
+    "dino_patch_mean_base": {
+      "n": 924,
+      "auc_paired": 0.6666666666666666,
+      "partner_mean": 0.5688116259820744,
+      "distractor_mean": 0.517045731437629
+    }
+  },
+  "ambiguous": {
+    "dino_cls_base": {
+      "n": 502,
+      "auc_paired": 0.6454183266932271,
+      "partner_mean": 0.43997533708509773,
+      "distractor_mean": 0.3888646990266564
+    },
+    "dino_patch_mean_base": {
+      "n": 502,
+      "auc_paired": 0.6812749003984063,
+      "partner_mean": 0.562723426318281,
+      "distractor_mean": 0.48409314691605765
+    }
+  },
+  "by_shared": {
+    "shared_1_2": {
+      "dino_cls_base": {
+        "n": 55,
+        "auc_paired": 0.43636363636363634,
+        "partner_mean": 0.20703899375377763,
+        "distractor_mean": 0.23137212331002624
+      },
+      "dino_patch_mean_base": {
+        "n": 55,
+        "auc_paired": 0.5636363636363636,
+        "partner_mean": 0.2803251207480303,
+        "distractor_mean": 0.3211697699160209
+      }
+    },
+    "shared_3plus": {
+      "dino_cls_base": {
+        "n": 869,
+        "auc_paired": 0.6248561565017261,
+        "partner_mean": 0.45167064609800006,
+        "distractor_mean": 0.4082931131915292
+      },
+      "dino_patch_mean_base": {
+        "n": 869,
+        "auc_paired": 0.6731875719217492,
+        "partner_mean": 0.5870702655538493,
+        "distractor_mean": 0.5294429441921612
+      }
+    }
+  },
+  "ambiguous_by_shared": {
+    "shared_1_2": {
+      "dino_cls_base": {
+        "n": 21,
+        "auc_paired": 0.5238095238095238,
+        "partner_mean": 0.1700553897560597,
+        "distractor_mean": 0.16670784750918238
+      },
+      "dino_patch_mean_base": {
+        "n": 21,
+        "auc_paired": 0.47619047619047616,
+        "partner_mean": 0.1997389353461411,
+        "distractor_mean": 0.21068250871738042
+      }
+    },
+    "shared_3plus": {
+      "dino_cls_base": {
+        "n": 481,
+        "auc_paired": 0.6507276507276507,
+        "partner_mean": 0.451759783849983,
+        "distractor_mean": 0.39856385470621347
+      },
+      "dino_patch_mean_base": {
+        "n": 481,
+        "auc_paired": 0.6902286902286903,
+        "partner_mean": 0.5785709820571895,
+        "distractor_mean": 0.4960299939060207
+      }
+    }
+  },
+  "ambiguous_by_range": {
+    "0-25m": {
+      "dino_cls_base": {
+        "n": 172,
+        "auc_paired": 0.627906976744186,
+        "partner_mean": 0.43516332566892507,
+        "distractor_mean": 0.3977906591197621
+      },
+      "dino_patch_mean_base": {
+        "n": 172,
+        "auc_paired": 0.6976744186046512,
+        "partner_mean": 0.5666535538743126,
+        "distractor_mean": 0.5104669236118635
+      }
+    },
+    "25-40m": {
+      "dino_cls_base": {
+        "n": 207,
+        "auc_paired": 0.6521739130434783,
+        "partner_mean": 0.4660395954755202,
+        "distractor_mean": 0.4004368683195026
+      },
+      "dino_patch_mean_base": {
+        "n": 207,
+        "auc_paired": 0.6859903381642513,
+        "partner_mean": 0.5700291303424648,
+        "distractor_mean": 0.47179543485555486
+      }
+    },
+    "40-70m": {
+      "dino_cls_base": {
+        "n": 105,
+        "auc_paired": 0.6952380952380952,
+        "partner_mean": 0.419039329212136,
+        "distractor_mean": 0.3684891956267143
+      },
+      "dino_patch_mean_base": {
+        "n": 105,
+        "auc_paired": 0.6476190476190476,
+        "partner_mean": 0.5730172502253973,
+        "distractor_mean": 0.4887494503168661
+      }
+    },
+    "70m+": {
+      "dino_cls_base": {
+        "n": 18,
+        "auc_paired": 0.4444444444444444,
+        "partner_mean": 0.30834452060872136,
+        "distractor_mean": 0.2893493477689122
+      },
+      "dino_patch_mean_base": {
+        "n": 18,
+        "auc_paired": 0.6666666666666666,
+        "partner_mean": 0.3811059717132434,
+        "distractor_mean": 0.34633897734720104
+      }
+    }
+  },
+  "same_agent_bound": {
+    "dino_cls_base": {
+      "n": 95,
+      "auc_paired": 0.7263157894736842,
+      "partner_mean": 0.6700095585551096,
+      "distractor_mean": 0.5249536430266354
+    },
+    "dino_patch_mean_base": {
+      "n": 95,
+      "auc_paired": 0.6526315789473685,
+      "partner_mean": 0.7277649342821679,
+      "distractor_mean": 0.6062445227439849
+    }
+  },
+  "shuffled_control": {
+    "dino_cls_base": {
+      "n": 924,
+      "auc_paired": 0.4902597402597403,
+      "partner_mean": 0.38435415996467476,
+      "distractor_mean": 0.39385610216026573
+    },
+    "dino_patch_mean_base": {
+      "n": 924,
+      "auc_paired": 0.4945887445887446,
+      "partner_mean": 0.5262948314076284,
+      "distractor_mean": 0.5306080845989548
+    }
+  },
+  "verdict": {
+    "best_descriptor": "dino_patch_mean_base",
+    "ambiguous_auc": 0.6812749003984063,
+    "coverage": 0.46791308741788784,
+    "far_field_coverage": 0.36082474226804123,
+    "shuffle_control_auc": 0.4945887445887446,
+    "control_valid": true,
+    "bars": {
+      "signal": false,
+      "coverage": true,
+      "far_field_coverage": true
+    },
+    "worth_building": false
+  }
+}
