@@ -165,3 +165,55 @@ def test_frame_from_views_concatenates_descriptors_and_keeps_every_annotated_veh
     np.testing.assert_allclose(frame.range_m, [np.hypot(5.0, 2.0)])
     assert reloaded.vids == frame.vids and reloaded.gt_vids == frame.gt_vids
     np.testing.assert_array_equal(reloaded.features, frame.features)
+
+
+# ----------------------------------------------------------------------------
+# Review fixes: the control never repels the true match; in-batch false negatives are masked
+# ----------------------------------------------------------------------------
+
+
+def test_control_hard_negatives_never_contain_the_anchors_true_match():
+    ego = _frame("s", "1", "000010", ["a", "b", "c"], [[0, 0], [10, 0], [20, 0]], seed=1)
+    cav = _frame("s", "2", "000010", ["a", "b", "c"], [[0, 0], [10, 0], [20, 0]], seed=2)
+
+    shuffled = build_pairs([ego, cav], max_hard_negatives=3, shuffle_identities=np.random.default_rng(0))
+
+    for row, key in enumerate(shuffled.rows):
+        partner = cav if key[2] == "1" else ego
+        true_match = partner.features[partner.vids.index(key[-1])]
+        for slot in range(3):
+            if shuffled.hard_mask[row, slot]:
+                assert not np.array_equal(shuffled.hard_negatives[row, slot], true_match)
+
+
+def test_same_identity_mask_marks_off_diagonal_repeats_of_one_object():
+    from embedding_aware_belt_fusion.alignformer.appearance_head import same_identity_mask
+
+    mask = same_identity_mask([("s", "a"), ("s", "b"), ("s", "a"), ("t", "a")])
+
+    assert mask.tolist() == [
+        [False, False, True, False],
+        [False, False, False, False],
+        [True, False, False, False],
+        [False, False, False, False],
+    ]
+
+
+def test_masked_in_batch_duplicates_do_not_count_as_negatives():
+    from embedding_aware_belt_fusion.alignformer.appearance_head import same_identity_mask
+
+    base = torch.nn.functional.normalize(torch.randn(8, 4), dim=1)
+    anchors = torch.cat([base, base[:1]])  # row 8 repeats object 0
+    positives = anchors.clone()
+    identities = [("s", str(i)) for i in range(8)] + [("s", "0")]
+    none = (torch.zeros(9, 0, 4), torch.zeros(9, 0, dtype=torch.bool))
+
+    unmasked = info_nce(anchors, positives, *none, temperature=0.1)
+    masked = info_nce(anchors, positives, *none, temperature=0.1, identity_mask=same_identity_mask(identities))
+    all_false = info_nce(anchors, positives, *none, temperature=0.1, identity_mask=torch.zeros(9, 9, dtype=torch.bool))
+
+    # Row 8 is a second view of object 0: unmasked, it is a perfect-score
+    # "negative" for row 0 and vice versa; masked, both rows face only the
+    # seven other objects, so the loss drops. An all-false mask changes nothing.
+    assert masked < unmasked
+    torch.testing.assert_close(all_false, unmasked)

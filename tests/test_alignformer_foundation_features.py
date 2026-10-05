@@ -129,3 +129,19 @@ def test_an_empty_mask_falls_back_to_the_mean_over_every_patch(backbone):
     full = backbone.describe(crop, np.ones((64, 64), dtype=bool))["dino_patch_mean"]
 
     np.testing.assert_allclose(empty, full, atol=1e-5)
+
+
+def test_a_silhouette_too_small_for_any_patch_keeps_its_best_covered_patch():
+    mask = np.zeros((INPUT_SIZE, INPUT_SIZE), dtype=bool)
+    mask[0:4, 0:4] = True  # a sliver inside the top-left patch
+
+    grid = patch_grid_mask(mask, grid=16)
+
+    assert grid.sum() == 1 and grid[0, 0]
+
+
+def test_the_mask_letterbox_pads_with_zeros_so_padding_is_never_silhouette():
+    mask = np.ones((50, 200), dtype=bool)
+    square = letterbox(np.repeat(mask[..., None].astype(np.uint8) * 255, 3, axis=2), INPUT_SIZE, fill=(0, 0, 0))
+
+    assert (square[0] == 0).all() and (square[INPUT_SIZE // 2] == 255).all()

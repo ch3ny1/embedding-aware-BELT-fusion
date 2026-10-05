@@ -25,7 +25,7 @@ frozen DINOv2 features on these crops at this resolution.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -47,17 +47,19 @@ DESCRIPTOR_NAMES = ("dino_cls", "dino_patch_mean")
 _EPSILON = 1e-12
 
 
-def letterbox(crop_rgb: np.ndarray, size: int = INPUT_SIZE) -> np.ndarray:
+def letterbox(crop_rgb: np.ndarray, size: int = INPUT_SIZE, fill: Optional[Tuple[int, int, int]] = None) -> np.ndarray:
     """Resize the longer side to ``size`` and pad the other to a square.
 
     Aspect is kept: a 2:1 car squashed to a square is a different object to
-    the network than the same car seen square-on.
+    the network than the same car seen square-on. The padding is the
+    ImageNet mean (a neutral input) unless ``fill`` says otherwise; a mask
+    is letterboxed with zeros so padding can never read as silhouette.
     """
     height, width = crop_rgb.shape[:2]
     scale = size / max(height, width)
     new_w, new_h = max(1, int(round(width * scale))), max(1, int(round(height * scale)))
     resized = cv2.resize(crop_rgb, (new_w, new_h), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
-    fill = tuple(int(v) for v in np.rint(np.array(IMAGENET_MEAN) * 255))
+    fill = fill if fill is not None else tuple(int(v) for v in np.rint(np.array(IMAGENET_MEAN) * 255))
     canvas = np.empty((size, size, 3), dtype=np.uint8)
     canvas[:] = fill
     top, left = (size - new_h) // 2, (size - new_w) // 2
@@ -66,9 +68,17 @@ def letterbox(crop_rgb: np.ndarray, size: int = INPUT_SIZE) -> np.ndarray:
 
 
 def patch_grid_mask(mask_square: np.ndarray, grid: int = PATCH_GRID) -> np.ndarray:
-    """``(grid, grid)`` booleans: patches at least half covered by the mask."""
+    """``(grid, grid)`` booleans: patches at least half covered by the mask.
+
+    A silhouette too small to half-cover any patch keeps its best-covered
+    patch(es); only a mask with no coverage at all selects every patch.
+    """
     fraction = cv2.resize(mask_square.astype(np.float32), (grid, grid), interpolation=cv2.INTER_AREA)
-    return fraction >= 0.5
+    selected = fraction >= 0.5
+    if selected.any():
+        return selected
+    peak = float(fraction.max())
+    return fraction >= peak if peak > 0.0 else np.ones((grid, grid), dtype=bool)
 
 
 def context_box(box: Tuple[int, int, int, int], image_shape, fraction: float = CONTEXT_FRACTION):
@@ -120,10 +130,10 @@ class FoundationBackbone(nn.Module):
     def describe(self, crop_rgb: np.ndarray, crop_mask: np.ndarray) -> Dict[str, np.ndarray]:
         """Both descriptors of one crop; ``crop_mask`` is the silhouette inside it."""
         square = letterbox(crop_rgb)
-        square_mask = letterbox(np.repeat(crop_mask[..., None].astype(np.uint8) * 255, 3, axis=2))[..., 0] > 127
+        square_mask = letterbox(np.repeat(crop_mask[..., None].astype(np.uint8) * 255, 3, axis=2), fill=(0, 0, 0))[..., 0] > 127
         pooled, patches = self._tokens(square[None])
         grid = torch.from_numpy(patch_grid_mask(square_mask).reshape(-1)).to(patches.device)
-        selected = patches[0][grid] if bool(grid.any()) else patches[0]
+        selected = patches[0][grid]
         return {
             "dino_cls": _unit(pooled[0].cpu().numpy().astype(np.float64)),
             "dino_patch_mean": _unit(selected.mean(dim=0).cpu().numpy().astype(np.float64)),

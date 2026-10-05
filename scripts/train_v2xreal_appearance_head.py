@@ -15,8 +15,9 @@ pairs and candidates:
    = another shared vehicle of the partner frame) stays within **0.05 of
    0.5**: otherwise the pipeline leaks and the run is void.
 
-Fixed epoch count, no early stopping on val: val is read once, at the end.
-The per-epoch val curve is recorded for the write-up, not for selection.
+Fixed epoch count, no early stopping on val: val is SCORED along the way
+(every fifth epoch, for the write-up's curve) but never SELECTED on; the
+verdict is the final epoch, decided in advance.
 Coverage is unchanged from the zero-shot probe (same candidates), so the
 coverage bars are inherited, not re-tested.
 
@@ -65,9 +66,11 @@ from embedding_aware_belt_fusion.alignformer.appearance_head import (  # noqa: E
     AppearanceHead,
     PairSet,
     build_pairs,
+    feature_dim,
     frame_key,
     info_nce,
     load_frame,
+    same_identity_mask,
 )
 
 CONTROL_TOLERANCE = 0.05
@@ -176,6 +179,7 @@ def train_head(pairs: PairSet, *, epochs: int, batch_size: int, lr: float, tempe
     optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     anchors, positives = torch.from_numpy(pairs.anchors), torch.from_numpy(pairs.positives)
     hard, mask = torch.from_numpy(pairs.hard_negatives), torch.from_numpy(pairs.hard_mask)
+    identities = np.asarray(pairs.identities, dtype=object)
     count, losses = anchors.shape[0], []
     for epoch in range(1, epochs + 1):
         head.train()
@@ -185,7 +189,8 @@ def train_head(pairs: PairSet, *, epochs: int, batch_size: int, lr: float, tempe
             a, p = head(anchors[idx].to(device)), head(positives[idx].to(device))
             h = hard[idx].to(device)
             hn = head(h.reshape(-1, h.shape[-1])).reshape(h.shape[0], h.shape[1], -1)
-            loss = info_nce(a, p, hn, mask[idx].to(device), temperature)
+            same = same_identity_mask([tuple(x) for x in identities[idx.numpy()]])
+            loss = info_nce(a, p, hn, mask[idx].to(device), temperature, identity_mask=same)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -229,7 +234,8 @@ def _fit(label: str, pairs: PairSet, args, val_frames, val_pairs, device) -> Tup
         if epoch % VAL_EVERY == 0 or epoch == args.epochs:
             report = score_pairs(val_frames, val_pairs, {"head": head_embeddings(val_frames, head, device)}, random.Random(args.seed))
             entry["val_ambiguous_auc"] = report["ambiguous"]["head"]["auc_paired"]
-        print(f"  [{label}] epoch {epoch}: loss {loss:.4f}" + (f"  val ambiguous AUC {entry['val_ambiguous_auc']:.3f}" if "val_ambiguous_auc" in entry else ""), flush=True)
+        shown = entry.get("val_ambiguous_auc")
+        print(f"  [{label}] epoch {epoch}: loss {loss:.4f}" + (f"  val ambiguous AUC {shown:.3f}" if shown is not None else ""), flush=True)
         curve.append(entry)
 
     head, _ = train_head(pairs, epochs=args.epochs, batch_size=args.batch, lr=args.lr, temperature=args.temperature,
@@ -249,9 +255,9 @@ def main(argv=None) -> None:
     control = build_pairs(train_frames, args.hard_negatives, shuffle_identities=np.random.default_rng(args.seed))
     print(f"{len(honest.rows)} training pairs ({honest.hard_mask.mean():.2f} of hard-negative slots filled)", flush=True)
 
-    half = train_frames[0].features.shape[1] // 2
+    half = feature_dim(train_frames) // 2
     zero_shot = score_pairs(val_frames, val_pairs, zero_shot_embeddings(val_frames, half), random.Random(args.seed))
-    print("zero-shot check (val ambiguous AUC):", {n: round(zero_shot["ambiguous"][n]["auc_paired"], 3) for n in ZERO_SHOT_NAMES}, flush=True)
+    print("zero-shot check (val ambiguous AUC):", {n: zero_shot["ambiguous"][n]["auc_paired"] for n in ZERO_SHOT_NAMES}, flush=True)
 
     head, fit = _fit("head", honest, args, val_frames, val_pairs, device)
     control_head, control_fit = _fit("control", control, args, val_frames, val_pairs, device)

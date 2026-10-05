@@ -99,3 +99,10 @@ def test_verdict_requires_the_signal_bar_and_a_null_control():
     assert verdict(good, null_control)["worth_building"] is True
     assert verdict(weak, null_control)["worth_building"] is False
     assert verdict(good, leaky_control)["worth_building"] is False
+
+
+def test_strided_timestamps_are_chosen_by_value_not_by_position():
+    from cache_v2xreal_appearance_features import strided
+
+    assert strided(["000010", "000011", "000012", "000014"], every=2) == ["000010", "000012", "000014"]
+    assert strided(["000011", "000012"], every=1) == ["000011", "000012"]

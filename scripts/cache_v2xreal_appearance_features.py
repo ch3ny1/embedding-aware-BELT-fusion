@@ -22,7 +22,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import Dict, List, Sequence
 
 import numpy as np
 
@@ -58,12 +58,17 @@ def frame_from_views(scenario: str, agent: str, timestamp: str, params: Dict, vi
                       tuple(sorted(vehicles)))
 
 
+def strided(timestamps: Sequence[str], every: int) -> List[str]:
+    """Every ``every``-th timestamp BY VALUE, so agents with gaps still land on the same stamps."""
+    return [t for t in timestamps if int(t) % every == 0]
+
+
 def cache_split(root: Path, output_dir: Path, describe: Describer, every: int) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     written, started = 0, time.time()
     for scenario in sorted(p for p in root.iterdir() if p.is_dir()):
         for agent_dir in sorted(p for p in scenario.iterdir() if p.is_dir()):
-            for timestamp in _timestamps(agent_dir)[::every]:
+            for timestamp in strided(_timestamps(agent_dir), every):
                 if (output_dir / f"{frame_key(scenario.name, agent_dir.name, timestamp)}.npz").exists():
                     continue
                 params, views = _load_views(root, agent_dir, timestamp, describe)

@@ -55,13 +55,21 @@ def frame_key(scenario: str, agent: str, timestamp: str) -> str:
 
 def save_frame(directory: Path, frame: AgentFrame) -> Path:
     path = directory / f"{frame_key(frame.scenario, frame.agent, frame.timestamp)}.npz"
-    np.savez(path, vids=np.asarray(frame.vids, dtype=str), features=frame.features.astype(np.float32),
-             centre_xy=frame.centre_xy, range_m=frame.range_m, gt_vids=np.asarray(frame.gt_vids, dtype=str))
+    partial = path.with_suffix(".npz.tmp")
+    with open(partial, "wb") as handle:  # write whole, then rename: a crash leaves no half file to resume past
+        np.savez(handle, vids=np.asarray(frame.vids, dtype=str), features=frame.features.astype(np.float32),
+                 centre_xy=frame.centre_xy, range_m=frame.range_m, gt_vids=np.asarray(frame.gt_vids, dtype=str))
+    partial.replace(path)
     return path
 
 
+def feature_dim(frames: Sequence[AgentFrame]) -> int:
+    """Descriptor width from the first frame that saw a vehicle (empty frames carry none)."""
+    return next((int(f.features.shape[1]) for f in frames if len(f.vids) > 0), 0)
+
+
 def load_frame(path: Path) -> AgentFrame:
-    scenario, agent, timestamp = path.stem.split("__")
+    scenario, agent, timestamp = path.stem.rsplit("__", 2)
     with np.load(path) as data:
         return AgentFrame(scenario, agent, timestamp, tuple(str(v) for v in data["vids"]),
                           data["features"], data["centre_xy"], data["range_m"],
@@ -69,9 +77,11 @@ def load_frame(path: Path) -> AgentFrame:
 
 
 class PairSet(NamedTuple):
-    """Training pairs: ``rows[i] = (scenario, timestamp, anchor agent, partner agent, vid)``."""
+    """Training pairs: ``rows[i] = (scenario, timestamp, anchor agent, partner agent, vid)``;
+    ``identities[i] = (scenario, vid)`` names the object, which persists through a scenario."""
 
     rows: List[Tuple[str, str, str, str, str]]
+    identities: List[Tuple[str, str]]
     anchors: np.ndarray  # (P, D)
     positives: np.ndarray  # (P, D)
     hard_negatives: np.ndarray  # (P, K, D), zero where padded
@@ -85,11 +95,15 @@ def _group_by_timestamp(frames: Sequence[AgentFrame]) -> Dict[Tuple[str, str], L
     return groups
 
 
-def _hard_negatives(partner: AgentFrame, vid: str, exclude: str, k: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Up to ``k`` partner-frame features nearest to ``vid``'s centre, ``exclude`` left out."""
+def _hard_negatives(partner: AgentFrame, vid: str, exclude: Sequence[str], k: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Up to ``k`` partner-frame features nearest to ``vid``'s centre, ``exclude`` left out.
+
+    The true match is always excluded, in the control too: a control that
+    pushed the anchor away from its own counterpart would be a negative
+    signal, not a null."""
     index = {v: i for i, v in enumerate(partner.vids)}
     centre = partner.centre_xy[index[vid]]
-    others = sorted((v for v in partner.vids if v != exclude),
+    others = sorted((v for v in partner.vids if v not in exclude),
                     key=lambda v: float(np.linalg.norm(partner.centre_xy[index[v]] - centre)))[:k]
     dim = partner.features.shape[1]
     block, mask = np.zeros((k, dim), dtype=np.float32), np.zeros(k, dtype=bool)
@@ -113,7 +127,7 @@ def build_pairs(frames: Sequence[AgentFrame], max_hard_negatives: int = MAX_HARD
     vehicle of the partner frame, so a head trained on it learns nothing
     about identity and its validation AUC must stay near one half.
     """
-    rows, anchors, positives, negatives, masks = [], [], [], [], []
+    rows, identities, anchors, positives, negatives, masks = [], [], [], [], [], []
     for (scenario, stamp), group in sorted(_group_by_timestamp(frames).items()):
         for anchor_frame in group:
             for partner in group:
@@ -124,14 +138,15 @@ def build_pairs(frames: Sequence[AgentFrame], max_hard_negatives: int = MAX_HARD
                     positive = _positive_vid(common, vid, shuffle_identities)
                     if positive is None:
                         continue
-                    block, mask = _hard_negatives(partner, vid, exclude=positive, k=max_hard_negatives)
+                    block, mask = _hard_negatives(partner, vid, exclude=(vid, positive), k=max_hard_negatives)
                     rows.append((scenario, stamp, anchor_frame.agent, partner.agent, vid))
+                    identities.append((scenario, vid))
                     anchors.append(anchor_frame.features[anchor_frame.vids.index(vid)])
                     positives.append(partner.features[partner.vids.index(positive)])
                     negatives.append(block)
                     masks.append(mask)
-    dim = frames[0].features.shape[1] if frames else 0
-    return PairSet(rows, _stack(anchors, (0, dim)), _stack(positives, (0, dim)),
+    dim = feature_dim(frames)
+    return PairSet(rows, identities, _stack(anchors, (0, dim)), _stack(positives, (0, dim)),
                    _stack(negatives, (0, max_hard_negatives, dim)), _stack(masks, (0, max_hard_negatives), bool))
 
 
@@ -150,16 +165,33 @@ class AppearanceHead(nn.Module):
         return F.normalize(self.net(features), dim=-1)
 
 
+def same_identity_mask(identities: Sequence[Tuple[str, str]]) -> Tensor:
+    """``(B, B)`` True off the diagonal where two rows are the same object.
+
+    One vehicle appears in many rows (both directions, every agent pair,
+    every timestamp of its scenario), so a random batch holds about one such
+    collision per row; counted as negatives they would push the head apart
+    from its own positives. Masked out of the in-batch softmax instead.
+    """
+    codes = {key: i for i, key in enumerate(dict.fromkeys(identities))}
+    ids = torch.tensor([codes[key] for key in identities])
+    same = ids[:, None] == ids[None, :]
+    return same & ~torch.eye(len(identities), dtype=torch.bool)
+
+
 def info_nce(anchors: Tensor, positives: Tensor, hard_negatives: Tensor, hard_mask: Tensor,
-             temperature: float = TEMPERATURE) -> Tensor:
+             temperature: float = TEMPERATURE, identity_mask: Optional[Tensor] = None) -> Tensor:
     """Symmetric InfoNCE: in-batch negatives both ways, in-frame hard negatives on the anchor side.
 
     ``hard_negatives`` is ``(B, K, D)`` already on the sphere, ``hard_mask``
     ``(B, K)``; padded slots are excluded from the softmax, so a frame with
-    no other vehicle contributes only its in-batch term.
+    no other vehicle contributes only its in-batch term. ``identity_mask``
+    (``same_identity_mask``) removes in-batch false negatives.
     """
     batch = anchors.shape[0]
     logits_ap = anchors @ positives.T / temperature  # (B, B)
+    if identity_mask is not None:
+        logits_ap = logits_ap.masked_fill(identity_mask.to(logits_ap.device), float("-inf"))
     targets = torch.arange(batch, device=anchors.device)
     if hard_negatives.shape[1] > 0:
         hard = torch.einsum("bd,bkd->bk", anchors, hard_negatives) / temperature
