@@ -103,3 +103,74 @@ def test_views_pick_up_a_vehicle_in_front_of_the_camera_and_skip_one_behind_it()
     assert views["7"]["pixels"] > 50
     assert views["7"]["hue_saturation"].shape == (24 * 8,)
     assert views["7"]["mean_colour"].shape == (3,)
+
+
+# ----------------------------------------------------------------------------
+# Pluggable descriptors: the same probe, a foundation-model cue
+# ----------------------------------------------------------------------------
+
+
+def test_views_carry_whatever_descriptors_the_describer_returns():
+    from analyze_v2xreal_colour_separability import Describer
+
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 255, size=(1080, 1920, 3), dtype=np.uint8)
+    params = {"lidar_pose": [0.0] * 6, "cam1": _identity_camera_block(), "vehicles": {"7": _vehicle(location=(0.0, 0.0, 12.0))}}
+    seen = []
+
+    def constant(image_bgr, mask, view):
+        seen.append((image_bgr.shape, int(mask.sum()), view.box))
+        return {"toy": np.array([1.0, 0.0])}
+
+    views = views_for_agent_frame(params, {"cam1": image}, describe=Describer(("toy",), constant))
+
+    assert views["7"]["toy"].tolist() == [1.0, 0.0]
+    assert "hue_saturation" not in views["7"]
+    assert seen and seen[0][0] == image.shape and seen[0][1] > 50
+
+
+def test_describer_for_colour_is_the_default_and_names_both_colour_descriptors():
+    from analyze_v2xreal_colour_separability import colour_describer
+
+    describer = colour_describer()
+
+    assert describer.names == ("hue_saturation", "mean_colour")
+
+
+def test_combined_describer_merges_names_and_descriptors():
+    from analyze_v2xreal_colour_separability import Describer, combine
+
+    first = Describer(("a",), lambda image, mask, view: {"a": np.ones(2)})
+    second = Describer(("b",), lambda image, mask, view: {"b": np.zeros(3)})
+    view = type("V", (), {"box": (0, 0, 1, 1)})()
+
+    both = combine(first, second)
+    out = both.describe(np.zeros((2, 2, 3), np.uint8), np.ones((2, 2), bool), view)
+
+    assert both.names == ("a", "b")
+    assert set(out) == {"a", "b"}
+
+
+def test_combined_describer_returns_none_when_any_part_declines():
+    from analyze_v2xreal_colour_separability import Describer, combine
+
+    first = Describer(("a",), lambda image, mask, view: {"a": np.ones(2)})
+    second = Describer(("b",), lambda image, mask, view: None)
+    view = type("V", (), {"box": (0, 0, 1, 1)})()
+
+    assert combine(first, second).describe(np.zeros((2, 2, 3), np.uint8), np.ones((2, 2), bool), view) is None
+
+
+def test_verdict_picks_the_best_descriptor_among_the_names_given():
+    from analyze_v2xreal_colour_separability import verdict
+
+    report = {
+        "ambiguous": {"x": {"auc_paired": 0.6}, "y": {"auc_paired": 0.9}},
+        "shuffled_control": {"x": {"auc_paired": 0.5}, "y": {"auc_paired": 0.51}},
+        "coverage": {"fraction": 0.5, "by_range": {"40-70m": {"fraction": 0.3}}},
+    }
+
+    out = verdict(report, names=("x", "y"))
+
+    assert out["best_descriptor"] == "y"
+    assert out["worth_building"] is True

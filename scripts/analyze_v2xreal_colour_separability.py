@@ -39,6 +39,12 @@ Usage::
     python scripts/analyze_v2xreal_colour_separability.py \\
         --root /media/chenyi/basement2/dataset/v2x-real/val --pairs 400 \\
         --output outputs/v2xreal/colour_separability_val_result.json
+
+The probe is cue-agnostic: ``--descriptors dinov2_small`` (or ``_base``,
+or ``colour+dinov2_small`` for both on the same candidates) scores a frozen
+DINOv2 crop embedding (``alignformer.foundation_features``) through the
+same pairs, gates, controls and bars. Same bars, fixed before the first
+number: a foundation model is held to the standard colour failed.
 """
 
 from __future__ import annotations
@@ -49,7 +55,7 @@ import random
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -93,6 +99,67 @@ class Pair(NamedTuple):
     timestamp: str
     ego: str
     cav: str
+
+
+# ---------------------------------------------------------------------------
+# Descriptors: the probe is the same whatever cue is scored
+# ---------------------------------------------------------------------------
+
+
+class Describer(NamedTuple):
+    """Named descriptors of one projected vehicle: ``describe(image_bgr, mask, view)``
+    returns ``{name: vector}`` for every name in ``names``, or ``None`` to skip."""
+
+    names: Tuple[str, ...]
+    describe: Callable[[np.ndarray, np.ndarray, Projection], Optional[Dict[str, np.ndarray]]]
+
+
+def colour_describer() -> Describer:
+    return Describer(DESCRIPTORS, lambda image_bgr, mask, view: appearance(image_bgr, mask))
+
+
+def foundation_describer(size: str) -> Describer:
+    """Frozen DINOv2 (``small`` or ``base``) on the letterboxed crop with context."""
+    from embedding_aware_belt_fusion.alignformer.foundation_features import DESCRIPTOR_NAMES, FoundationBackbone
+
+    backbone = FoundationBackbone(model=size)
+    names = tuple(f"{n}_{size}" for n in DESCRIPTOR_NAMES)
+
+    def describe(image_bgr, mask, view):
+        raw = backbone.describe_projection(image_bgr[..., ::-1], mask, view.box)
+        return {f"{n}_{size}": raw[n] for n in DESCRIPTOR_NAMES}
+
+    return Describer(names, describe)
+
+
+def combine(*parts: Describer) -> Describer:
+    """One describer scoring every cue on the same candidates; any part declining declines all."""
+
+    def describe(image_bgr, mask, view):
+        merged: Dict[str, np.ndarray] = {}
+        for part in parts:
+            out = part.describe(image_bgr, mask, view)
+            if out is None:
+                return None
+            merged.update(out)
+        return merged
+
+    return Describer(tuple(n for part in parts for n in part.names), describe)
+
+
+DESCRIBER_CHOICES = ("colour", "dinov2_small", "dinov2_base", "colour+dinov2_small", "colour+dinov2_base")
+
+
+def build_describer(choice: str) -> Describer:
+    parts = []
+    for name in choice.split("+"):
+        if name == "colour":
+            parts.append(colour_describer())
+        elif name.startswith("dinov2_"):
+            parts.append(foundation_describer(name.split("_", 1)[1]))
+        else:
+            raise ValueError(f"unknown descriptor set {name!r}; one of {DESCRIBER_CHOICES}")
+    return parts[0] if len(parts) == 1 else combine(*parts)
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +236,7 @@ def _vehicles(params: Dict) -> Dict[str, Dict]:
     }
 
 
-def _candidate(image_bgr: np.ndarray, view: Projection, neighbours, camera: str) -> Optional[Dict]:
+def _candidate(image_bgr: np.ndarray, view: Projection, neighbours, camera: str, describe: Describer) -> Optional[Dict]:
     mask = silhouette_mask(view.pixels, image_bgr.shape)
     pixel_count = int(mask.sum())
     if pixel_count < MIN_CROP_PIXELS:
@@ -177,7 +244,7 @@ def _candidate(image_bgr: np.ndarray, view: Projection, neighbours, camera: str)
     covered = occlusion_fraction(view, neighbours, image_bgr.shape)
     if covered > MAX_OCCLUSION:
         return None
-    descriptors = appearance(image_bgr, mask)
+    descriptors = describe.describe(image_bgr, mask, view)
     if descriptors is None:
         return None
     return {**descriptors, "occlusion": covered, "pixels": pixel_count, "depth": view.depth, "camera": camera}
@@ -192,7 +259,9 @@ def _keep_best(found: Dict[str, Dict], vid: str, candidate: Dict) -> None:
         previous["runner_up"] = candidate
 
 
-def views_for_agent_frame(params: Dict, images_bgr: Dict[str, np.ndarray]) -> Dict[str, Dict]:
+def views_for_agent_frame(
+    params: Dict, images_bgr: Dict[str, np.ndarray], describe: Optional[Describer] = None
+) -> Dict[str, Dict]:
     """Best usable camera crop per vehicle id for one agent-frame.
 
     ``images_bgr`` maps a camera block name (``cam1``) to its BGR image; a
@@ -200,6 +269,7 @@ def views_for_agent_frame(params: Dict, images_bgr: Dict[str, np.ndarray]) -> Di
     occluded view with enough silhouette pixels; the displaced view is kept as
     the same-agent runner-up (the viewpoint-only bound).
     """
+    describe = describe if describe is not None else colour_describer()
     corners = {vid: vehicle_lidar_corners(v, params["lidar_pose"]) for vid, v in _vehicles(params).items()}
     found: Dict[str, Dict] = {}
     for camera, image in images_bgr.items():
@@ -211,20 +281,20 @@ def views_for_agent_frame(params: Dict, images_bgr: Dict[str, np.ndarray]) -> Di
         for vid, view in projected.items():
             if view is None:
                 continue
-            candidate = _candidate(image, view, neighbours, camera)
+            candidate = _candidate(image, view, neighbours, camera, describe)
             if candidate is not None:
                 _keep_best(found, vid, candidate)
     return found
 
 
-def _load_views(root: Path, pair_dir: Path, timestamp: str) -> Tuple[Dict, Dict[str, Dict]]:
+def _load_views(root: Path, pair_dir: Path, timestamp: str, describe: Describer) -> Tuple[Dict, Dict[str, Dict]]:
     params = fast_load_yaml(str(pair_dir / f"{timestamp}.yaml"))
     images: Dict[str, np.ndarray] = {}
     for camera in sorted(k for k in params if k.startswith("cam")):
         path = pair_dir / f"{timestamp}_{camera}.jpeg"
         if path.exists() and path.stat().st_size > 0:
             images[camera] = load_image(path)[..., ::-1]  # appearance() wants BGR
-    return params, views_for_agent_frame(params, images)
+    return params, views_for_agent_frame(params, images, describe)
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +302,8 @@ def _load_views(root: Path, pair_dir: Path, timestamp: str) -> Tuple[Dict, Dict[
 # ---------------------------------------------------------------------------
 
 
-def _new_scores():
-    return {name: {"partner": [], "distractor": []} for name in DESCRIPTORS}
+def _new_scores(names: Sequence[str]):
+    return {name: {"partner": [], "distractor": []} for name in names}
 
 
 def _lidar_range(vehicle: Dict, lidar_pose: Sequence[float]) -> float:
@@ -245,13 +315,13 @@ def _append(scores, name: str, partner: float, distractor: float) -> None:
     scores[name]["distractor"].append(distractor)
 
 
-def _score_object(vid, common_bucket, ego_views, cav_views, cav_vehicles, gap_centres, acc, rng) -> None:
+def _score_object(vid, common_bucket, range_bucket, ego_views, cav_views, gap_centres, acc, rng, names) -> None:
     others = [o for o in cav_views if o != vid]
     if not others:
         return
     nearest = min(others, key=lambda o: float(np.linalg.norm(gap_centres[o] - gap_centres[vid])))
     gap = float(np.linalg.norm(gap_centres[nearest] - gap_centres[vid]))
-    for name in DESCRIPTORS:
+    for name in names:
         partner = cosine_similarity(ego_views[vid][name], cav_views[vid][name])
         distractor = cosine_similarity(ego_views[vid][name], cav_views[nearest][name])
         _append(acc["scores"], name, partner, distractor)
@@ -259,31 +329,36 @@ def _score_object(vid, common_bucket, ego_views, cav_views, cav_vehicles, gap_ce
         if gap <= PROBE_RADIUS_M:
             _append(acc["ambiguous"], name, partner, distractor)
             _append(acc["ambiguous_by_shared"][common_bucket], name, partner, distractor)
+            _append(acc["ambiguous_by_range"].setdefault(range_bucket, _new_scores(names)), name, partner, distractor)
     second = ego_views[vid].get("runner_up")
     if second is not None and nearest in ego_views:
-        for name in DESCRIPTORS:
+        for name in names:
             _append(acc["same_agent"], name, cosine_similarity(second[name], ego_views[vid][name]),
                     cosine_similarity(second[name], ego_views[nearest][name]))
     if len(cav_views) >= 2:
         decoys = rng.sample(list(cav_views), 2)
-        for name in DESCRIPTORS:
+        for name in names:
             _append(acc["shuffled"], name, cosine_similarity(ego_views[vid][name], cav_views[decoys[0]][name]),
                     cosine_similarity(ego_views[vid][name], cav_views[decoys[1]][name]))
 
 
-def collect(root: Path, pairs: Sequence[Pair], rng: random.Random) -> Dict:
+def collect(root: Path, pairs: Sequence[Pair], rng: random.Random, describe: Optional[Describer] = None) -> Dict:
     """Walk the sampled pairs and gather partner/distractor scores and coverage."""
+    describe = describe if describe is not None else colour_describer()
+    names = describe.names
     acc = {
-        "scores": _new_scores(), "ambiguous": _new_scores(), "same_agent": _new_scores(), "shuffled": _new_scores(),
-        "by_shared": {b: _new_scores() for b in SHARED_BUCKETS},
-        "ambiguous_by_shared": {b: _new_scores() for b in SHARED_BUCKETS},
+        "scores": _new_scores(names), "ambiguous": _new_scores(names), "same_agent": _new_scores(names),
+        "shuffled": _new_scores(names),
+        "by_shared": {b: _new_scores(names) for b in SHARED_BUCKETS},
+        "ambiguous_by_shared": {b: _new_scores(names) for b in SHARED_BUCKETS},
+        "ambiguous_by_range": {},
     }
     coverage = {"both": 0, "shared": 0}
     by_range = defaultdict(lambda: {"both": 0, "shared": 0})
     by_shared = {b: {"both": 0, "shared": 0, "pairs": 0} for b in SHARED_BUCKETS}
     for done, pair in enumerate(pairs, start=1):
-        ego_params, ego_views = _load_views(root, root / pair.scenario / pair.ego, pair.timestamp)
-        cav_params, cav_views = _load_views(root, root / pair.scenario / pair.cav, pair.timestamp)
+        ego_params, ego_views = _load_views(root, root / pair.scenario / pair.ego, pair.timestamp, describe)
+        cav_params, cav_views = _load_views(root, root / pair.scenario / pair.cav, pair.timestamp, describe)
         ego_vehicles, cav_vehicles = _vehicles(ego_params), _vehicles(cav_params)
         common = sorted(set(ego_vehicles) & set(cav_vehicles))
         if not common:
@@ -301,10 +376,11 @@ def collect(root: Path, pairs: Sequence[Pair], rng: random.Random) -> Dict:
             coverage["both"] += 1
             by_range[range_bucket]["both"] += 1
             by_shared[bucket]["both"] += 1
-            _score_object(vid, bucket, ego_views, cav_views, cav_vehicles, centres, acc, rng)
+            _score_object(vid, bucket, range_bucket, ego_views, cav_views, centres, acc, rng, names)
         if done % PROGRESS_EVERY == 0:
             print(f"  {done} pairs, {coverage['both']}/{coverage['shared']} usable")
-    return {**acc, "coverage": coverage, "by_range": {k: dict(v) for k, v in by_range.items()}, "by_shared_coverage": by_shared}
+    return {**acc, "names": names, "coverage": coverage, "by_range": {k: dict(v) for k, v in by_range.items()},
+            "by_shared_coverage": by_shared}
 
 
 def auc(partner: Sequence[float], distractor: Sequence[float]) -> Optional[float]:
@@ -324,12 +400,12 @@ def summarize(partner: Sequence[float], distractor: Sequence[float]) -> Dict:
     }
 
 
-def _summaries(scores) -> Dict:
-    return {name: summarize(scores[name]["partner"], scores[name]["distractor"]) for name in DESCRIPTORS}
+def _summaries(scores, names: Sequence[str]) -> Dict:
+    return {name: summarize(scores[name]["partner"], scores[name]["distractor"]) for name in names}
 
 
-def verdict(report: Dict) -> Dict:
-    best = max(DESCRIPTORS, key=lambda n: report["ambiguous"][n]["auc_paired"] or 0.0)
+def verdict(report: Dict, names: Sequence[str] = DESCRIPTORS) -> Dict:
+    best = max(names, key=lambda n: report["ambiguous"][n]["auc_paired"] or 0.0)
     signal = report["ambiguous"][best]["auc_paired"] or 0.0
     control = report["shuffled_control"][best]["auc_paired"]
     far = report["coverage"]["by_range"].get("40-70m", {}).get("fraction", 0.0)
@@ -357,6 +433,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--pairs", type=int, default=400)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--descriptors", choices=DESCRIBER_CHOICES, default="colour",
+                        help="which cue(s) to score on the same candidates; DINOv2 is frozen, zero-shot")
     return parser.parse_args(argv)
 
 
@@ -367,10 +445,13 @@ def main(argv=None) -> None:
     rng = random.Random(args.seed)
     sampled = pairs if len(pairs) <= args.pairs else rng.sample(pairs, args.pairs)
     print(f"{len(pairs)} agent pairs in {args.root}; reading {len(sampled)}")
-    collected = collect(args.root, sampled, rng)
+    describe = build_describer(args.descriptors)
+    collected = collect(args.root, sampled, rng, describe)
+    names = collected["names"]
     shared = max(collected["coverage"]["shared"], 1)
     report = {
-        "method": "v2xreal_camera_colour_separability",
+        "method": "v2xreal_camera_appearance_separability",
+        "descriptors": args.descriptors, "descriptor_names": list(names),
         "split": str(args.root),
         "pairs_read": len(sampled),
         "probe_radius_m": PROBE_RADIUS_M, "min_crop_pixels": MIN_CROP_PIXELS, "max_occlusion": MAX_OCCLUSION,
@@ -382,14 +463,15 @@ def main(argv=None) -> None:
             "by_range": {k: {**v, "fraction": v["both"] / max(v["shared"], 1)} for k, v in sorted(collected["by_range"].items())},
             "by_shared": {k: {**v, "fraction": v["both"] / max(v["shared"], 1)} for k, v in collected["by_shared_coverage"].items()},
         },
-        "all_objects": _summaries(collected["scores"]),
-        "ambiguous": _summaries(collected["ambiguous"]),
-        "by_shared": {b: _summaries(collected["by_shared"][b]) for b in SHARED_BUCKETS},
-        "ambiguous_by_shared": {b: _summaries(collected["ambiguous_by_shared"][b]) for b in SHARED_BUCKETS},
-        "same_agent_bound": _summaries(collected["same_agent"]),
-        "shuffled_control": _summaries(collected["shuffled"]),
+        "all_objects": _summaries(collected["scores"], names),
+        "ambiguous": _summaries(collected["ambiguous"], names),
+        "by_shared": {b: _summaries(collected["by_shared"][b], names) for b in SHARED_BUCKETS},
+        "ambiguous_by_shared": {b: _summaries(collected["ambiguous_by_shared"][b], names) for b in SHARED_BUCKETS},
+        "ambiguous_by_range": {k: _summaries(v, names) for k, v in sorted(collected["ambiguous_by_range"].items())},
+        "same_agent_bound": _summaries(collected["same_agent"], names),
+        "shuffled_control": _summaries(collected["shuffled"], names),
     }
-    report["verdict"] = verdict(report)
+    report["verdict"] = verdict(report, names)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report["verdict"], indent=2))
