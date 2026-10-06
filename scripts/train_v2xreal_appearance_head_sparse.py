@@ -154,6 +154,17 @@ def aggregate_tracks(frames: Sequence[AgentFrame], table: Dict[str, np.ndarray],
     return out
 
 
+def jsonable(value):
+    """Paths (also inside lists and dicts) as strings, so argparse namespaces serialize."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [jsonable(v) for v in value]
+    return value
+
+
 def split_scenarios(frames: Sequence[AgentFrame], fraction: float = HOLDOUT_FRACTION) -> Tuple[List[AgentFrame], List[AgentFrame]]:
     """Deterministic: the last ``fraction`` of sorted scenario names is held out whole."""
     scenarios = sorted({f.scenario for f in frames})
@@ -255,7 +266,7 @@ def main(argv=None) -> None:
     torch.save({"state_dict": chosen["head"].state_dict(), "in_dim": feature_dim(val_frames), "config": chosen["config"]}, args.checkpoint)
     report = {
         "method": "v2xreal_appearance_head_trained_toward_sparse_pairs",
-        "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()},
+        "config": jsonable(vars(args)),
         "pre_registered": {"selection": "held-out train scenarios, mean ambiguous AUC over " + " and ".join(SELECTION_BANDS),
                            "sparse_signal_auc": BAR_AUC, "dense_guard_auc": BAR_AUC, "holdout_fraction": HOLDOUT_FRACTION},
         "candidates": [{k: v for k, v in r.items() if k != "head"} for r in results],

@@ -97,3 +97,13 @@ def test_track_aggregation_averages_an_objects_embedding_over_the_agents_neighbo
     np.testing.assert_allclose(out[frame_key("s", "1", "000012")], [[2 / np.sqrt(5), 1 / np.sqrt(5)]], atol=1e-6)  # a over 10, 12, 14
     v = np.array([1.6, 0.8]) / np.linalg.norm([1.6, 0.8])
     np.testing.assert_allclose(out[frame_key("s", "1", "000030")], [v], atol=1e-6)  # neighbours are cached positions: stamp 14 is one step before 30
+
+
+def test_jsonable_turns_paths_inside_lists_into_strings():
+    import json
+
+    from train_v2xreal_appearance_head_sparse import jsonable
+
+    out = jsonable({"a": Path("/x"), "b": [Path("/y"), 2], "c": (Path("/z"),), "d": 1.5})
+
+    assert json.loads(json.dumps(out)) == {"a": "/x", "b": ["/y", 2], "c": ["/z"], "d": 1.5}
