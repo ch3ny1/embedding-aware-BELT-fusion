@@ -192,4 +192,48 @@ for d in 1 2 4; do
   sweep B_boxes_only $AF test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --freealign-calibration $FAAP $ARMS3 \
     --output $V/B_boxes_only_icp_delay${d}_test_result.json
 done
+
+# Appearance (2026-10-05/06): the probe, the cross-agent head, and the DINO-head trunk.
+# Zero-shot DINOv2 through the colour probe (same 400 val pairs); colour alongside as the regression check.
+python scripts/analyze_v2xreal_colour_separability.py --root $D/val --pairs 400 --seed 0 --descriptors colour+dinov2_small \
+  --output $V/appearance_separability_colour_dinov2_small_val_result.json
+python scripts/analyze_v2xreal_colour_separability.py --root $D/val --pairs 400 --seed 0 --descriptors dinov2_base \
+  --output $V/appearance_separability_dinov2_base_val_result.json
+# Per-agent-frame caches of the probe's views (DINOv2-base descriptors; colour separately), val every frame, train every 2nd.
+C=/media/chenyi/basement2/cache/alignformer_v2xreal_appearance
+python -u scripts/cache_v2xreal_appearance_features.py --root $D/val --every 1 --model base --output-dir $C/val
+python -u scripts/cache_v2xreal_appearance_features.py --root $D/train --every 2 --model base --output-dir $C/train
+python -u scripts/cache_v2xreal_appearance_features.py --root $D/val --every 1 --descriptors colour --output-dir $C/val_colour
+python -u scripts/cache_v2xreal_appearance_features.py --root $D/train --every 2 --descriptors colour --output-dir $C/train_colour
+# The first head (20 epochs, val once) and the sparse-pair sweeps (selection on held-out train scenarios, val once each).
+python -u scripts/train_v2xreal_appearance_head.py --train-dir $C/train --val-dir $C/val --val-root $D/val \
+  --checkpoint $V/appearance_head_base.pth --output $V/appearance_head_base_val_result.json
+python -u scripts/train_v2xreal_appearance_head_sparse.py --train-dir $C/train --val-dir $C/val --val-root $D/val \
+  --checkpoint $V/appearance_head_sparse.pth --output $V/appearance_head_sparse_val_result.json
+CFG="--configs baseline far16_sparse10_offsets far16_sparse10_offsets_drop"
+python -u scripts/train_v2xreal_appearance_head_sparse.py --train-dir $C/train --val-dir $C/val --val-root $D/val $CFG \
+  --extra-train-dirs $C/train_colour --extra-val-dirs $C/val_colour --zero-shot-split 768 \
+  --checkpoint $V/appearance_head_sparse_colour.pth --output $V/appearance_head_sparse_colour_val_result.json
+python -u scripts/train_v2xreal_appearance_head_sparse.py --train-dir $C/train --val-dir $C/val --val-root $D/val $CFG \
+  --extra-train-dirs $C/train_colour --extra-val-dirs $C/val_colour --zero-shot-split 768 --track-window 2 \
+  --checkpoint $V/appearance_head_sparse_colour_track2.pth --output $V/appearance_head_sparse_colour_track2_val_result.json
+python -u scripts/train_v2xreal_appearance_head_sparse.py --train-dir $C/train --val-dir $C/val --val-root $D/val $CFG --track-window 2 \
+  --checkpoint $V/appearance_head_sparse_track2.pth --output $V/appearance_head_sparse_track2_val_result.json   # the passing head
+
+# Chain T: the DINO-head trunk. Cache from the LiDAR cache's detections (camera vectors only), pooled causally over
+# 4 earlier frames of the sender's own track; stage 1, stage 2, shrinkage, val sweep with the chain-M arms.
+AFD=configs/alignformer_v2xreal_dino.yaml; DST=/media/chenyi/basement2/cache/alignformer_v2xreal_dino
+for split in val train test; do
+  python -u -m embedding_aware_belt_fusion.alignformer.cache --config $DET --splits $D/$split --cache-root $DST \
+    --camera --camera-backbone dino --camera-head $V/appearance_head_sparse_track2.pth --dino base \
+    --from-cache /media/chenyi/basement2/cache/alignformer_v2xreal --track-window 4 --track-gate-m 2.0 --track-gate-per-frame-m 1.5
+done
+python -u -m embedding_aware_belt_fusion.alignformer.train --config $AFD --stage 1 --output-dir $V/stage1_dino
+python -u -m embedding_aware_belt_fusion.alignformer.train --config $AFD --stage 2 --head B --message-content boxes+embeddings+camera \
+  --stage1-checkpoint $V/stage1_dino/best.pth --variance-weighting scalar --output-dir $V/stage2_B_dino
+python -u -m embedding_aware_belt_fusion.alignformer.evaluate --config $AFD --metric shrinkage \
+  --checkpoint $V/stage2_B_dino/best.pth $ROBUST --output $V/shrinkage_B_dino_calibration_result.json
+python -u -m embedding_aware_belt_fusion.alignformer.evaluate --metric noisy_ap --config $DET --alignformer-config $AFD \
+  --split $D/val --checkpoint $V/stage2_B_dino/best.pth --shrinkage $V/shrinkage_B_dino_calibration_result.json \
+  $ROBUST --freealign --freealign-calibration $FAAP $ARMS3 --ap-seeds 3 --output $V/B_dino_icp_val_result.json
 ```
