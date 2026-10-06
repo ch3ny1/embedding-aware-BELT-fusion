@@ -50,3 +50,27 @@ def test_verdict_needs_the_sparse_bar_and_the_dense_guard():
     assert verdict(report(0.82, 0.85))["worth_building"] is True
     assert verdict(report(0.70, 0.85))["worth_building"] is False
     assert verdict(report(0.82, 0.75))["worth_building"] is False
+
+
+def test_merge_frames_concatenates_descriptors_per_vehicle_and_drops_what_either_cache_lacks():
+    from train_v2xreal_appearance_head_sparse import merge_frames
+
+    dino = AgentFrame("s", "1", "000010", ("a", "b"), np.array([[1, 1], [2, 2]], np.float32), np.array([[0, 0], [5, 0]]), np.array([10.0, 20.0]), ("a", "b", "c"))
+    colour = AgentFrame("s", "1", "000010", ("b", "a"), np.array([[7, 7, 7], [9, 9, 9]], np.float32), np.array([[5, 0], [0, 0]]), np.array([20.0, 10.0]), ("a", "b", "c"))
+    only_dino = AgentFrame("s", "1", "000012", ("a",), np.ones((1, 2), np.float32), np.zeros((1, 2)), np.ones(1), ("a",))
+
+    merged = merge_frames([dino, only_dino], [colour])
+
+    assert len(merged) == 1  # the frame missing from the colour cache is dropped
+    frame = merged[0]
+    assert frame.vids == ("a", "b") and frame.gt_vids == ("a", "b", "c")
+    assert frame.features.tolist() == [[1, 1, 9, 9, 9], [2, 2, 7, 7, 7]]  # matched by id, not by position
+    assert frame.range_m.tolist() == [10.0, 20.0]
+
+
+def test_cache_script_accepts_a_descriptor_set():
+    from cache_v2xreal_appearance_features import parse_args
+
+    args = parse_args(["--root", "/x/val", "--output-dir", "/y", "--descriptors", "colour"])
+
+    assert args.descriptors == "colour" and args.every == 1

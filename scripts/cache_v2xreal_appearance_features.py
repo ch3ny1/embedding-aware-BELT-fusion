@@ -30,12 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analyze_v2xreal_colour_separability import (  # noqa: E402
+    DESCRIBER_CHOICES,
     Describer,
     _lidar_range,
     _load_views,
     _timestamps,
     _vehicles,
-    foundation_describer,
+    build_describer,
 )
 from embedding_aware_belt_fusion.alignformer.appearance_head import AgentFrame, frame_key, save_frame  # noqa: E402
 from embedding_aware_belt_fusion.alignformer.camera import vehicle_world_corners  # noqa: E402
@@ -83,7 +84,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--model", choices=("small", "base"), default="base")
+    parser.add_argument("--model", choices=("small", "base"), default="base", help="DINOv2 size when --descriptors is not given")
+    parser.add_argument("--descriptors", choices=DESCRIBER_CHOICES, default=None,
+                        help="which cue(s) to cache; default dinov2_<model>. Separate caches merge at training time.")
     parser.add_argument("--every", type=int, default=1)
     return parser.parse_args(argv)
 
@@ -92,7 +95,8 @@ def main(argv=None) -> None:
     args = parse_args(argv)
     if args.root.name == "test":
         raise ValueError("the appearance head is trained on train and judged on val; test is not read here")
-    written = cache_split(args.root, args.output_dir, foundation_describer(args.model), args.every)
+    describe = build_describer(args.descriptors or f"dinov2_{args.model}")
+    written = cache_split(args.root, args.output_dir, describe, args.every)
     print(f"wrote {written} agent-frames to {args.output_dir}")
 
 

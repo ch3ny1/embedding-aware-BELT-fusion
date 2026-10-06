@@ -70,6 +70,7 @@ from embedding_aware_belt_fusion.alignformer.appearance_head import (  # noqa: E
     AppearanceHead,
     build_pairs,
     feature_dim,
+    frame_key,
     row_weights,
 )
 
@@ -97,6 +98,29 @@ CONFIGS: Tuple[Config, ...] = (
     Config("far16_sparse10_offsets", 16.0, 10.0, (-1, 0, 1), 0.0),
     Config("far16_sparse10_offsets_drop", 16.0, 10.0, (-1, 0, 1), 0.2),
 )
+
+
+def merge_frames(primary: Sequence[AgentFrame], *others: Sequence[AgentFrame]) -> List[AgentFrame]:
+    """Concatenate per-vehicle descriptors cached by separate runs (same views, same gates).
+
+    Frames are matched by key and vehicles by id; a frame or vehicle absent
+    from any cache is dropped, so a partial second cache never produces a
+    feature with a silent zero block."""
+    tables = [{frame_key(f.scenario, f.agent, f.timestamp): f for f in frames} for frames in others]
+    merged: List[AgentFrame] = []
+    for frame in primary:
+        key = frame_key(frame.scenario, frame.agent, frame.timestamp)
+        if any(key not in table for table in tables):
+            continue
+        partners = [table[key] for table in tables]
+        keep = [i for i, vid in enumerate(frame.vids) if all(vid in p.vids for p in partners)]
+        if not keep:
+            merged.append(frame._replace(vids=(), features=np.zeros((0, 0), np.float32), centre_xy=np.zeros((0, 2)), range_m=np.zeros(0)))
+            continue
+        blocks = [frame.features[keep]] + [p.features[[p.vids.index(frame.vids[i]) for i in keep]] for p in partners]
+        merged.append(frame._replace(vids=tuple(frame.vids[i] for i in keep), features=np.concatenate(blocks, axis=1).astype(np.float32),
+                                     centre_xy=frame.centre_xy[keep], range_m=frame.range_m[keep]))
+    return merged
 
 
 def split_scenarios(frames: Sequence[AgentFrame], fraction: float = HOLDOUT_FRACTION) -> Tuple[List[AgentFrame], List[AgentFrame]]:
@@ -154,6 +178,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--train-dir", type=Path, required=True)
     parser.add_argument("--val-dir", type=Path, required=True)
+    parser.add_argument("--extra-train-dirs", type=Path, nargs="*", default=[], help="further caches of the same frames to concatenate")
+    parser.add_argument("--extra-val-dirs", type=Path, nargs="*", default=[])
+    parser.add_argument("--zero-shot-split", type=int, default=None, help="width of the first zero-shot descriptor (default half of the DINO block)")
     parser.add_argument("--val-root", type=Path, required=True)
     parser.add_argument("--val-pairs", type=int, default=400, help="the probe's sample, reported beside every-pair")
     parser.add_argument("--epochs", type=int, default=EPOCHS)
@@ -173,7 +200,9 @@ def main(argv=None) -> None:
     refuse_test_split(args.val_root)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     started = time.time()
-    all_train, val_frames = load_frames(args.train_dir), load_frames(args.val_dir)
+    all_train = merge_frames(load_frames(args.train_dir), *[load_frames(d) for d in args.extra_train_dirs])
+    val_frames = merge_frames(load_frames(args.val_dir), *[load_frames(d) for d in args.extra_val_dirs])
+    print(f"descriptor width {feature_dim(all_train)}", flush=True)
     train_frames, holdout_frames = split_scenarios(all_train)
     holdout_pairs = pairs_from_frames(holdout_frames, 10**9, args.seed)
     print(f"{len(train_frames)} train / {len(holdout_frames)} held-out agent-frames ({len(holdout_pairs)} held-out pairs), {len(val_frames)} val", flush=True)
@@ -184,7 +213,8 @@ def main(argv=None) -> None:
 
     every_val = enumerate_pairs(args.val_root)
     probe_val = sampled_pairs(args.val_root, args.val_pairs, args.seed)
-    tables = {"head": head_embeddings(val_frames, chosen["head"], device), **zero_shot_embeddings(val_frames, feature_dim(val_frames) // 2)}
+    split_at = args.zero_shot_split if args.zero_shot_split is not None else feature_dim(val_frames) // 2
+    tables = {"head": head_embeddings(val_frames, chosen["head"], device), **zero_shot_embeddings(val_frames, split_at)}
     val_all = score_pairs(val_frames, every_val, tables, random.Random(args.seed))
     val_probe = score_pairs(val_frames, probe_val, tables, random.Random(args.seed))
     torch.save({"state_dict": chosen["head"].state_dict(), "in_dim": feature_dim(val_frames), "config": chosen["config"]}, args.checkpoint)
