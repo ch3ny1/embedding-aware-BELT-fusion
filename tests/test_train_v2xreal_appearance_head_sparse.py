@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from train_v2xreal_appearance_head_sparse import pick, selection_metric, split_scenarios, verdict  # noqa: E402
 
-from embedding_aware_belt_fusion.alignformer.appearance_head import AgentFrame  # noqa: E402
+from embedding_aware_belt_fusion.alignformer.appearance_head import AgentFrame, frame_key  # noqa: E402
 
 
 def _frame(scenario: str) -> AgentFrame:
@@ -74,3 +74,26 @@ def test_cache_script_accepts_a_descriptor_set():
     args = parse_args(["--root", "/x/val", "--output-dir", "/y", "--descriptors", "colour"])
 
     assert args.descriptors == "colour" and args.every == 1
+
+
+def test_track_aggregation_averages_an_objects_embedding_over_the_agents_neighbouring_frames():
+    from train_v2xreal_appearance_head_sparse import aggregate_tracks
+
+    def frame(stamp, vids):
+        return AgentFrame("s", "1", stamp, tuple(vids), np.zeros((len(vids), 2), np.float32), np.zeros((len(vids), 2)), np.ones(len(vids)), tuple(vids))
+
+    frames = [frame("000010", ["a", "b"]), frame("000012", ["a"]), frame("000014", ["a"]), frame("000030", ["a"])]
+    table = {
+        frame_key("s", "1", "000010"): np.array([[1.0, 0.0], [0.0, 1.0]]),
+        frame_key("s", "1", "000012"): np.array([[0.0, 1.0]]),
+        frame_key("s", "1", "000014"): np.array([[1.0, 0.0]]),
+        frame_key("s", "1", "000030"): np.array([[0.6, 0.8]]),
+    }
+
+    out = aggregate_tracks(frames, table, window=1)
+
+    r = 1 / np.sqrt(2)
+    np.testing.assert_allclose(out[frame_key("s", "1", "000010")], [[r, r], [0.0, 1.0]], atol=1e-6)  # a: frames 10+12; b alone
+    np.testing.assert_allclose(out[frame_key("s", "1", "000012")], [[2 / np.sqrt(5), 1 / np.sqrt(5)]], atol=1e-6)  # a over 10, 12, 14
+    v = np.array([1.6, 0.8]) / np.linalg.norm([1.6, 0.8])
+    np.testing.assert_allclose(out[frame_key("s", "1", "000030")], [v], atol=1e-6)  # neighbours are cached positions: stamp 14 is one step before 30

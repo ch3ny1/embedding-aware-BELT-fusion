@@ -123,6 +123,37 @@ def merge_frames(primary: Sequence[AgentFrame], *others: Sequence[AgentFrame]) -
     return merged
 
 
+def aggregate_tracks(frames: Sequence[AgentFrame], table: Dict[str, np.ndarray], window: int) -> Dict[str, np.ndarray]:
+    """Average each object's embedding over its own agent's ``window`` neighbouring cached frames, re-normalized.
+
+    An agent sees its own detections over time before it sends anything, so
+    pooling a far object's descriptor over a few frames is the agent's
+    business, not the matcher's; the ground-truth id stands in for the
+    agent's own tracker here."""
+    if window <= 0:
+        return table
+    by_agent: Dict[Tuple[str, str], List[AgentFrame]] = {}
+    for frame in frames:
+        by_agent.setdefault((frame.scenario, frame.agent), []).append(frame)
+    out: Dict[str, np.ndarray] = {}
+    for sequence in by_agent.values():
+        ordered = sorted(sequence, key=lambda f: f.timestamp)
+        for i, frame in enumerate(ordered):
+            key = frame_key(frame.scenario, frame.agent, frame.timestamp)
+            pooled = table[key].astype(np.float64).copy()
+            for j in range(max(0, i - window), min(len(ordered), i + window + 1)):
+                if j == i:
+                    continue
+                other = ordered[j]
+                other_key = frame_key(other.scenario, other.agent, other.timestamp)
+                for row, vid in enumerate(frame.vids):
+                    if vid in other.vids:
+                        pooled[row] += table[other_key][other.vids.index(vid)]
+            norms = np.linalg.norm(pooled, axis=1, keepdims=True)
+            out[key] = pooled / np.where(norms > 0, norms, 1.0)
+    return out
+
+
 def split_scenarios(frames: Sequence[AgentFrame], fraction: float = HOLDOUT_FRACTION) -> Tuple[List[AgentFrame], List[AgentFrame]]:
     """Deterministic: the last ``fraction`` of sorted scenario names is held out whole."""
     scenarios = sorted({f.scenario for f in frames})
@@ -157,7 +188,8 @@ def fit_config(config: Config, train_frames, holdout_frames, holdout_pairs, args
     state = {"best": None, "best_epoch": None, "best_state": None, "curve": []}
 
     def on_epoch(epoch: int, head: AppearanceHead, loss: float) -> None:
-        report = score_pairs(holdout_frames, holdout_pairs, {"head": head_embeddings(holdout_frames, head, device)}, random.Random(args.seed))
+        table = aggregate_tracks(holdout_frames, head_embeddings(holdout_frames, head, device), args.track_window)
+        report = score_pairs(holdout_frames, holdout_pairs, {"head": table}, random.Random(args.seed))
         metric = selection_metric(report)
         sparse = report["ambiguous_by_shared"]["shared_1_2"]["head"]["auc_paired"]
         state["curve"].append({"epoch": epoch, "loss": loss, "holdout_far_auc": metric, "holdout_sparse_auc": sparse})
@@ -190,6 +222,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--hard-negatives", type=int, default=MAX_HARD_NEGATIVES)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--configs", nargs="*", default=[c.name for c in CONFIGS])
+    parser.add_argument("--track-window", type=int, default=0,
+                        help="average each object's embedding over this many neighbouring cached frames of its own agent, each side")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
@@ -215,6 +249,7 @@ def main(argv=None) -> None:
     probe_val = sampled_pairs(args.val_root, args.val_pairs, args.seed)
     split_at = args.zero_shot_split if args.zero_shot_split is not None else feature_dim(val_frames) // 2
     tables = {"head": head_embeddings(val_frames, chosen["head"], device), **zero_shot_embeddings(val_frames, split_at)}
+    tables = {name: aggregate_tracks(val_frames, table, args.track_window) for name, table in tables.items()}
     val_all = score_pairs(val_frames, every_val, tables, random.Random(args.seed))
     val_probe = score_pairs(val_frames, probe_val, tables, random.Random(args.seed))
     torch.save({"state_dict": chosen["head"].state_dict(), "in_dim": feature_dim(val_frames), "config": chosen["config"]}, args.checkpoint)
