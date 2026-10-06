@@ -139,6 +139,20 @@ class FoundationBackbone(nn.Module):
             "dino_patch_mean": _unit(selected.mean(dim=0).cpu().numpy().astype(np.float64)),
         }
 
+    def describe_many(self, crops_rgb, crop_masks) -> Dict[str, np.ndarray]:
+        """Both descriptors for a list of crops in one forward pass; ``(N, D)`` each, unit rows."""
+        if len(crops_rgb) == 0:
+            return {name: np.zeros((0, self.embed_dim), dtype=np.float64) for name in DESCRIPTOR_NAMES}
+        squares = np.stack([letterbox(c) for c in crops_rgb])
+        grids = [patch_grid_mask(letterbox(np.repeat(m[..., None].astype(np.uint8) * 255, 3, axis=2), fill=(0, 0, 0))[..., 0] > 127).reshape(-1)
+                 for m in crop_masks]
+        pooled, patches = self._tokens(squares)
+        means = torch.stack([patches[i][torch.from_numpy(g).to(patches.device)].mean(dim=0) for i, g in enumerate(grids)])
+        return {
+            "dino_cls": np.stack([_unit(v) for v in pooled.cpu().numpy().astype(np.float64)]),
+            "dino_patch_mean": np.stack([_unit(v) for v in means.cpu().numpy().astype(np.float64)]),
+        }
+
     def describe_projection(self, image_rgb: np.ndarray, silhouette: np.ndarray, box) -> Dict[str, np.ndarray]:
         """Descriptors of the vehicle at ``box`` in a full image, with context."""
         x1, y1, x2, y2 = context_box(box, image_rgb.shape)

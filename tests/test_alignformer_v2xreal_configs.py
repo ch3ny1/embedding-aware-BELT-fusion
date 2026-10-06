@@ -20,6 +20,7 @@ from embedding_aware_belt_fusion.alignformer.camera_features import FEATURE_DIM
 OPV2V = Path("configs/alignformer_r140.yaml")
 LIDAR = Path("configs/alignformer_v2xreal.yaml")
 CAMERA = Path("configs/alignformer_v2xreal_camera.yaml")
+DINO = Path("configs/alignformer_v2xreal_dino.yaml")
 
 
 def _flat(tree: Any, prefix: str = "") -> Dict[str, Any]:
@@ -89,3 +90,24 @@ def test_the_splits_are_the_official_ones_on_the_nvme_mirror():
 def test_the_variance_model_is_off_until_refit_on_v2xreal():
     # The OPV2V numbers are placeholders; mode none means they are unused.
     assert _load(LIDAR)["model"]["correspondence_variance"]["mode"] == "none"
+
+
+def test_the_dino_config_differs_from_the_lidar_config_only_in_the_camera_source_and_its_cache():
+    lidar, dino = _flat(_load(LIDAR)), _flat(_load(DINO))
+
+    differing = {k for k in lidar.keys() | dino.keys() if lidar.get(k) != dino.get(k)}
+
+    assert differing == {
+        "model.camera_dim",
+        "model.camera_source.backbone",
+        "model.camera_source.head_checkpoint",
+        "model.camera_source.dino",
+        "model.camera_source.track_window",
+        "model.camera_source.track_gate_m",
+        "model.camera_source.track_gate_per_frame_m",
+        "data.cache_root",
+    }
+    assert dino["model.camera_dim"] == 128
+    assert dino["model.camera_source.backbone"] == "dino_head"
+    assert dino["model.camera_source.track_window"] == 4
+

@@ -51,6 +51,11 @@ class FrameRecord:
     camera: Optional[np.ndarray] = None
     has_camera: Optional[np.ndarray] = None
     camera_index: Optional[np.ndarray] = None
+    # The per-frame (unpooled) camera vector, kept beside the track-pooled
+    # ``camera`` by caches built with a DINO-head backbone and a track window
+    # (alignformer.dino_features), so evaluation can pool a live frame with
+    # its cached predecessors exactly as training saw them.
+    camera_raw: Optional[np.ndarray] = None
 
     def __post_init__(self) -> None:
         count = self.boxes.shape[0]
@@ -59,6 +64,8 @@ class FrameRecord:
             "gt_ids": len(self.gt_ids),
             "roi": self.roi.shape[0],
         }
+        if self.camera_raw is not None:
+            lengths["camera_raw"] = self.camera_raw.shape[0]
         present = [f is not None for f in (self.camera, self.has_camera, self.camera_index)]
         if any(present) and not all(present):
             raise ValueError("camera, has_camera and camera_index must be given together")
@@ -118,6 +125,8 @@ def write_frame(path: Union[Path, str], record: FrameRecord) -> None:
             has_camera=record.has_camera.astype(bool),
             camera_index=record.camera_index.astype(np.int8),
         )
+    if record.camera_raw is not None:
+        arrays["camera_raw"] = record.camera_raw.astype(np.float16)
     np.savez(path, **arrays)
 
 
@@ -134,6 +143,7 @@ def read_frame(path: Union[Path, str]) -> FrameRecord:
             camera=data["camera"] if "camera" in data else None,
             has_camera=data["has_camera"] if "has_camera" in data else None,
             camera_index=data["camera_index"] if "camera_index" in data else None,
+            camera_raw=data["camera_raw"] if "camera_raw" in data else None,
         )
 
 
@@ -315,6 +325,7 @@ def _cache_one_frame(
     device,
     stats: PcdCacheStats,
     camera_backbone=None,
+    source_path: Optional[Path] = None,
 ) -> None:
     """Detect, ROI-align, and write the cache record for one agent-frame.
 
@@ -322,7 +333,10 @@ def _cache_one_frame(
     adapter) supplies its own yaml filtering and ``.bin`` reading; OpenCOOD's
     stock dataset gets the OPV2V path, unchanged. With ``camera_backbone``
     set, the dataset's ``frame_cameras`` supplies the images and the record
-    carries per-object camera features.
+    carries per-object camera features. With ``source_path`` set, the
+    detections, ROI features and ids are taken from that existing record
+    and only the camera features are computed: the detector is deterministic,
+    so a second camera backbone need not pay for it again.
     """
     from torch import no_grad
 
@@ -331,6 +345,11 @@ def _cache_one_frame(
 
     cav_dir = split_root / scenario / cav_id
     yaml_path = cav_dir / f"{timestamp}.yaml"
+    if source_path is not None:
+        record = _record_without_camera(read_frame(source_path))
+        corners = _corners_from_boxes(record.boxes)
+        write_frame(destination, _with_camera(record, camera_backbone, dataset, yaml_path, corners))
+        return
     params = _frame_params(dataset, yaml_path)
     lidar_np = _frame_points(dataset, cav_dir / f"{timestamp}.pcd", pcd_cache_root, split_root, stats)
     cav_content = _cav_content_for_frame(
@@ -348,23 +367,37 @@ def _cache_one_frame(
         roi=roi.detach().cpu().numpy().astype(np.float16),
     )
     if camera_backbone is not None:
-        record = _with_camera(record, camera_backbone, dataset, yaml_path, detections)
+        record = _with_camera(record, camera_backbone, dataset, yaml_path, detections.corners.detach().cpu().numpy())
     write_frame(destination, record)
 
 
-def _with_camera(record: FrameRecord, backbone, dataset, yaml_path: Path, detections) -> FrameRecord:
+def _record_without_camera(record: FrameRecord) -> FrameRecord:
+    return FrameRecord(boxes=record.boxes, scores=record.scores, gt_ids=list(record.gt_ids), roi=record.roi)
+
+
+def _corners_from_boxes(boxes: np.ndarray) -> np.ndarray:
+    """``(N, 8, 3)`` corners of cached ``(N, 7)`` boxes in the detector's ``hwl`` order."""
+    from opencood.utils.box_utils import boxes_to_corners_3d
+
+    if boxes.shape[0] == 0:
+        return np.zeros((0, 8, 3), dtype=np.float64)
+    return np.asarray(boxes_to_corners_3d(np.asarray(boxes, dtype=np.float32), order="hwl"), dtype=np.float64)
+
+
+def _with_camera(record: FrameRecord, backbone, dataset, yaml_path: Path, corners: np.ndarray) -> FrameRecord:
+    """Camera features for the record's boxes; the per-frame vector is kept in ``camera_raw`` too."""
     from dataclasses import replace
 
-    from embedding_aware_belt_fusion.alignformer.camera_features import frame_camera_features
+    from embedding_aware_belt_fusion.alignformer.dino_features import features_for_frame
 
     cameras = dataset.frame_cameras(yaml_path)
-    corners = detections.corners.detach().cpu().numpy()
-    features = frame_camera_features(backbone, corners, cameras)
+    features = features_for_frame(backbone, corners, cameras)
     return replace(
         record,
         camera=features.features,
         has_camera=features.has_camera,
         camera_index=features.camera_index,
+        camera_raw=features.features if hasattr(backbone, "frame_features") else None,
     )
 
 
@@ -410,8 +443,15 @@ def build_split_cache(
     output_size: int,
     device,
     camera_backbone=None,
+    source_cache_root: Optional[Path] = None,
+    pooling=None,
 ) -> PcdCacheStats:
-    """Detect and cache every agent-frame under one split directory."""
+    """Detect and cache every agent-frame under one split directory.
+
+    ``source_cache_root`` reuses an existing cache's detections and recomputes
+    only the camera features; ``pooling`` (``dino_features.TrackPooling``)
+    then pools each agent's camera vectors along its own track, in place.
+    """
     from embedding_aware_belt_fusion.coloca.index import scan_split
 
     if hasattr(dataset, "frame_points"):
@@ -443,6 +483,8 @@ def build_split_cache(
                 device=device,
                 stats=stats,
                 camera_backbone=camera_backbone,
+                source_path=None if source_cache_root is None
+                else cache_path(source_cache_root, split_name, scenario, cav_id, timestamp),
             )
 
         done += 1
@@ -450,6 +492,11 @@ def build_split_cache(
             _log_progress(split_name, done, len(frames), started, stats)
 
     print(f"{split_name}: done in {(time.time() - started) / 60:.1f} min", flush=True)
+    if pooling is not None:
+        from embedding_aware_belt_fusion.alignformer.dino_features import pool_split
+
+        pooled = pool_split(cache_root, split_name, split_root, pooling)
+        print(f"{split_name}: track-pooled {pooled} records (window {pooling.window})", flush=True)
     return stats
 
 
@@ -472,7 +519,36 @@ def parse_args() -> argparse.Namespace:
         help="also store per-object camera features (alignformer.camera_features); "
         "needs a dataset that exposes frame_cameras, i.e. the V2X-Real adapter",
     )
+    parser.add_argument("--camera-backbone", choices=("resnet", "dino"), default="resnet",
+                        help="resnet: frozen ImageNet ROI features; dino: frozen DINOv2 through the trained appearance head")
+    parser.add_argument("--camera-head", type=Path, default=None, help="the appearance head checkpoint (dino)")
+    parser.add_argument("--dino", choices=("small", "base"), default="base")
+    parser.add_argument("--from-cache", type=Path, default=None,
+                        help="reuse this cache's detections and ROI features; only the camera features are computed")
+    parser.add_argument("--track-window", type=int, default=0,
+                        help="pool each agent's camera vectors over this many earlier frames of its own track (dino)")
+    parser.add_argument("--track-gate-m", type=float, default=2.0)
+    parser.add_argument("--track-gate-per-frame-m", type=float, default=1.5)
     return parser.parse_args()
+
+
+def _camera_backbone_from_args(args, dataset, device):
+    if not args.camera:
+        return None
+    if not hasattr(dataset, "frame_cameras"):
+        raise ValueError("--camera needs a dataset that exposes frame_cameras (the V2X-Real adapter)")
+    if args.camera_backbone == "resnet":
+        from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
+
+        return CameraBackbone().to(device)
+    if args.camera_head is None:
+        raise ValueError("--camera-backbone dino needs --camera-head")
+    from embedding_aware_belt_fusion.alignformer.dino_features import DINO_HEAD_BACKBONE, build_dino_backbone
+
+    source = {"backbone": DINO_HEAD_BACKBONE, "head_checkpoint": str(args.camera_head), "dino": args.dino,
+              "track_window": args.track_window, "track_gate_m": args.track_gate_m,
+              "track_gate_per_frame_m": args.track_gate_per_frame_m}
+    return build_dino_backbone(source, device, cache_root=args.cache_root)
 
 
 def main() -> None:
@@ -493,14 +569,9 @@ def main() -> None:
     # this dataset's own root_dir/validate_dir indexing is never touched, so
     # one instance covers every split passed on the command line.
     dataset = build_dataset(hypes, visualize=False, train=False)
-    detector = _build_detector(hypes, device)
-    camera_backbone = None
-    if args.camera:
-        if not hasattr(dataset, "frame_cameras"):
-            raise ValueError("--camera needs a dataset that exposes frame_cameras (the V2X-Real adapter)")
-        from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
-
-        camera_backbone = CameraBackbone().to(device)
+    detector = None if args.from_cache is not None else _build_detector(hypes, device)
+    camera_backbone = _camera_backbone_from_args(args, dataset, device)
+    pooling = getattr(camera_backbone, "pooling", None)
 
     for split in args.splits:
         split_root = Path(split)
@@ -517,6 +588,8 @@ def main() -> None:
             output_size=args.output_size,
             device=device,
             camera_backbone=camera_backbone,
+            source_cache_root=args.from_cache,
+            pooling=pooling,
         )
         hits, misses = stats.snapshot()
         total = hits + misses

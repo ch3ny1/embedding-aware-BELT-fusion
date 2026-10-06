@@ -414,6 +414,11 @@ def camera_backbone_for(model_config: Dict, dataset, device):
             "this checkpoint has a camera branch but the dataset exposes no frame_cameras; "
             "only the V2X-Real adapter can evaluate a LiDAR+camera trunk"
         )
+    source = model_config["model"].get("camera_source")
+    if source:
+        from embedding_aware_belt_fusion.alignformer.dino_features import build_dino_backbone
+
+        return build_dino_backbone(source, device, cache_root=Path(model_config["data"]["cache_root"]))
     from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
 
     return CameraBackbone().to(device)

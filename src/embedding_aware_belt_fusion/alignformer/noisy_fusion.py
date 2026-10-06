@@ -379,18 +379,22 @@ def _frame_yaml(dataset, index: int, key: str, timestamp: str) -> str:
 
 
 def _camera_like_the_cache(
-    detections: AgentDetections, cameras, backbone
+    detections: AgentDetections, cameras, backbone, yaml_path=None
 ) -> Tuple[Tensor, Tensor]:
     """Per-object camera features for every detection, float16 round-tripped.
 
     The cache stores the camera vector as float16 (``cache.write_frame``), so
     the same round-trip is applied here for the reason ``_roi_like_the_cache``
-    gives: the frozen head was fitted on half-precision inputs.
+    gives: the frozen head was fitted on half-precision inputs. A DINO-head
+    backbone with a track window also pools the live frame with the agent's
+    cached earlier frames (``dino_features.pooled_live``), as training saw.
     """
-    from embedding_aware_belt_fusion.alignformer.camera_features import frame_camera_features
+    from embedding_aware_belt_fusion.alignformer.dino_features import features_for_frame, pooled_live
 
     corners = detections.corners.detach().cpu().numpy()
-    features = frame_camera_features(backbone, corners, cameras)
+    features = features_for_frame(backbone, corners, cameras)
+    if yaml_path is not None and hasattr(backbone, "pooling"):
+        features = pooled_live(backbone, features, detections.boxes.detach().cpu().numpy(), yaml_path)
     device = detections.boxes.device
     camera = torch.from_numpy(features.features).half().float().to(device)
     has_camera = torch.from_numpy(features.has_camera).to(device)
@@ -778,8 +782,9 @@ def run_noise_sweep(
             boxes, scores, roi, gt_ids = _truncate_by_score(found, roi, MAX_OBJECTS)
             packs[key] = {"boxes": boxes, "scores": scores, "roi": roi, "gt_ids": gt_ids}
             if camera_backbone is not None:
-                cameras = dataset.frame_cameras(_frame_yaml(dataset, index, key, timestamp))
-                camera, has_camera = _camera_like_the_cache(found, cameras, camera_backbone)
+                yaml_path = _frame_yaml(dataset, index, key, timestamp)
+                cameras = dataset.frame_cameras(yaml_path)
+                camera, has_camera = _camera_like_the_cache(found, cameras, camera_backbone, yaml_path)
                 order = _truncation_order(found, MAX_OBJECTS)
                 if order is not None:
                     camera, has_camera = camera[order], has_camera[order]
