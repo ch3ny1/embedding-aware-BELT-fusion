@@ -1,0 +1,49 @@
+{
+  "method": "alignformer_stage2",
+  "metric": "shrinkage",
+  "config": "configs/alignformer_v2xreal_dino.yaml",
+  "split": "/media/chenyi/basement2/dataset/v2x-real/val :: the official validation split (data.val_root)",
+  "val_scenarios": [
+    "2023-03-17-16-03-02_11_1",
+    "2023-03-17-16-10-12_1_1",
+    "2023-04-04-14-28-53_45_0",
+    "2023-04-04-15-43-17_15_0",
+    "2023-04-04-16-01-17_33_0",
+    "2023-04-05-16-09-26_6_1"
+  ],
+  "checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/v2xreal/stage2_B_dino/best.pth",
+  "checkpoint_provenance": {
+    "head": "B",
+    "message_content": "boxes+embeddings+camera",
+    "match_weight": 1.0,
+    "variance_weighting": "scalar",
+    "stage1_checkpoint": "/media/chenyi/Elements1/Repos/embedding-aware-BELT-fusion/outputs/v2xreal/stage1_dino/best.pth",
+    "epoch": 24
+  },
+  "robust_solve_config": {
+    "mode": "huber",
+    "iterations": 2,
+    "min_evidence": 3.0,
+    "huber_constant": 1.345,
+    "scale_floor_m": 0.05,
+    "enabled": true
+  },
+  "calibration": {
+    "tau_translation_m": 2.606212086254417,
+    "tau_yaw_rad": 0.0987026048917967,
+    "tau_yaw_deg": 5.655242687247265,
+    "pairs": 4334,
+    "split": "/media/chenyi/basement2/dataset/v2x-real/val :: the official validation split (data.val_root)",
+    "sigma_m": 0.0
+  },
+  "residual_diagnostics": {
+    "signed_mean_dx_m": -0.05167956277728081,
+    "signed_mean_dy_m": -0.01452595554292202,
+    "signed_mean_dpsi_deg": 0.07126463204622269,
+    "sem_dx_m": 0.019997093826532364,
+    "sem_dy_m": 0.034161895513534546,
+    "sem_dpsi_deg": 0.0859057828783989,
+    "translation_mae_m": 1.0665661096572876,
+    "yaw_mae_deg": 2.1609127521514893
+  }
+}
