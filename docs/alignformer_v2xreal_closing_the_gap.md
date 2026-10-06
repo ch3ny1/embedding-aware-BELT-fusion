@@ -602,11 +602,76 @@ the single value chosen in advance):
 - **What it costs on the wire**: a 128-d unit vector per box, before
   quantization; the pooling happens on the sending agent.
 
-**Where this leaves appearance.** A per-object appearance embedding that
-separates a vehicle from its nearest neighbour across agents on the sparse
-pairs exists, in a 1.3-minute head over a frozen foundation model plus
-per-agent temporal pooling. The next step is the one every earlier
-appearance result failed to reach: carry it into stage 1 as the per-object
-embedding (detector boxes, not annotations; the agent's own track for the
-pooling), and measure the 1-2 bucket's AP@0.7 in the clean case against the
-boxes-only trunk with the exact re-solve, then the sweep, then bytes.
+**Where this left appearance after round four.** A per-object appearance
+embedding that separates a vehicle from its nearest neighbour across
+agents on the sparse pairs existed, on annotated boxes with ground-truth
+tracks. The next step was the one every earlier appearance result failed
+to reach: into the matcher.
+
+### Into the matcher: the DINO-head trunk (2026-10-06)
+
+`alignformer/dino_features.py` carries the head through the existing
+LiDAR+camera path: per-detection crop descriptors (frozen DINOv2-base,
+camera chosen by visible area, the probe's occlusion gate) through the
+head, pooled CAUSALLY over up to four earlier frames of the same agent
+(mutual-nearest world-frame centre, gate 2 m + 1.5 m per frame of gap; only
+the sender's own frames and pose). The cache keeps the pooled vector for
+training and the per-frame one beside it; evaluation pools the live frame
+with its cached predecessors the same way, and reproduces the cached
+vectors to float16. `configs/alignformer_v2xreal_dino{,_det}.yaml` differ
+from the LiDAR config in `camera_dim` 128, `camera_source` and the cache
+root only (pinned). Stage 1 and 2 as every other trunk; val sweep, 3 seeds,
+the chain-M arms, against the boxes-only trunk on the same seeds
+(`B_dino_icp_val_result.json`, `B_dino_det_icp_val_result.json`).
+
+Two heads were tried. The round-four head, trained on annotated boxes,
+scores only AUC 0.73 on DETECTOR boxes (0.70 unpooled; detector position
+and heading error misalign the silhouette, and the probe's occlusion gate
+was not yet in the matcher path). A head trained on the detections
+themselves, with the id of the annotation each detection matched as its
+label (`--detection-cache`; same held-out selection, same bars;
+`appearance_head_detections_val_result.json`), scores 0.835 on them
+(0.803 at 40-70 m). On real detections the shared-1-2 bucket nearly
+vanishes: 9 ambiguous objects in all of val against 374 on annotations,
+because the far objects that define those pairs are rarely detected by
+both agents with a camera view.
+
+| val, 3 seeds, AP@0.7 | boxes-only + re-solve | + DINO head (annotations) | + DINO head (detections) | FreeAlign 1.0 m |
+|---|---:|---:|---:|---:|
+| sigma 0 | .4312 | .4401 | .4375 | .4144 |
+| shared 1-2 at sigma 0 (39 frames) | .200 | .254 | .249 | .241 |
+| shared 3+ at sigma 0 (243 frames) | .616 | .613 | .604 | .575 |
+| shared 3+ at sigma 2, soft arm (Wald 0.2) | .419 | .397 | .387 | .562 |
+| sweep mean, re-solve arm | .3688 | .3553 | .3577 | .3702 |
+| sweep mean, agreement arm | .3728 | .3691 | .3699 | |
+| sweep mean, Wald 0.2 (no re-solve) | .3456 | .3177 | .3168 | |
+| stage-1 val Top-1 | .994 | .970 | .976 | |
+
+Paired on the seeds, the detection-trained trunk minus boxes-only on the
+sweep mean: -0.011 +/- 0.000 AP@0.7 with the re-solve, -0.003 with the
+agreement rule, -0.030 for the soft arm alone; the annotation-trained one
+-0.012 / -0.003 / -0.028.
+
+- **The clean case and the sparse bucket move the right way, by the same
+  amount with either head**: +0.006 to +0.009 at sigma 0, +0.05 on the
+  shared-1-2 bucket (39 frames, so roughly +0.01 on the full split).
+- **Under any localization noise the soft association is worse with the
+  cue than without it**, by 0.02-0.03 from sigma 0.2 up; the re-solve
+  recovers most of that and the agreement rule nearly all, which is why the
+  arms that re-fit by geometry lose little. Stage-1 Top-1 says the same:
+  geometry alone associates 99.4 % of val pairs at the training noise;
+  adding a 0.84-AUC cue can only perturb an association that is already
+  right where the overlap is dense, and the transformer learns to lean on
+  it anyway.
+- **Where the cue could pay, the detector does not deliver the input**: the
+  sparse pairs' far objects are rarely detected by both agents with a
+  camera view, so the bucket is 9 objects on detections.
+
+**Verdict.** Not shipped. On V2X-Real the matcher's association is
+geometric where it can be, and appearance has no room there; where it
+would have room, detection coverage takes it away. The appearance work
+leaves behind a trained cross-view head that works (0.835 on detections,
+0.885 on annotated sparse pairs), the track-pooled camera path, and the
+cue-agnostic probe, all reproducible; and a sharper picture of the
+remaining gap to FreeAlign, which is still the dense bucket at large noise
+and belongs to the solver, not to association.

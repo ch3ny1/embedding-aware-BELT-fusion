@@ -644,7 +644,13 @@ pose correction touches. Within what is left:
   objects, the matcher's loss bucket, when trained 20 epochs; selected on
   held-out train at epoch 3 and pooled over two neighbouring frames each
   side it reaches 0.885 there (n 374) and 0.900 on dense pairs, both bars
-  passed. Not yet in stage 1; see the appearance section of
+  passed. Carried into stage 1 as the camera trunk (2026-10-06, val, 3
+  seeds, heads trained on annotations and on detections): +0.006-0.009
+  AP@0.7 at sigma 0 and +0.05 on the sparse bucket, but -0.011 on the
+  sweep mean with the re-solve (-0.003 with the agreement rule) because
+  the soft association is worse with the cue under any noise, and on
+  detections the sparse bucket is 9 objects. Not shipped; see the
+  appearance section of
   [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
 - **Against the MAE-calibrated FreeAlign** the trunks win every cell at
   100 ms, every cell but sigma 2 at AP@0.7 at 200 ms, and at 400 ms draw

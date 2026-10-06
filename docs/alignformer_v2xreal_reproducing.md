@@ -236,4 +236,23 @@ python -u -m embedding_aware_belt_fusion.alignformer.evaluate --config $AFD --me
 python -u -m embedding_aware_belt_fusion.alignformer.evaluate --metric noisy_ap --config $DET --alignformer-config $AFD \
   --split $D/val --checkpoint $V/stage2_B_dino/best.pth --shrinkage $V/shrinkage_B_dino_calibration_result.json \
   $ROBUST --freealign --freealign-calibration $FAAP $ARMS3 --ap-seeds 3 --output $V/B_dino_icp_val_result.json
+
+# Chains U and V: raw 1536-d descriptors per DETECTION (occlusion-gated), the head retrained on detections, applied to
+# the descriptor cache with causal pooling, then the trunk end to end on val.
+DESC=/media/chenyi/basement2/cache/alignformer_v2xreal_dino_desc; DST2=/media/chenyi/basement2/cache/alignformer_v2xreal_dino_det
+AFD2=configs/alignformer_v2xreal_dino_det.yaml
+for split in val train test; do
+  python -u -m embedding_aware_belt_fusion.alignformer.cache --config $DET --splits $D/$split --cache-root $DESC \
+    --camera --camera-backbone dino --dino base --from-cache /media/chenyi/basement2/cache/alignformer_v2xreal
+done
+python -u scripts/train_v2xreal_appearance_head_sparse.py --detection-cache $DESC --train-root $D/train --train-every 2 --val-root $D/val \
+  --configs baseline far16_sparse10_offsets far16_sparse10_offsets_drop --track-window 2 \
+  --checkpoint $V/appearance_head_detections.pth --output $V/appearance_head_detections_val_result.json
+for split in val train test; do
+  python -u -m embedding_aware_belt_fusion.alignformer.cache --config $DET --splits $D/$split --cache-root $DST2 \
+    --camera --camera-backbone dino --dino base --camera-head $V/appearance_head_detections.pth --descriptors-only \
+    --from-cache $DESC --track-window 4 --track-gate-m 2.0 --track-gate-per-frame-m 1.5
+done
+# then stage 1 / stage 2 / shrinkage / val sweep as chain T with $AFD2 and the tags stage1_dino_det, stage2_B_dino_det,
+# shrinkage_B_dino_det_calibration_result.json, B_dino_det_icp_val_result.json.
 ```
