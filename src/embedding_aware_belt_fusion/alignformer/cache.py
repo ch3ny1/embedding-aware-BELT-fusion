@@ -346,7 +346,11 @@ def _cache_one_frame(
     cav_dir = split_root / scenario / cav_id
     yaml_path = cav_dir / f"{timestamp}.yaml"
     if source_path is not None:
-        record = _record_without_camera(read_frame(source_path))
+        source = read_frame(source_path)
+        record = _record_without_camera(source)
+        if _applies_head_to_descriptors(camera_backbone, source):
+            write_frame(destination, _with_head_on_descriptors(record, source, camera_backbone))
+            return
         corners = _corners_from_boxes(record.boxes)
         write_frame(destination, _with_camera(record, camera_backbone, dataset, yaml_path, corners))
         return
@@ -369,6 +373,26 @@ def _cache_one_frame(
     if camera_backbone is not None:
         record = _with_camera(record, camera_backbone, dataset, yaml_path, detections.corners.detach().cpu().numpy())
     write_frame(destination, record)
+
+
+def _applies_head_to_descriptors(backbone, source: FrameRecord) -> bool:
+    """True when the source cache holds raw descriptors of the backbone's width and the backbone has a head."""
+    raw = source.camera_raw if source.camera_raw is not None else source.camera
+    return (getattr(backbone, "head", None) is not None and raw is not None
+            and raw.shape[1] == getattr(backbone, "descriptor_dim", -1))
+
+
+def _with_head_on_descriptors(record: FrameRecord, source: FrameRecord, backbone) -> FrameRecord:
+    """Project cached raw descriptors through the head; no image is read."""
+    from dataclasses import replace
+
+    raw = (source.camera_raw if source.camera_raw is not None else source.camera).astype(np.float32)
+    embedded = np.zeros((raw.shape[0], backbone.feature_dim), dtype=np.float32)
+    seen = np.flatnonzero(source.has_camera)
+    if seen.size:
+        embedded[seen] = backbone.embed_descriptors(raw[seen])
+    return replace(record, camera=embedded, has_camera=source.has_camera.copy(), camera_index=source.camera_index.copy(),
+                   camera_raw=embedded)
 
 
 def _record_without_camera(record: FrameRecord) -> FrameRecord:
@@ -521,7 +545,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--camera-backbone", choices=("resnet", "dino"), default="resnet",
                         help="resnet: frozen ImageNet ROI features; dino: frozen DINOv2 through the trained appearance head")
-    parser.add_argument("--camera-head", type=Path, default=None, help="the appearance head checkpoint (dino)")
+    parser.add_argument("--camera-head", type=Path, default=None,
+                        help="the appearance head checkpoint (dino); omitted: store the raw 1536-d descriptors")
+    parser.add_argument("--descriptors-only", action="store_true",
+                        help="with --from-cache: the source holds raw descriptors; apply --camera-head to them without reading images")
     parser.add_argument("--dino", choices=("small", "base"), default="base")
     parser.add_argument("--from-cache", type=Path, default=None,
                         help="reuse this cache's detections and ROI features; only the camera features are computed")
@@ -541,11 +568,12 @@ def _camera_backbone_from_args(args, dataset, device):
         from embedding_aware_belt_fusion.alignformer.camera_features import CameraBackbone
 
         return CameraBackbone().to(device)
-    if args.camera_head is None:
-        raise ValueError("--camera-backbone dino needs --camera-head")
+    if args.descriptors_only and args.camera_head is None:
+        raise ValueError("--descriptors-only applies a head: give --camera-head")
     from embedding_aware_belt_fusion.alignformer.dino_features import DINO_HEAD_BACKBONE, build_dino_backbone
 
-    source = {"backbone": DINO_HEAD_BACKBONE, "head_checkpoint": str(args.camera_head), "dino": args.dino,
+    source = {"backbone": DINO_HEAD_BACKBONE, "head_checkpoint": str(args.camera_head) if args.camera_head else None,
+              "dino": args.dino, "foundation": not args.descriptors_only,
               "track_window": args.track_window, "track_gate_m": args.track_gate_m,
               "track_gate_per_frame_m": args.track_gate_per_frame_m}
     return build_dino_backbone(source, device, cache_root=args.cache_root)

@@ -1,0 +1,83 @@
+# AlignFormer on V2X-Real (real traffic): the LiDAR + DINO-head APPEARANCE trunk, head trained on DETECTIONS.
+# Identical to configs/alignformer_v2xreal_dino.yaml except the head checkpoint (trained on the matcher's own
+# detector boxes and their matched ids, not on annotations) and the cache root. Pinned in the config test.
+# Identical to configs/alignformer_v2xreal.yaml except model.camera_dim (128,
+# the appearance head's width), model.camera_source (frozen DINOv2 through the
+# trained cross-agent head, pooled causally over 4 earlier frames of the
+# sender's own track) and data.cache_root (a cache built from the LiDAR one
+# with --from-cache, same detections, new camera vectors).
+# tests/test_alignformer_v2xreal_configs.py pins exactly those differences.
+#
+#
+# Derived from configs/alignformer_r140.yaml. What differs, and why (pinned by
+# tests/test_alignformer_v2xreal_configs.py):
+#
+#   data.train_root / val_root / test_root
+#       The official V2X-Real splits on the NVMe mirror. val_root is set, so
+#       every train pair trains and every val pair validates and calibrates:
+#       the V2X-Real detector was trained on all of train/, and the OPV2V
+#       holdout rule would hand the calibration step scenarios the detector
+#       has seen (alignformer.train.build_pair_split).
+#   data.cache_root
+#       Built by `python -m embedding_aware_belt_fusion.alignformer.cache
+#       --config configs/v2xreal_detector.yaml --camera`, so the same cache
+#       serves all three trunks; a LiDAR head simply never reads the camera
+#       arrays.
+#   model.camera_dim: 0
+#       This trunk. configs/alignformer_v2xreal_camera.yaml is the same file
+#       with camera_dim 256 and nothing else changed.
+#   model.correspondence_variance
+#       The OPV2V fit is NOT reused. The numbers below are the scalar
+#       inverse-variance model refit on the official V2X-Real val/ split by
+#       scripts/fit_correspondence_variance.py on 2026-09-29
+#       (outputs/v2xreal/variance_fit_result.json: 11,652 correspondences
+#       over 4,334 pairs, RMS 0.436 m / 10.02 deg; the confidence form wins
+#       over range here too, by 0.023 / 0.066 Gamma deviance, range adds
+#       nothing). mode none here; stage 2 is trained with
+#       --variance-weighting scalar and the checkpoint carries the mode.
+#
+# Everything else (trunk width, epochs, curriculum, comm range) is the OPV2V
+# configuration, on purpose: the comparison is across datasets, not across
+# hyper-parameters.
+model:
+  output_size: 4
+  embed_dim: 128
+  camera_dim: 128
+  camera_source:
+    backbone: dino_head
+    head_checkpoint: outputs/v2xreal/appearance_head_detections.pth
+    dino: base
+    track_window: 4
+    track_gate_m: 2.0
+    track_gate_per_frame_m: 1.5
+  model_dim: 256
+  layers: 4
+  heads: 4
+  heading_lambda: 2.0
+  sinkhorn_iterations: 20
+  max_objects: 64
+  correspondence_variance:
+    mode: none
+    sigma_translation_m: 0.2887
+    translation_exponent: 0.4928
+    sigma_yaw_deg: 6.0141
+    yaw_exponent: 1.0310
+    score_reference: 0.4
+train:
+  stage1_epochs: 20
+  stage1_max_xy_std: 0.5
+  stage2_epochs: 30
+  max_xy_std: 2.0
+  batch_size: 32
+  lr: 1.0e-3
+  match_weight: 1.0
+  seed: 0
+data:
+  train_root: /media/chenyi/basement2/dataset/v2x-real/train
+  val_root: /media/chenyi/basement2/dataset/v2x-real/val
+  test_root: /media/chenyi/basement2/dataset/v2x-real/test
+  cache_root: /media/chenyi/basement2/cache/alignformer_v2xreal_dino_det
+  pair_cache_dir: outputs/coloca/cache
+  val_scenario_fraction: 0.15
+  split_seed: 0
+  comm_range_m: 70.0

@@ -100,6 +100,53 @@ CONFIGS: Tuple[Config, ...] = (
 )
 
 
+def frame_from_detection_record(scenario: str, agent: str, timestamp: str, record, lidar_pose: Sequence[float],
+                                annotated_ids: Sequence[str]) -> AgentFrame:
+    """The matcher's own inputs as a probe frame: detections carry the id of the annotation they matched.
+
+    Unmatched detections (no id) and views without a camera are left out; an
+    id matched by two detections keeps the higher-scoring one. The descriptor
+    is the record's raw camera vector (the 1536-d cache)."""
+    from embedding_aware_belt_fusion.alignformer.dino_features import world_centres
+
+    raw = record.camera_raw if record.camera_raw is not None else record.camera
+    best: Dict[str, int] = {}
+    for row, gid in enumerate(record.gt_ids):
+        if gid is None or not bool(record.has_camera[row]):
+            continue
+        if gid not in best or record.scores[row] > record.scores[best[gid]]:
+            best[str(gid)] = row
+    vids = tuple(sorted(best))
+    rows = [best[v] for v in vids]
+    centres = world_centres(record.boxes[rows], lidar_pose) if rows else np.zeros((0, 2))
+    ranges = np.linalg.norm(np.asarray(record.boxes, dtype=np.float64)[rows, :2], axis=1) if rows else np.zeros(0)
+    features = np.asarray(raw, dtype=np.float32)[rows] if rows else np.zeros((0, raw.shape[1] if raw is not None else 0), np.float32)
+    return AgentFrame(scenario, agent, timestamp, vids, features, centres, ranges, tuple(sorted(str(v) for v in annotated_ids)))
+
+
+def frames_from_detection_cache(cache_root: Path, split_name: str, split_root: Path, every: int = 1) -> List[AgentFrame]:
+    """Every cached agent-frame of a split (timestamps strided by value) as probe frames."""
+    from embedding_aware_belt_fusion.alignformer.cache import cache_path, read_frame
+    from embedding_aware_belt_fusion.alignformer.v2xreal import fast_load_yaml
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from analyze_v2xreal_colour_separability import _vehicles
+
+    frames: List[AgentFrame] = []
+    for scenario_dir in sorted(p for p in Path(split_root).iterdir() if p.is_dir()):
+        for agent_dir in sorted(p for p in scenario_dir.iterdir() if p.is_dir()):
+            for yaml_path in sorted(agent_dir.glob("*.yaml")):
+                if yaml_path.name.startswith("._") or int(yaml_path.stem) % every:
+                    continue
+                path = cache_path(cache_root, split_name, scenario_dir.name, agent_dir.name, yaml_path.stem)
+                if not path.exists():
+                    continue
+                params = fast_load_yaml(str(yaml_path))
+                frames.append(frame_from_detection_record(scenario_dir.name, agent_dir.name, yaml_path.stem, read_frame(path),
+                                                          params["lidar_pose"], list(_vehicles(params))))
+    return frames
+
+
 def merge_frames(primary: Sequence[AgentFrame], *others: Sequence[AgentFrame]) -> List[AgentFrame]:
     """Concatenate per-vehicle descriptors cached by separate runs (same views, same gates).
 
@@ -219,8 +266,12 @@ def fit_config(config: Config, train_frames, holdout_frames, holdout_pairs, args
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--train-dir", type=Path, required=True)
-    parser.add_argument("--val-dir", type=Path, required=True)
+    parser.add_argument("--train-dir", type=Path, default=None, help="probe cache of annotated boxes (default source)")
+    parser.add_argument("--val-dir", type=Path, default=None)
+    parser.add_argument("--detection-cache", type=Path, default=None,
+                        help="instead: the matcher's cache of raw descriptors on DETECTION boxes (alignformer.cache, headless dino)")
+    parser.add_argument("--train-root", type=Path, default=None, help="dataset train split (with --detection-cache)")
+    parser.add_argument("--train-every", type=int, default=2, help="timestamp stride for train frames (with --detection-cache)")
     parser.add_argument("--extra-train-dirs", type=Path, nargs="*", default=[], help="further caches of the same frames to concatenate")
     parser.add_argument("--extra-val-dirs", type=Path, nargs="*", default=[])
     parser.add_argument("--zero-shot-split", type=int, default=None, help="width of the first zero-shot descriptor (default half of the DINO block)")
@@ -245,8 +296,12 @@ def main(argv=None) -> None:
     refuse_test_split(args.val_root)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     started = time.time()
-    all_train = merge_frames(load_frames(args.train_dir), *[load_frames(d) for d in args.extra_train_dirs])
-    val_frames = merge_frames(load_frames(args.val_dir), *[load_frames(d) for d in args.extra_val_dirs])
+    if args.detection_cache is not None:
+        all_train = frames_from_detection_cache(args.detection_cache, "train", args.train_root, args.train_every)
+        val_frames = frames_from_detection_cache(args.detection_cache, "val", args.val_root, 1)
+    else:
+        all_train = merge_frames(load_frames(args.train_dir), *[load_frames(d) for d in args.extra_train_dirs])
+        val_frames = merge_frames(load_frames(args.val_dir), *[load_frames(d) for d in args.extra_val_dirs])
     print(f"descriptor width {feature_dim(all_train)}", flush=True)
     train_frames, holdout_frames = split_scenarios(all_train)
     holdout_pairs = pairs_from_frames(holdout_frames, 10**9, args.seed)

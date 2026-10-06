@@ -21,6 +21,7 @@ OPV2V = Path("configs/alignformer_r140.yaml")
 LIDAR = Path("configs/alignformer_v2xreal.yaml")
 CAMERA = Path("configs/alignformer_v2xreal_camera.yaml")
 DINO = Path("configs/alignformer_v2xreal_dino.yaml")
+DINO_DET = Path("configs/alignformer_v2xreal_dino_det.yaml")
 
 
 def _flat(tree: Any, prefix: str = "") -> Dict[str, Any]:
@@ -110,4 +111,12 @@ def test_the_dino_config_differs_from_the_lidar_config_only_in_the_camera_source
     assert dino["model.camera_dim"] == 128
     assert dino["model.camera_source.backbone"] == "dino_head"
     assert dino["model.camera_source.track_window"] == 4
+
+
+def test_the_detection_trained_dino_config_differs_only_in_the_head_and_its_cache():
+    dino, det = _flat(_load(DINO)), _flat(_load(DINO_DET))
+
+    differing = {k for k in dino.keys() | det.keys() if dino.get(k) != det.get(k)}
+
+    assert differing == {"model.camera_source.head_checkpoint", "data.cache_root"}
 

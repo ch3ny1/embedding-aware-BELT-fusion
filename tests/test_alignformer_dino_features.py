@@ -237,3 +237,50 @@ def test_build_dino_backbone_rejects_an_unknown_backbone_name():
 
     with pytest.raises(ValueError):
         build_dino_backbone({"backbone": "resnet"}, "cpu")
+
+
+# ----------------------------------------------------------------------------
+# Raw-descriptor caches and the head applied to them
+# ----------------------------------------------------------------------------
+
+
+def test_a_headless_backbone_stores_the_raw_concatenated_descriptors():
+    backbone = DinoHeadBackbone(_FakeFoundation(), None)
+    image = np.full((1080, 1920, 3), 200, dtype=np.uint8)
+
+    out = frame_dino_features(backbone, np.stack([_cube([0.0, 0.0, 12.0])]), [(image, _calibration())])
+
+    assert backbone.feature_dim == 8 and out.features.shape == (1, 8)
+    np.testing.assert_allclose(out.features[0, :4], out.features[0, 4:])  # cls block == patch block for the fake
+
+
+def test_a_view_mostly_covered_by_a_nearer_box_gets_no_camera():
+    image = np.full((1080, 1920, 3), 200, dtype=np.uint8)
+    far = _cube([0.0, 0.0, 20.0], half=1.0)
+    near = _cube([0.0, 0.0, 10.0], half=1.2)  # in front, covering the far one's silhouette
+
+    out = frame_dino_features(_backbone(), np.stack([far, near]), [(image, _calibration())])
+
+    assert out.has_camera.tolist() == [False, True]
+
+
+def test_applying_a_head_to_cached_descriptors_reads_no_image():
+    from embedding_aware_belt_fusion.alignformer.cache import FrameRecord, _applies_head_to_descriptors, _with_head_on_descriptors
+    from embedding_aware_belt_fusion.alignformer.foundation_features import _DescriptorShape
+
+    torch.manual_seed(0)
+    shape = _DescriptorShape("small")
+    backbone = DinoHeadBackbone(shape, AppearanceHead(in_dim=768, hidden_dim=8, out_dim=3))
+    raw = np.random.default_rng(0).normal(size=(2, 768)).astype(np.float32)
+    source = FrameRecord(boxes=np.zeros((2, 7), np.float32), scores=np.ones(2, np.float32), gt_ids=[None, None],
+                         roi=np.zeros((2, 1, 1, 1), np.float16), camera=raw, has_camera=np.array([True, False]),
+                         camera_index=np.array([0, -1], np.int8), camera_raw=raw)
+
+    assert _applies_head_to_descriptors(backbone, source)
+    out = _with_head_on_descriptors(source, source, backbone)
+
+    assert out.camera.shape == (2, 3)
+    assert np.linalg.norm(out.camera[0]) == pytest.approx(1.0, abs=1e-5)
+    assert np.abs(out.camera[1]).max() == 0.0  # no camera: zero vector
+    with pytest.raises(RuntimeError):
+        shape.describe_many([], [])

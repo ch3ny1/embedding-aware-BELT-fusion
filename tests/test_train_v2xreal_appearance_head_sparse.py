@@ -107,3 +107,23 @@ def test_jsonable_turns_paths_inside_lists_into_strings():
     out = jsonable({"a": Path("/x"), "b": [Path("/y"), 2], "c": (Path("/z"),), "d": 1.5})
 
     assert json.loads(json.dumps(out)) == {"a": "/x", "b": ["/y", 2], "c": ["/z"], "d": 1.5}
+
+
+def test_frame_from_detection_record_keeps_matched_camera_views_and_the_best_duplicate():
+    from train_v2xreal_appearance_head_sparse import frame_from_detection_record
+
+    from embedding_aware_belt_fusion.alignformer.cache import FrameRecord
+
+    raw = np.arange(4 * 3, dtype=np.float32).reshape(4, 3)
+    record = FrameRecord(
+        boxes=np.array([[10, 0, 0, 1, 2, 4, 0], [20, 0, 0, 1, 2, 4, 0], [21, 0, 0, 1, 2, 4, 0], [30, 0, 0, 1, 2, 4, 0]], np.float32),
+        scores=np.array([0.9, 0.5, 0.8, 0.9], np.float32), gt_ids=["a", "b", "b", None], roi=np.zeros((4, 1, 1, 1), np.float16),
+        camera=raw, has_camera=np.array([True, True, True, True]), camera_index=np.zeros(4, np.int8), camera_raw=raw,
+    )
+
+    frame = frame_from_detection_record("s", "1", "000010", record, [100.0, 0, 0, 0, 0, 0], ["a", "b", "c"])
+
+    assert frame.vids == ("a", "b") and frame.gt_vids == ("a", "b", "c")
+    np.testing.assert_array_equal(frame.features, raw[[0, 2]])  # b: the 0.8 detection, not the 0.5 one
+    np.testing.assert_allclose(frame.centre_xy, [[110.0, 0.0], [121.0, 0.0]])
+    np.testing.assert_allclose(frame.range_m, [10.0, 21.0])

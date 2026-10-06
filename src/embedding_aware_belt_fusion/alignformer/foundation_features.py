@@ -94,6 +94,19 @@ def _unit(vector: np.ndarray) -> np.ndarray:
     return vector / norm if norm > _EPSILON else vector
 
 
+EMBED_DIMS = {"small": 384, "base": 768}
+
+
+class _DescriptorShape:
+    """Stands in for ``FoundationBackbone`` when only its descriptor width is needed."""
+
+    def __init__(self, model: str = DEFAULT_MODEL) -> None:
+        self.embed_dim = EMBED_DIMS[model]
+
+    def describe_many(self, crops_rgb, crop_masks):
+        raise RuntimeError("this backbone was built without DINOv2 (foundation: false); it cannot see images")
+
+
 class FoundationBackbone(nn.Module):
     """DINOv2 ViT (timm), frozen, at a 224-px letterboxed input."""
 

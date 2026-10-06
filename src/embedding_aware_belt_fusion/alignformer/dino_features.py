@@ -36,7 +36,13 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from embedding_aware_belt_fusion.alignformer.camera import MIN_CROP_PIXELS, silhouette_mask, world_from_pose
+from embedding_aware_belt_fusion.alignformer.camera import (
+    MIN_CROP_PIXELS,
+    Projection,
+    occlusion_fraction,
+    silhouette_mask,
+    world_from_pose,
+)
 from embedding_aware_belt_fusion.alignformer.camera_features import (
     Calibration,
     CameraFeatures,
@@ -51,6 +57,7 @@ DINO_HEAD_BACKBONE = "dino_head"
 DEFAULT_TRACK_WINDOW = 4  # earlier frames pooled with the current one (10 Hz: 0.4 s)
 DEFAULT_GATE_M = 2.0
 DEFAULT_GATE_PER_FRAME_M = 1.5
+MAX_OCCLUSION = 0.5  # the probe's gate: a view more than half covered by nearer boxes is no view
 _EPSILON = 1e-12
 
 
@@ -74,42 +81,61 @@ def _unit_rows(matrix: np.ndarray) -> np.ndarray:
 
 
 class DinoHeadBackbone(nn.Module):
-    """Frozen DINOv2 + the trained appearance head; ``frame_features`` mirrors ``frame_camera_features``."""
+    """Frozen DINOv2 + the trained appearance head; ``frame_features`` mirrors ``frame_camera_features``.
 
-    def __init__(self, foundation, head: nn.Module, pooling: Optional[TrackPooling] = None,
+    With ``head=None`` the backbone stores the raw concatenated descriptors
+    (``descriptor_dim`` wide) instead: the cache a head is trained FROM.
+    """
+
+    def __init__(self, foundation, head: Optional[nn.Module], pooling: Optional[TrackPooling] = None,
                  cache_root: Optional[Path] = None) -> None:
         super().__init__()
         self.foundation = foundation
-        self.head = head.eval()
-        for parameter in self.head.parameters():
-            parameter.requires_grad_(False)
+        self.descriptor_dim = int(foundation.embed_dim) * len(DESCRIPTOR_NAMES)
+        self.head = head.eval() if head is not None else None
+        if self.head is not None:
+            for parameter in self.head.parameters():
+                parameter.requires_grad_(False)
         self.pooling = pooling
         self.cache_root = cache_root
+        self.feature_dim = self.descriptor_dim if self.head is None else self._head_width()
+
+    def _head_width(self) -> int:
         with torch.no_grad():
-            probe = torch.zeros(1, int(self.head.net[1].in_features), device=next(head.parameters()).device)
-            self.feature_dim = int(self.head(probe).shape[1])
+            probe = torch.zeros(1, int(self.head.net[1].in_features), device=next(self.head.parameters()).device)
+            return int(self.head(probe).shape[1])
 
     def train(self, mode: bool = True) -> "DinoHeadBackbone":  # noqa: D401 - frozen
         return super().train(False)
 
     def embed(self, descriptors: Dict[str, np.ndarray]) -> np.ndarray:
-        """Concatenate the descriptors in the training order and project with the head."""
+        """Concatenate the descriptors in the training order and project with the head (or keep them raw)."""
         stacked = np.concatenate([descriptors[name] for name in DESCRIPTOR_NAMES], axis=1).astype(np.float32)
+        return self.embed_descriptors(stacked)
+
+    def embed_descriptors(self, stacked: np.ndarray) -> np.ndarray:
+        """``(N, descriptor_dim)`` raw descriptors through the head; identity when there is no head."""
+        if self.head is None:
+            return stacked.astype(np.float32)
         device = next(self.head.parameters()).device
         with torch.no_grad():
-            return self.head(torch.from_numpy(stacked).to(device)).cpu().numpy().astype(np.float32)
+            return self.head(torch.from_numpy(np.asarray(stacked, dtype=np.float32)).to(device)).cpu().numpy().astype(np.float32)
 
     def frame_features(self, corners_lidar: np.ndarray, cameras: Sequence[Tuple[np.ndarray, Calibration]]) -> CameraFeatures:
         return frame_dino_features(self, corners_lidar, cameras)
 
 
-def _crop_for(image: np.ndarray, corners: np.ndarray, calib: Calibration) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """The context crop and its silhouette for one box in one camera, or None if too small."""
-    pixels, _ = project_points(corners, calib)
-    mask = silhouette_mask(pixels, image.shape)
-    if int(mask.sum()) < MIN_CROP_PIXELS:
+def _projection(corners: np.ndarray, calib: Calibration, image_shape) -> Projection:
+    pixels, depth = project_points(corners, calib)
+    return Projection(pixels=pixels, box=_bounds(pixels, image_shape), depth=float(depth.mean()))
+
+
+def _crop_for(image: np.ndarray, view: Projection, others: Sequence[Projection]) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """The context crop and its silhouette for one view, or None if too small or mostly covered by nearer boxes."""
+    mask = silhouette_mask(view.pixels, image.shape)
+    if int(mask.sum()) < MIN_CROP_PIXELS or occlusion_fraction(view, others, image.shape) > MAX_OCCLUSION:
         return None
-    x1, y1, x2, y2 = context_box(_bounds(pixels, image.shape), image.shape)
+    x1, y1, x2, y2 = context_box(view.box, image.shape)
     return image[y1:y2, x1:x2], mask[y1:y2, x1:x2]
 
 
@@ -127,10 +153,13 @@ def frame_dino_features(backbone: DinoHeadBackbone, corners_lidar: np.ndarray,
     count = corners_lidar.shape[0]
     candidates = [[box_2d(c, calib, (image.shape[1], image.shape[0])) for image, calib in cameras] for c in corners_lidar]
     chosen = np.asarray(choose_camera(candidates), dtype=np.int8) if count else np.zeros((0,), dtype=np.int8)
+    views = [[_projection(c, calib, image.shape) if candidates[i][k] is not None else None
+              for k, (image, calib) in enumerate(cameras)] for i, c in enumerate(corners_lidar)]
     crops, masks, rows = [], [], []
     for row in np.flatnonzero(chosen >= 0):
-        image, calib = cameras[int(chosen[row])]
-        crop = _crop_for(image, corners_lidar[row], calib)
+        camera = int(chosen[row])
+        others = [v[camera] for i, v in enumerate(views) if i != row and v[camera] is not None]
+        crop = _crop_for(cameras[camera][0], views[row][camera], others)
         if crop is None:
             chosen[row] = -1
             continue
@@ -297,13 +326,19 @@ def pooling_from_config(source: Dict) -> Optional[TrackPooling]:
 
 
 def build_dino_backbone(source: Dict, device, cache_root: Optional[Path] = None) -> DinoHeadBackbone:
-    """``model.camera_source`` -> the DINO-head backbone (``backbone: dino_head``)."""
+    """``model.camera_source`` -> the DINO-head backbone (``backbone: dino_head``).
+
+    Without ``head_checkpoint`` the backbone stores raw descriptors (the
+    cache a head is trained from); ``foundation: false`` skips loading
+    DINOv2 for a pass that only applies a head to cached descriptors.
+    """
     from embedding_aware_belt_fusion.alignformer.appearance_head import load_head
-    from embedding_aware_belt_fusion.alignformer.foundation_features import FoundationBackbone
+    from embedding_aware_belt_fusion.alignformer.foundation_features import FoundationBackbone, _DescriptorShape
 
     if source.get("backbone") != DINO_HEAD_BACKBONE:
         raise ValueError(f"unknown camera_source.backbone {source.get('backbone')!r}; expected {DINO_HEAD_BACKBONE!r}")
     device_name = str(device)
-    foundation = FoundationBackbone(model=str(source.get("dino", "base")), device=device_name)
-    head = load_head(Path(source["head_checkpoint"]), device=device_name)
+    size = str(source.get("dino", "base"))
+    foundation = FoundationBackbone(model=size, device=device_name) if source.get("foundation", True) else _DescriptorShape(size)
+    head = load_head(Path(source["head_checkpoint"]), device=device_name) if source.get("head_checkpoint") else None
     return DinoHeadBackbone(foundation, head, pooling_from_config(source), cache_root)
