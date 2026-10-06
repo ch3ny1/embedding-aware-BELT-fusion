@@ -248,3 +248,20 @@ def info_nce(anchors: Tensor, positives: Tensor, hard_negatives: Tensor, hard_ma
     else:
         logits_anchor = logits_ap
     return 0.5 * (F.cross_entropy(logits_anchor, targets) + F.cross_entropy(logits_ap.T, targets))
+
+
+_PRE_DROPOUT_KEYS = {"net.0.": "net.1.", "net.2.": "net.4."}
+
+
+def load_head(path: Path, device: str = "cpu") -> AppearanceHead:
+    """A saved head (``{"state_dict", "in_dim", "config"?}``); checkpoints written before the
+    dropout layers existed are re-keyed, since dropout holds no parameters."""
+    checkpoint = torch.load(path, map_location=device)
+    config = checkpoint.get("config") or {}
+    state = checkpoint["state_dict"]
+    if "net.0.weight" in state:
+        state = {next((new + k[len(old):] for old, new in _PRE_DROPOUT_KEYS.items() if k.startswith(old)), k): v for k, v in state.items()}
+    hidden, out = int(state["net.1.weight"].shape[0]), int(state["net.4.weight"].shape[0])
+    head = AppearanceHead(int(checkpoint["in_dim"]), hidden, out, dropout=float(config.get("dropout", 0.0))).to(device)
+    head.load_state_dict(state)
+    return head.eval()

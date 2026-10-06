@@ -533,15 +533,80 @@ diagnostic: the same split, more pairs, no selection.)
   views that make up few training pairs and the hardest ones; a head
   trained to the average pair does not reach them.
 
-**Where this leaves appearance.** Trained cross-view appearance is real
-and cheap, which colour and frozen features could not show, and it is
-the first appearance result on this project that passes its signal bar.
-Taking it into stage 1 as the per-object embedding would most likely help
-the dense bucket, where geometry already wins, and not the sparse one. It
-is therefore not carried into the matcher now. If appearance is to earn
-bytes it has to be trained toward the sparse pairs: weight or oversample
-1-2-shared pairs, give far objects a higher-resolution crop, add the
-object's own temporal track as extra positives, and judge on the 1-2
-bucket (bar: AUC 0.80 there, n in the hundreds). That is a day's work
-with the cache in place.
+**Where this left appearance, before the sparse-pair round.** Trained
+cross-view appearance is real and cheap, which colour and frozen features
+could not show; but a head trained to the average pair did not reach the
+sparse pairs, so it was not carried into the matcher. The next round went
+after those pairs directly.
 
+### Round four: training toward the sparse pairs (2026-10-05, evening)
+
+The cache diagnostic first: sparse (<= 2 shared) anchors are far (median
+51 m in train, 61 m in val, 41-49 % beyond 70 m), zero-shot is at chance
+on them in train too (0.50), the train split holds only 280 such ambiguous
+objects while dense pairs carry 17,000 anchors beyond 40 m, and in val
+87 % of the sparse-bucket distractors are themselves seen by the ego: the
+question is "two far cars 8 m apart, both seen by both agents, which is
+which". Range, not the bucket, is the difficulty.
+
+Protocol, fixed before the first number (`scripts/train_v2xreal_appearance_head_sparse.py`):
+the last fifth of train scenarios held out whole; every configuration keeps
+the epoch with the best held-out far-range AUC (mean over 40-70 m and
+70 m+); val read once, every val pair (8,016 ordered pairs, 374 ambiguous
+sparse objects), for the selected configuration. Bars: shared-1-2
+ambiguous AUC >= 0.80 and shared-3+ >= 0.80. Levers tried: draws weighted
+toward far anchors (x4, x16) and sparse pairs (x10); the partner agent's
+neighbouring cached frames as further positives (x3 pairs); dropout 0.2;
+colour (hue-saturation + mean colour, 195-d) concatenated to the DINOv2
+descriptor; and each agent pooling its own object's embedding over its
+neighbouring frames (``--track-window``, cached steps each side; the
+ground-truth id stands in for the agent's own tracker, and only the
+agent's own frames are pooled, so nothing crosses agents).
+
+| val, every pair, ambiguous AUC | selected (held-out far AUC) | shared 1-2 (n 374) | shared 3+ (n 9,427) | 40-70 m | 70 m+ | verdict |
+|---|---|---:|---:|---:|---:|---|
+| first head, 20 epochs, no selection | - | .537 | .857 | .804 | .700 | |
+| DINOv2 only, 6 configs | far x16 + sparse x10 + offsets + dropout, ep 20 (.747) | .623 | .892 | .863 | .667 | fail |
+| + colour | baseline, ep 20 (.768) | .463 | .887 | .853 | .707 | fail |
+| + colour, track window 2 | far x16 + sparse x10 + offsets + dropout, ep 18 (.824) | .679 | .910 | .856 | .750 | fail |
+| **DINOv2 only, track window 2** | **baseline, ep 3 (.820)** | **.885** | **.900** | **.897** | **.838** | **pass** |
+
+Files `appearance_head_sparse{,_colour,_colour_track2,_track2}_val_result.json`.
+Window sensitivity for the passing head, eval-only on every val pair
+(`appearance_head_track_window_sensitivity_val_result.json`; window 2 was
+the single value chosen in advance):
+
+| window (cached steps each side; 1 step = 0.2 s) | 0 | 1 | 2 | 3 | 4 |
+|---|---:|---:|---:|---:|---:|
+| selected head (baseline, ep 3), shared 1-2 | .807 | .882 | .885 | .904 | .906 |
+| selected head, all ambiguous | .876 | .891 | .899 | .902 | .906 |
+| first head (20 epochs), shared 1-2 | .537 | .516 | .516 | .471 | .463 |
+| zero-shot patch mean, shared 1-2 | .468 | .468 | .471 | .468 | .465 |
+
+- **The two levers that worked were not the ones the round was named
+  for.** Weighting the draws toward far or sparse rows never moved the
+  held-out far AUC (0.72-0.75 whichever way), and colour hurt the sparse
+  bucket (0.46 alone, 0.68 with the window). What worked: **stopping
+  early** (the held-out selection with the window picked the plain
+  configuration at epoch 3; that head alone, no pooling, is at 0.807 on
+  the sparse bucket, where the 20-epoch heads are at 0.54-0.62: they
+  overfit the dense pairs and lose the far ones), and **each agent pooling
+  its own object over a few frames** (+0.08 on the sparse bucket at two
+  steps, saturating by three; pooling does nothing for zero-shot and
+  nothing for the overfit head, so it is cleaning a signal that has to be
+  there first).
+- **Both bars pass**: 0.885 on the sparse bucket (n 374), 0.900 on the
+  dense one, 0.838 beyond 70 m, 0.899 over all 9,801 ambiguous objects.
+  Selection never touched val; the probe's own 400 pairs give 0.908 /
+  0.905 (n 21) for the same head.
+- **What it costs on the wire**: a 128-d unit vector per box, before
+  quantization; the pooling happens on the sending agent.
+
+**Where this leaves appearance.** A per-object appearance embedding that
+separates a vehicle from its nearest neighbour across agents on the sparse
+pairs exists, in a 1.3-minute head over a frozen foundation model plus
+per-agent temporal pooling. The next step is the one every earlier
+appearance result failed to reach: carry it into stage 1 as the per-object
+embedding (detector boxes, not annotations; the agent's own track for the
+pooling), and measure the 1-2 bucket's AP@0.7 in the clean case against the
+boxes-only trunk with the exact re-solve, then the sweep, then bytes.

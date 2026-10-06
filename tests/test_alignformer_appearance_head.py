@@ -294,3 +294,20 @@ def test_uniform_epoch_order_is_a_permutation():
     order = epoch_order(None, count=10, draws=10, rng=np.random.default_rng(0))
 
     assert sorted(order.tolist()) == list(range(10))
+
+
+def test_load_head_rekeys_a_checkpoint_saved_before_the_dropout_layers(tmp_path):
+    from embedding_aware_belt_fusion.alignformer.appearance_head import load_head
+
+    head = AppearanceHead(in_dim=6, hidden_dim=5, out_dim=3)
+    old_style = {k.replace("net.1.", "net.0.").replace("net.4.", "net.2."): v for k, v in head.state_dict().items()}
+    torch.save({"state_dict": old_style, "in_dim": 6}, tmp_path / "old.pth")
+    torch.save({"state_dict": head.state_dict(), "in_dim": 6, "config": {"dropout": 0.2}}, tmp_path / "new.pth")
+    x = torch.randn(2, 6)
+
+    old = load_head(tmp_path / "old.pth")
+    new = load_head(tmp_path / "new.pth")
+
+    torch.testing.assert_close(old(x), head.eval()(x))
+    torch.testing.assert_close(new(x), head.eval()(x))
+    assert not new.training
