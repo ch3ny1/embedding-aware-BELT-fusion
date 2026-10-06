@@ -66,6 +66,7 @@ from embedding_aware_belt_fusion.alignformer.appearance_head import (  # noqa: E
     AppearanceHead,
     PairSet,
     build_pairs,
+    epoch_order,
     feature_dim,
     frame_key,
     info_nce,
@@ -171,11 +172,16 @@ def score_pairs(frames: Sequence[AgentFrame], pairs: Sequence[Pair], embeddings:
 
 
 def train_head(pairs: PairSet, *, epochs: int, batch_size: int, lr: float, temperature: float, seed: int,
-               device: str, on_epoch: Optional[Callable[[int, AppearanceHead, float], None]] = None) -> Tuple[AppearanceHead, List[float]]:
-    """Fixed-epoch InfoNCE training; ``on_epoch(epoch, head, mean_loss)`` after each epoch."""
+               device: str, on_epoch: Optional[Callable[[int, AppearanceHead, float], None]] = None,
+               sample_weights: Optional[np.ndarray] = None, dropout: float = 0.0) -> Tuple[AppearanceHead, List[float]]:
+    """Fixed-epoch InfoNCE training; ``on_epoch(epoch, head, mean_loss)`` after each epoch.
+
+    ``sample_weights`` draws each epoch's rows with replacement in proportion
+    to the weight (``appearance_head.epoch_order``); the epoch keeps the
+    same number of draws as there are rows."""
     torch.manual_seed(seed)
     generator = np.random.default_rng(seed)
-    head = AppearanceHead(in_dim=pairs.anchors.shape[1]).to(device)
+    head = AppearanceHead(in_dim=pairs.anchors.shape[1], dropout=dropout).to(device)
     optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     anchors, positives = torch.from_numpy(pairs.anchors), torch.from_numpy(pairs.positives)
     hard, mask = torch.from_numpy(pairs.hard_negatives), torch.from_numpy(pairs.hard_mask)
@@ -183,7 +189,7 @@ def train_head(pairs: PairSet, *, epochs: int, batch_size: int, lr: float, tempe
     count, losses = anchors.shape[0], []
     for epoch in range(1, epochs + 1):
         head.train()
-        order, total = generator.permutation(count), 0.0
+        order, total = epoch_order(sample_weights, count, count, generator), 0.0
         for start in range(0, count, batch_size):
             idx = torch.from_numpy(order[start : start + batch_size])
             a, p = head(anchors[idx].to(device)), head(positives[idx].to(device))

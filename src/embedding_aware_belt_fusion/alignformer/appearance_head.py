@@ -86,6 +86,8 @@ class PairSet(NamedTuple):
     positives: np.ndarray  # (P, D)
     hard_negatives: np.ndarray  # (P, K, D), zero where padded
     hard_mask: np.ndarray  # (P, K) bool
+    shared_counts: np.ndarray  # (P,) annotated vehicles in common between the two frames
+    anchor_ranges: np.ndarray  # (P,) the anchor's LiDAR range, metres
 
 
 def _group_by_timestamp(frames: Sequence[AgentFrame]) -> Dict[Tuple[str, str], List[AgentFrame]]:
@@ -93,6 +95,23 @@ def _group_by_timestamp(frames: Sequence[AgentFrame]) -> Dict[Tuple[str, str], L
     for frame in frames:
         groups.setdefault((frame.scenario, frame.timestamp), []).append(frame)
     return groups
+
+
+def _partners(frame: AgentFrame, group_of: Dict[Tuple[str, str], List[AgentFrame]], stamps: Dict[str, List[str]],
+              offsets: Sequence[int]) -> List[AgentFrame]:
+    """The other agents' frames at the anchor's timestamp and at ``offsets`` cached steps around it."""
+    ordered = stamps[frame.scenario]
+    here = ordered.index(frame.timestamp)
+    seen, partners = set(), []
+    for offset in offsets:
+        if not 0 <= here + offset < len(ordered):
+            continue
+        for partner in group_of.get((frame.scenario, ordered[here + offset]), []):
+            key = (partner.agent, partner.timestamp)
+            if partner.agent != frame.agent and key not in seen:
+                seen.add(key)
+                partners.append(partner)
+    return partners
 
 
 def _hard_negatives(partner: AgentFrame, vid: str, exclude: Sequence[str], k: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -120,34 +139,62 @@ def _positive_vid(common: Sequence[str], vid: str, shuffle: Optional[np.random.G
 
 
 def build_pairs(frames: Sequence[AgentFrame], max_hard_negatives: int = MAX_HARD_NEGATIVES,
-                shuffle_identities: Optional[np.random.Generator] = None) -> PairSet:
+                shuffle_identities: Optional[np.random.Generator] = None, offsets: Sequence[int] = (0,)) -> PairSet:
     """Every (anchor agent, partner agent, shared vehicle) at every timestamp, both directions.
 
-    ``shuffle_identities`` builds the control: the positive is another shared
-    vehicle of the partner frame, so a head trained on it learns nothing
-    about identity and its validation AUC must stay near one half.
+    ``offsets`` adds the partner agent's frames at neighbouring cached steps
+    as further cross-view positives (the view change is the same, the data
+    multiplies). ``shuffle_identities`` builds the control: the positive is
+    another shared vehicle of the partner frame, so a head trained on it
+    learns nothing about identity.
     """
-    rows, identities, anchors, positives, negatives, masks = [], [], [], [], [], []
-    for (scenario, stamp), group in sorted(_group_by_timestamp(frames).items()):
-        for anchor_frame in group:
-            for partner in group:
-                if partner.agent == anchor_frame.agent:
-                    continue
-                common = sorted(set(anchor_frame.vids) & set(partner.vids))
-                for vid in common:
-                    positive = _positive_vid(common, vid, shuffle_identities)
-                    if positive is None:
-                        continue
-                    block, mask = _hard_negatives(partner, vid, exclude=(vid, positive), k=max_hard_negatives)
-                    rows.append((scenario, stamp, anchor_frame.agent, partner.agent, vid))
-                    identities.append((scenario, vid))
-                    anchors.append(anchor_frame.features[anchor_frame.vids.index(vid)])
-                    positives.append(partner.features[partner.vids.index(positive)])
-                    negatives.append(block)
-                    masks.append(mask)
-    dim = feature_dim(frames)
-    return PairSet(rows, identities, _stack(anchors, (0, dim)), _stack(positives, (0, dim)),
-                   _stack(negatives, (0, max_hard_negatives, dim)), _stack(masks, (0, max_hard_negatives), bool))
+    group_of = _group_by_timestamp(frames)
+    stamps = {s: sorted(t for (sc, t) in group_of if sc == s) for s in {sc for (sc, _) in group_of}}
+    acc = {k: [] for k in ("rows", "identities", "anchors", "positives", "negatives", "masks", "shared", "ranges")}
+    for key in sorted(group_of):
+        for anchor_frame in group_of[key]:
+            for partner in _partners(anchor_frame, group_of, stamps, offsets):
+                _append_rows(acc, anchor_frame, partner, max_hard_negatives, shuffle_identities)
+    dim, k = feature_dim(frames), max_hard_negatives
+    return PairSet(acc["rows"], acc["identities"], _stack(acc["anchors"], (0, dim)), _stack(acc["positives"], (0, dim)),
+                   _stack(acc["negatives"], (0, k, dim)), _stack(acc["masks"], (0, k), bool),
+                   np.asarray(acc["shared"], dtype=np.int64), np.asarray(acc["ranges"], dtype=np.float64))
+
+
+def _append_rows(acc: Dict[str, list], anchor_frame: AgentFrame, partner: AgentFrame, k: int,
+                 shuffle: Optional[np.random.Generator]) -> None:
+    common = sorted(set(anchor_frame.vids) & set(partner.vids))
+    shared = len(set(anchor_frame.gt_vids) & set(partner.gt_vids))
+    for vid in common:
+        positive = _positive_vid(common, vid, shuffle)
+        if positive is None:
+            continue
+        block, mask = _hard_negatives(partner, vid, exclude=(vid, positive), k=k)
+        row = anchor_frame.vids.index(vid)
+        acc["rows"].append((anchor_frame.scenario, anchor_frame.timestamp, anchor_frame.agent, partner.agent, vid))
+        acc["identities"].append((anchor_frame.scenario, vid))
+        acc["anchors"].append(anchor_frame.features[row])
+        acc["positives"].append(partner.features[partner.vids.index(positive)])
+        acc["negatives"].append(block)
+        acc["masks"].append(mask)
+        acc["shared"].append(shared)
+        acc["ranges"].append(float(anchor_frame.range_m[row]))
+
+
+def row_weights(shared_counts: np.ndarray, anchor_ranges: np.ndarray, far_weight: float, sparse_weight: float,
+                far_from_m: float) -> np.ndarray:
+    """``1 + far_weight`` for anchors beyond ``far_from_m``, ``+ sparse_weight`` for pairs sharing <= 2 annotations."""
+    far = (np.asarray(anchor_ranges) > far_from_m).astype(np.float64)
+    sparse = (np.asarray(shared_counts) <= 2).astype(np.float64)
+    return 1.0 + far_weight * far + sparse_weight * sparse
+
+
+def epoch_order(weights: Optional[np.ndarray], count: int, draws: int, rng: np.random.Generator) -> np.ndarray:
+    """A permutation when unweighted; otherwise ``draws`` rows with replacement, probability ∝ weight."""
+    if weights is None:
+        return rng.permutation(count)
+    probability = np.asarray(weights, dtype=np.float64)
+    return rng.choice(count, size=draws, replace=True, p=probability / probability.sum())
 
 
 def _stack(items, empty_shape, dtype=np.float32) -> np.ndarray:
@@ -157,9 +204,10 @@ def _stack(items, empty_shape, dtype=np.float32) -> np.ndarray:
 class AppearanceHead(nn.Module):
     """Two-layer MLP onto the unit sphere."""
 
-    def __init__(self, in_dim: int, hidden_dim: int = HIDDEN_DIM, out_dim: int = OUT_DIM) -> None:
+    def __init__(self, in_dim: int, hidden_dim: int = HIDDEN_DIM, out_dim: int = OUT_DIM, dropout: float = 0.0) -> None:
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, out_dim))
+        self.net = nn.Sequential(nn.Dropout(dropout), nn.Linear(in_dim, hidden_dim), nn.GELU(), nn.Dropout(dropout),
+                                 nn.Linear(hidden_dim, out_dim))
 
     def forward(self, features: Tensor) -> Tensor:
         return F.normalize(self.net(features), dim=-1)

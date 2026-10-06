@@ -217,3 +217,80 @@ def test_masked_in_batch_duplicates_do_not_count_as_negatives():
     # seven other objects, so the loss drops. An all-false mask changes nothing.
     assert masked < unmasked
     torch.testing.assert_close(all_false, unmasked)
+
+
+# ----------------------------------------------------------------------------
+# Training toward the sparse pairs: row metadata, cross-time partners, weighted draws
+# ----------------------------------------------------------------------------
+
+
+def test_build_pairs_records_the_shared_count_and_anchor_range_of_every_row():
+    ego = _frame("s", "1", "000010", ["a", "b"], [[0, 0], [10, 0]], seed=1)._replace(range_m=np.array([55.0, 12.0]), gt_vids=("a", "b", "x", "y"))
+    cav = _frame("s", "2", "000010", ["a", "b"], [[0, 0], [10, 0]], seed=2)._replace(gt_vids=("a", "b", "x"))
+
+    pairs = build_pairs([ego, cav], max_hard_negatives=2)
+
+    row = pairs.rows.index(("s", "000010", "1", "2", "a"))
+    assert pairs.shared_counts[row] == 3  # a, b, x annotated in both
+    assert pairs.anchor_ranges[row] == 55.0
+    assert pairs.shared_counts.shape == (4,) and pairs.anchor_ranges.shape == (4,)
+
+
+def test_cross_time_offsets_pair_an_anchor_with_the_partner_agents_neighbouring_frames():
+    frames = [
+        _frame("s", "1", "000010", ["a"], [[0, 0]], seed=1),
+        _frame("s", "2", "000010", ["a"], [[0, 0]], seed=2),
+        _frame("s", "2", "000012", ["a"], [[1, 0]], seed=3),  # the partner one cached step later
+        _frame("s", "1", "000012", ["a"], [[1, 0]], seed=4),
+    ]
+
+    same_time = build_pairs(frames, max_hard_negatives=1)
+    with_offsets = build_pairs(frames, max_hard_negatives=1, offsets=(-1, 0, 1))
+
+    assert len(same_time.rows) == 4  # two timestamps, both directions
+    assert len(with_offsets.rows) == 8  # plus 1@10->2@12, 2@10->1@12, 1@12->2@10, 2@12->1@10
+    # Rows are keyed by the ANCHOR's timestamp: anchor 1@10 now has two rows
+    # against agent 2, one with the partner's features at 10, one at 12.
+    rows = [i for i, r in enumerate(with_offsets.rows) if r == ("s", "000010", "1", "2", "a")]
+    assert len(rows) == 2
+    partner_same, partner_later = frames[1].features[0], frames[2].features[0]
+    assert sorted(np.array_equal(with_offsets.positives[i], partner_later) for i in rows) == [False, True]
+    assert sorted(np.array_equal(with_offsets.positives[i], partner_same) for i in rows) == [False, True]
+
+
+def test_cross_time_offsets_never_pair_an_agent_with_itself():
+    frames = [_frame("s", "1", "000010", ["a"], [[0, 0]], seed=1), _frame("s", "1", "000012", ["a"], [[0, 0]], seed=2)]
+
+    pairs = build_pairs(frames, max_hard_negatives=1, offsets=(-1, 0, 1))
+
+    assert pairs.rows == []
+
+
+def test_row_weights_emphasize_far_anchors_and_sparse_pairs():
+    from embedding_aware_belt_fusion.alignformer.appearance_head import row_weights
+
+    shared = np.array([5, 5, 2, 2])
+    ranges = np.array([10.0, 60.0, 10.0, 60.0])
+
+    weights = row_weights(shared, ranges, far_weight=3.0, sparse_weight=5.0, far_from_m=40.0)
+
+    assert weights.tolist() == [1.0, 4.0, 6.0, 9.0]
+
+
+def test_weighted_epoch_order_draws_rows_in_proportion_to_their_weight():
+    from embedding_aware_belt_fusion.alignformer.appearance_head import epoch_order
+
+    weights = np.array([1.0, 0.0, 9.0])
+    order = epoch_order(weights, count=3, draws=3000, rng=np.random.default_rng(0))
+
+    assert order.shape == (3000,)
+    assert (order == 1).sum() == 0
+    assert 0.85 < (order == 2).mean() < 0.95
+
+
+def test_uniform_epoch_order_is_a_permutation():
+    from embedding_aware_belt_fusion.alignformer.appearance_head import epoch_order
+
+    order = epoch_order(None, count=10, draws=10, rng=np.random.default_rng(0))
+
+    assert sorted(order.tolist()) == list(range(10))
