@@ -336,3 +336,115 @@ def test_sweep_estimators_add_one_agreement_arm_per_decision_arm_and_tolerance()
     ]
     with pytest.raises(ValueError):
         sweep_estimators([], False, robust, arms, refine=RefineConfig(), agreement=tolerances)
+
+
+# ----------------------------------------------------------------------------
+# The robust exact fit: RANSAC over the hard pairs
+# ----------------------------------------------------------------------------
+
+
+def _boxes_from(centres, yaws):
+    import torch
+
+    boxes = torch.zeros(len(centres), 7)
+    boxes[:, :2] = torch.tensor(centres, dtype=torch.float32)
+    boxes[:, 6] = torch.tensor(yaws, dtype=torch.float32)
+    return boxes
+
+
+def test_two_point_se2_recovers_the_transform_between_two_pairs():
+    import math
+
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import _moved, se2_from_two_pairs
+
+    psi, t = torch.tensor(0.3), torch.tensor([1.0, -2.0])
+    source = torch.tensor([[0.0, 0.0], [10.0, 5.0]])
+    target = _moved(source, psi, t)
+
+    got_psi, got_t = se2_from_two_pairs(target, source)
+
+    assert math.isclose(float(got_psi), 0.3, abs_tol=1e-5)
+    torch.testing.assert_close(got_t, t, atol=1e-4, rtol=0)
+
+
+def test_robust_exact_solve_ignores_a_lane_neighbour_the_plain_solve_cannot():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import _exact_solve, _moved, robust_exact_solve
+
+    # Five true correspondences under psi = 0.05, t = (1.2, -0.4); the fifth
+    # CAV box is a lane neighbour 3.5 m across from the real partner.
+    psi, t = torch.tensor(0.05), torch.tensor([1.2, -0.4])
+    ego_centres = [[5.0, 0.0], [15.0, 2.0], [25.0, -1.0], [35.0, 3.0], [45.0, 0.0]]
+    ego = _boxes_from(ego_centres, [0.0] * 5)
+    cav_true = _moved(ego[:, :2], -psi, torch.zeros(2))  # rough inverse is fine: we fit cav -> ego
+    cav = _boxes_from(cav_true.tolist(), [0.0] * 5)
+    # Define the truth as the transform that maps these cav centres onto ego.
+    from embedding_aware_belt_fusion.alignformer.refine import se2_from_two_pairs
+
+    true_psi, true_t = se2_from_two_pairs(ego[:2, :2], cav[:2, :2])
+    cav_wrong = cav.clone()
+    cav_wrong[4, 1] += 3.5  # the outlier
+    idx = torch.arange(5)
+
+    plain_psi, plain_t = _exact_solve(ego, cav_wrong, idx, idx, heading_lambda=2.0)
+    rob_psi, rob_t, inliers = robust_exact_solve(ego, cav_wrong, idx, idx, heading_lambda=2.0, inlier_m=1.0)
+
+    plain_err = float((_moved(cav_wrong[:4, :2], plain_psi, plain_t) - ego[:4, :2]).norm(dim=-1).mean())
+    robust_err = float((_moved(cav_wrong[:4, :2], rob_psi, rob_t) - ego[:4, :2]).norm(dim=-1).mean())
+    assert robust_err < 0.05 < plain_err
+    assert inliers.tolist() == [True, True, True, True, False]
+
+
+def test_robust_exact_solve_is_deterministic_with_many_pairs():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import robust_exact_solve
+
+    g = torch.Generator().manual_seed(3)
+    ego = _boxes_from(torch.rand(30, 2, generator=g).mul(60).tolist(), [0.0] * 30)
+    cav = ego.clone()
+    cav[:, 0] += 0.7
+    idx = torch.arange(30)
+
+    first = robust_exact_solve(ego, cav, idx, idx, heading_lambda=2.0, inlier_m=1.0)
+    second = robust_exact_solve(ego, cav, idx, idx, heading_lambda=2.0, inlier_m=1.0)
+
+    torch.testing.assert_close(first[0], second[0])
+    torch.testing.assert_close(first[1], second[1])
+    assert bool(first[2].all())
+
+
+def test_refine_config_and_names_for_the_ransac_mode():
+    from embedding_aware_belt_fusion.alignformer.refine import ICP, ICP_RANSAC, RefineConfig, refined_name
+
+    config = RefineConfig(mode=ICP_RANSAC, inlier_m=0.5)
+
+    assert config.enabled and config.to_dict()["inlier_m"] == 0.5
+    assert refined_name("alignformer_abstain_0.2", ICP) == "alignformer_abstain_0.2_icp"
+    assert refined_name("alignformer_abstain_0.2", ICP_RANSAC) == "alignformer_abstain_0.2_icpr"
+    assert refined_name("alignformer_irls", ICP_RANSAC) == "alignformer_icpr"
+    with pytest.raises(ValueError):
+        RefineConfig(mode=ICP_RANSAC, inlier_m=0.0)
+
+
+def test_icp_refine_in_ransac_mode_marks_engagement_and_survives_an_outlier():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+    from embedding_aware_belt_fusion.alignformer.refine import ICP_RANSAC, RefineConfig, _moved, icp_refine
+
+    ego = _boxes_from([[5.0, 0.0], [15.0, 2.0], [25.0, -1.0], [35.0, 3.0], [45.0, 0.0]], [0.0] * 5)
+    cav = ego.clone()
+    cav[:, 0] -= 0.8  # the true correction is +0.8 in x
+    cav[4, 1] += 3.5  # one lane neighbour
+    batch = {"ego_boxes": ego.unsqueeze(0), "cav_boxes": cav.unsqueeze(0)}
+    estimate = PoseEstimate(psi=torch.zeros(1), t=torch.tensor([[0.3, 0.0]]), confidence=torch.ones(1))
+
+    out = icp_refine(estimate, batch, RefineConfig(mode=ICP_RANSAC), heading_lambda=2.0)
+
+    assert out.refined.tolist() == [True]
+    err = float((_moved(cav[:4, :2], out.psi[0], out.t[0]) - ego[:4, :2]).norm(dim=-1).mean())
+    assert err < 0.05

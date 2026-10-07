@@ -74,6 +74,7 @@ from embedding_aware_belt_fusion.alignformer.refine import (
     AgreementConfig,
     DEFAULT_GATES_M,
     DEFAULT_MIN_PAIRS,
+    DEFAULT_INLIER_M,
     REFINE_MODES,
     REFINE_NONE,
     RefineConfig,
@@ -253,6 +254,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--refine-gates", type=float, nargs="+", default=list(DEFAULT_GATES_M), metavar="M",
         help="nearest-neighbour gate per re-solve iteration, metres; chosen on validation",
+    )
+    parser.add_argument(
+        "--refine-inlier-m", type=float, default=DEFAULT_INLIER_M, metavar="M",
+        help="icp_ransac: the consensus gate of the two-pair RANSAC inside every re-solve iteration "
+             "(FreeAlign's 1.0 m by default)",
     )
     parser.add_argument(
         "--refine-min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
@@ -1035,7 +1041,8 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         AbstentionConfig.parse(spec) for spec in (args.abstain_arm or [])
     ]
     refine = RefineConfig(
-        mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs
+        mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs,
+        inlier_m=args.refine_inlier_m,
     )
     agreement = [AgreementConfig(tolerance_m=tol) for tol in (args.agree_tolerance or [])]
     # A disabled arm produces no rows, so recording one in the result file
@@ -1149,7 +1156,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             # The exact re-solve's arms (alignformer.refine): one per
             # IRLS-based arm above, same decision inputs, re-solved (psi, t).
             "refined": (
-                [refined_name(ALIGNFORMER_IRLS)] + [refined_name(c.name) for c in abstention]
+                [refined_name(ALIGNFORMER_IRLS, refine.mode)] + [refined_name(c.name, refine.mode) for c in abstention]
                 if refine.enabled else []
             ),
             "agreement": [

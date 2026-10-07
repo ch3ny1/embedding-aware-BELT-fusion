@@ -128,3 +128,10 @@ def test_main_writes_the_selection_file_and_the_two_arm_lists(tmp_path):
     assert written["chosen"] == "alignformer_abstain_0.2"
     assert (tmp_path / ".arms_for_test").read_text().split() == ["--abstain-arm", "per_pair", "--abstain-arm", "abstain:0.2"]
     assert (tmp_path / ".arms_for_delay").read_text().split() == ["--abstain-arm", "per_pair", "--abstain-arm", "abstain:0.2"]
+
+
+def test_arm_spec_maps_the_ransac_refined_arms_back_to_their_decision_rule():
+    from select_alignformer_arm import arm_spec
+
+    assert arm_spec("alignformer_abstain_0.2_icpr") == arm_spec("alignformer_abstain_0.2")
+    assert arm_spec("alignformer_abstain_0.2_icpr_agree_1") == arm_spec("alignformer_abstain_0.2")

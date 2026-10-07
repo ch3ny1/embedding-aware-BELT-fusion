@@ -48,7 +48,14 @@ from embedding_aware_belt_fusion.alignformer.procrustes import (
 
 REFINE_NONE = "none"
 ICP = "icp"
-REFINE_MODES = (REFINE_NONE, ICP)
+# The same gates and pairs, but every fit is RANSAC over the hard pairs
+# (minimal two-pair samples, a consensus gate, the heading-augmented exact
+# fit over the consensus): the 2026-10-06 diagnosis on val dense pairs at
+# sigma 2 found the pairs 95 % correct and the plain least-squares fit
+# pulled by the 5 % that are a lane neighbour (mean residual 0.60 m, 13 %
+# over 1 m; over the correct pairs alone 0.27 m, 2 %).
+ICP_RANSAC = "icp_ransac"
+REFINE_MODES = (REFINE_NONE, ICP, ICP_RANSAC)
 # The gate schedule: the first gate must admit the soft fit's own residual
 # (0.8 m mean on dense pairs at sigma 2), the last should be near the
 # detector's per-detection centre error (0.25 m RMS, variance.py) so a
@@ -58,7 +65,15 @@ DEFAULT_GATES_M = (2.0, 1.0, 0.5)
 # relative-distance graph stops being degenerate and is the boundary the
 # sweep's sparse slice (``shared_1_2``) is drawn at.
 DEFAULT_MIN_PAIRS = 3
+# FreeAlign's inlier gate (its Section IV-C), so the two robust fits are
+# judged on the same consensus rule.
+DEFAULT_INLIER_M = 1.0
+# Above this many hard pairs the minimal samples are drawn, not enumerated.
+EXHAUSTIVE_PAIRS = 16
+RANSAC_SAMPLES = 512
 REFINED_SUFFIX = "_icp"
+RANSAC_SUFFIX = "_icpr"
+_SUFFIXES = {ICP: REFINED_SUFFIX, ICP_RANSAC: RANSAC_SUFFIX}
 
 
 @dataclass(frozen=True)
@@ -68,10 +83,13 @@ class RefineConfig:
     mode: str = REFINE_NONE
     gates_m: Tuple[float, ...] = DEFAULT_GATES_M
     min_pairs: int = DEFAULT_MIN_PAIRS
+    inlier_m: float = DEFAULT_INLIER_M
 
     def __post_init__(self) -> None:
         if self.mode not in REFINE_MODES:
             raise ValueError(f"mode must be one of {REFINE_MODES}, got {self.mode!r}")
+        if not (self.inlier_m > 0.0 and math.isfinite(self.inlier_m)):
+            raise ValueError(f"inlier_m must be finite and positive, got {self.inlier_m}")
         if len(self.gates_m) == 0:
             raise ValueError("gates_m needs at least one gate")
         if any(not (g > 0.0 and math.isfinite(g)) for g in self.gates_m):
@@ -88,16 +106,18 @@ class RefineConfig:
             "mode": self.mode,
             "gates_m": list(self.gates_m),
             "min_pairs": self.min_pairs,
+            "inlier_m": self.inlier_m,
             "enabled": self.enabled,
         }
 
 
-def refined_name(condition: str) -> str:
-    """The refined arm's condition name: ``alignformer_irls`` -> ``alignformer_icp``,
-    any decision arm -> that name plus ``_icp``."""
+def refined_name(condition: str, mode: str = ICP) -> str:
+    """The refined arm's condition name: ``alignformer_irls`` -> ``alignformer_icp``
+    (``_icpr`` in RANSAC mode), any decision arm -> that name plus the suffix."""
+    suffix = _SUFFIXES[mode]
     if condition == "alignformer_irls":
-        return "alignformer" + REFINED_SUFFIX
-    return condition + REFINED_SUFFIX
+        return "alignformer" + suffix
+    return condition + suffix
 
 
 def _moved(centres: Tensor, psi: Tensor, t: Tensor) -> Tensor:
@@ -143,6 +163,61 @@ def _exact_solve(
     return psi[0], t[0]
 
 
+def se2_from_two_pairs(target: Tensor, source: Tensor) -> Tuple[Tensor, Tensor]:
+    """The SE(2) mapping two ``source`` centres onto two ``target`` centres: ``(psi, t)``.
+
+    The rotation aligns the chord between the two points; the translation
+    moves the rotated midpoint onto the target midpoint. Closed form, no
+    SVD, so hundreds of minimal samples cost nothing.
+    """
+    chord_t, chord_s = target[1] - target[0], source[1] - source[0]
+    psi = torch.atan2(chord_t[1], chord_t[0]) - torch.atan2(chord_s[1], chord_s[0])
+    cos, sin = torch.cos(psi), torch.sin(psi)
+    mid_s, mid_t = source.mean(dim=0), target.mean(dim=0)
+    rotated = torch.stack([cos * mid_s[0] - sin * mid_s[1], sin * mid_s[0] + cos * mid_s[1]])
+    return psi, mid_t - rotated
+
+
+def _minimal_samples(count: int, device) -> Tensor:
+    """``(S, 2)`` index pairs: every pair when there are few, a fixed draw when many."""
+    if count <= EXHAUSTIVE_PAIRS:
+        return torch.combinations(torch.arange(count, device=device), r=2)
+    generator = torch.Generator(device="cpu").manual_seed(count)
+    draws = torch.randint(0, count, (RANSAC_SAMPLES, 2), generator=generator)
+    draws = draws[draws[:, 0] != draws[:, 1]]
+    return draws.to(device)
+
+
+def robust_exact_solve(
+    ego_boxes: Tensor, cav_boxes: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float, inlier_m: float
+) -> Tuple[Tensor, Tensor, Tensor]:
+    """RANSAC over the hard pairs, then the exact heading-augmented fit over the consensus.
+
+    Returns ``(psi, t, inliers)``. Minimal samples are two pairs; the
+    consensus is the sample with the most pairs within ``inlier_m`` of their
+    partner, ties broken by the inlier residual sum. Fewer than two inliers
+    (never, with two-pair samples) falls back to every pair.
+    """
+    target, source = ego_boxes[ego_idx, :2], cav_boxes[cav_idx, :2]
+    count = target.shape[0]
+    if count < 3:
+        psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
+        return psi, t, torch.ones(count, dtype=torch.bool, device=target.device)
+    samples = _minimal_samples(count, target.device)
+    best_count, best_sum, best_inliers = -1, float("inf"), None
+    for a, b in samples.tolist():
+        psi, t = se2_from_two_pairs(target[[a, b]], source[[a, b]])
+        residual = (_moved(source, psi, t) - target).norm(dim=-1)
+        inliers = residual < inlier_m
+        n, total = int(inliers.sum()), float(residual[inliers].sum())
+        if n > best_count or (n == best_count and total < best_sum):
+            best_count, best_sum, best_inliers = n, total, inliers
+    if best_inliers is None or int(best_inliers.sum()) < 2:
+        best_inliers = torch.ones(count, dtype=torch.bool, device=target.device)
+    psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx[best_inliers], cav_idx[best_inliers], heading_lambda)
+    return psi, t, best_inliers
+
+
 def _refine_one(
     psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, config: RefineConfig, heading_lambda: float
 ) -> Tuple[Tensor, Tensor, bool]:
@@ -153,7 +228,10 @@ def _refine_one(
         ego_idx, cav_idx = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), gate)
         if ego_idx.numel() < config.min_pairs:
             break
-        psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
+        if config.mode == ICP_RANSAC:
+            psi, t, _ = robust_exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, config.inlier_m)
+        else:
+            psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
         engaged = True
     return psi, t, engaged
 
@@ -258,8 +336,13 @@ __all__ = [
     "agreement_name",
     "disagreement_m",
     "DEFAULT_GATES_M",
+    "DEFAULT_INLIER_M",
     "DEFAULT_MIN_PAIRS",
     "ICP",
+    "ICP_RANSAC",
+    "RANSAC_SUFFIX",
+    "robust_exact_solve",
+    "se2_from_two_pairs",
     "REFINED_SUFFIX",
     "REFINE_MODES",
     "REFINE_NONE",
