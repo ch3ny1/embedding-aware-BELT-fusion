@@ -261,6 +261,11 @@ def parse_args() -> argparse.Namespace:
              "(FreeAlign's 1.0 m by default)",
     )
     parser.add_argument(
+        "--refine-search-m", type=float, default=0.0, metavar="M",
+        help="icp_ransac: when the first gate finds too few mutual pairs, RANSAC over every ego/CAV pair within "
+             "this radius of the soft estimate before the gates (0 = off)",
+    )
+    parser.add_argument(
         "--refine-min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
         help="hard correspondences below which --refine keeps the soft estimate",
     )
@@ -1042,7 +1047,7 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     ]
     refine = RefineConfig(
         mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs,
-        inlier_m=args.refine_inlier_m,
+        inlier_m=args.refine_inlier_m, search_m=args.refine_search_m,
     )
     agreement = [AgreementConfig(tolerance_m=tol) for tol in (args.agree_tolerance or [])]
     # A disabled arm produces no rows, so recording one in the result file

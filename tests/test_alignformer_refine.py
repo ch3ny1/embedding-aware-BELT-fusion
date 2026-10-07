@@ -448,3 +448,80 @@ def test_icp_refine_in_ransac_mode_marks_engagement_and_survives_an_outlier():
     assert out.refined.tolist() == [True]
     err = float((_moved(cav[:4, :2], out.psi[0], out.t[0]) - ego[:4, :2]).norm(dim=-1).mean())
     assert err < 0.05
+
+
+# ----------------------------------------------------------------------------
+# The search step: engaging when the soft estimate is metres off
+# ----------------------------------------------------------------------------
+
+
+def _scene(n: int = 8, seed: int = 0):
+    import torch
+
+    g = torch.Generator().manual_seed(seed)
+    ego = _boxes_from((torch.rand(n, 2, generator=g) * torch.tensor([60.0, 12.0])).tolist(), [0.0] * n)
+    return ego
+
+
+def test_candidate_search_recovers_a_four_metre_offset_the_gates_cannot():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import ICP_RANSAC, RefineConfig, _moved, candidate_search, mutual_nearest
+
+    ego = _scene()
+    true_psi, true_t = torch.tensor(0.04), torch.tensor([3.5, -2.0])  # cav -> ego
+    cav = ego.clone()
+    cav[:, :2] = _moved(ego[:, :2], -true_psi, torch.zeros(2)) - torch.tensor([3.5, -2.0])  # approximately the inverse
+    cav_true_psi, cav_true_t = None, None
+    # Define the truth exactly: the transform mapping cav centres onto ego centres.
+    from embedding_aware_belt_fusion.alignformer.refine import _exact_solve
+
+    idx = torch.arange(ego.shape[0])
+    cav_true_psi, cav_true_t = _exact_solve(ego, cav, idx, idx, 2.0)
+    start_psi, start_t = torch.zeros(()), torch.zeros(2)  # the "soft estimate": 4 m off
+
+    e0, c0 = mutual_nearest(ego[:, :2], _moved(cav[:, :2], start_psi, start_t), 2.0)
+    psi, t, pairs = candidate_search(start_psi, start_t, ego, cav, radius_m=8.0, inlier_m=1.0, heading_lambda=2.0, min_pairs=3)
+
+    assert e0.numel() < 3  # the 2 m gate would not engage
+    assert pairs >= 3
+    err = float((_moved(cav[:, :2], psi, t) - ego[:, :2]).norm(dim=-1).mean())
+    assert err < 0.1
+
+
+def test_candidate_search_declines_when_no_consensus_reaches_the_floor():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import candidate_search
+
+    ego = _boxes_from([[0.0, 0.0], [30.0, 0.0]], [0.0, 0.0])
+    cav = _boxes_from([[100.0, 100.0], [130.0, 100.0], [160.0, 100.0]], [0.0] * 3)
+
+    psi, t, pairs = candidate_search(torch.zeros(()), torch.zeros(2), ego, cav, radius_m=8.0, inlier_m=1.0, heading_lambda=2.0, min_pairs=3)
+
+    assert pairs == 0 and float(psi) == 0.0 and t.tolist() == [0.0, 0.0]
+
+
+def test_refine_with_search_engages_the_offset_pair_and_leaves_an_engaged_pair_alone():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+    from embedding_aware_belt_fusion.alignformer.refine import ICP_RANSAC, RefineConfig, _moved, icp_refine
+
+    ego = _scene()
+    cav = ego.clone()
+    cav[:, 0] -= 4.0  # true correction +4 m in x; the soft estimate below says +0.3
+    batch = {"ego_boxes": ego.unsqueeze(0), "cav_boxes": cav.unsqueeze(0)}
+    estimate = PoseEstimate(psi=torch.zeros(1), t=torch.tensor([[0.3, 0.0]]), confidence=torch.ones(1))
+
+    without = icp_refine(estimate, batch, RefineConfig(mode=ICP_RANSAC), heading_lambda=2.0)
+    with_search = icp_refine(estimate, batch, RefineConfig(mode=ICP_RANSAC, search_m=8.0), heading_lambda=2.0)
+
+    assert without.refined.tolist() == [False]
+    assert with_search.refined.tolist() == [True]
+    err = float((_moved(cav[:, :2], with_search.psi[0], with_search.t[0]) - ego[:, :2]).norm(dim=-1).mean())
+    assert err < 0.1
+    config = RefineConfig(mode=ICP_RANSAC, search_m=8.0)
+    assert config.to_dict()["search_m"] == 8.0
+    with pytest.raises(ValueError):
+        RefineConfig(mode=ICP_RANSAC, search_m=-1.0)

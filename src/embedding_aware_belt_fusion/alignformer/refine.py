@@ -71,6 +71,15 @@ DEFAULT_INLIER_M = 1.0
 # Above this many hard pairs the minimal samples are drawn, not enumerated.
 EXHAUSTIVE_PAIRS = 16
 RANSAC_SAMPLES = 512
+# The search step (``search_m`` > 0): when the first gate finds fewer than
+# ``min_pairs`` mutual pairs, every ego/CAV pair within ``search_m`` of each
+# other under the soft estimate is a candidate, two-candidate samples are
+# drawn, and the consensus (one-to-one nearest within ``inlier_m``) seeds the
+# gates. The 2026-10-07 diagnosis: on val dense pairs at sigma 2, the 10 %
+# whose soft estimate is 1.3-5.8 m off never engage and keep a 3.4 m error
+# while FreeAlign answers them at 0.5 m; nothing a gate can reach.
+SEARCH_OFF = 0.0
+SEARCH_SAMPLES = 1024
 REFINED_SUFFIX = "_icp"
 RANSAC_SUFFIX = "_icpr"
 _SUFFIXES = {ICP: REFINED_SUFFIX, ICP_RANSAC: RANSAC_SUFFIX}
@@ -84,12 +93,15 @@ class RefineConfig:
     gates_m: Tuple[float, ...] = DEFAULT_GATES_M
     min_pairs: int = DEFAULT_MIN_PAIRS
     inlier_m: float = DEFAULT_INLIER_M
+    search_m: float = SEARCH_OFF
 
     def __post_init__(self) -> None:
         if self.mode not in REFINE_MODES:
             raise ValueError(f"mode must be one of {REFINE_MODES}, got {self.mode!r}")
         if not (self.inlier_m > 0.0 and math.isfinite(self.inlier_m)):
             raise ValueError(f"inlier_m must be finite and positive, got {self.inlier_m}")
+        if not (self.search_m >= 0.0 and math.isfinite(self.search_m)):
+            raise ValueError(f"search_m must be finite and non-negative (0 = off), got {self.search_m}")
         if len(self.gates_m) == 0:
             raise ValueError("gates_m needs at least one gate")
         if any(not (g > 0.0 and math.isfinite(g)) for g in self.gates_m):
@@ -107,6 +119,7 @@ class RefineConfig:
             "gates_m": list(self.gates_m),
             "min_pairs": self.min_pairs,
             "inlier_m": self.inlier_m,
+            "search_m": self.search_m,
             "enabled": self.enabled,
         }
 
@@ -218,12 +231,62 @@ def robust_exact_solve(
     return psi, t, best_inliers
 
 
+def _one_to_one_inliers(target: Tensor, moved: Tensor, inlier_m: float) -> Tuple[Tensor, Tensor]:
+    """Mutually-nearest pairs within ``inlier_m`` under one candidate pose."""
+    return mutual_nearest(target, moved, inlier_m)
+
+
+def candidate_search(
+    psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, *, radius_m: float, inlier_m: float,
+    heading_lambda: float, min_pairs: int,
+) -> Tuple[Tensor, Tensor, int]:
+    """RANSAC over every ego/CAV candidate pair within ``radius_m`` of the soft estimate.
+
+    Returns ``(psi, t, consensus size)``; a consensus below ``min_pairs``
+    returns the input pose with size 0. Samples are two candidate pairs with
+    distinct ego and distinct CAV boxes, drawn by a fixed generator so the
+    answer is a function of the inputs alone.
+    """
+    target, source = ego_boxes[:, :2], cav_boxes[:, :2]
+    if target.shape[0] < min_pairs or source.shape[0] < min_pairs:
+        return psi, t, 0
+    distance = torch.cdist(target, _moved(source, psi, t))
+    ego_c, cav_c = torch.nonzero(distance < radius_m, as_tuple=True)
+    if ego_c.numel() < 2:
+        return psi, t, 0
+    generator = torch.Generator(device="cpu").manual_seed(int(ego_c.numel()))
+    draws = torch.randint(0, ego_c.numel(), (SEARCH_SAMPLES, 2), generator=generator).to(target.device)
+    distinct = (ego_c[draws[:, 0]] != ego_c[draws[:, 1]]) & (cav_c[draws[:, 0]] != cav_c[draws[:, 1]])
+    best_n, best_sum, best = 0, float("inf"), None
+    ego_list, cav_list = ego_c.tolist(), cav_c.tolist()
+    for a, b in draws[distinct].tolist():
+        rows, cols = [ego_list[a], ego_list[b]], [cav_list[a], cav_list[b]]
+        s_psi, s_t = se2_from_two_pairs(target[rows], source[cols])
+        e_idx, c_idx = _one_to_one_inliers(target, _moved(source, s_psi, s_t), inlier_m)
+        n = int(e_idx.numel())
+        if n < best_n:
+            continue
+        total = float((_moved(source[c_idx], s_psi, s_t) - target[e_idx]).norm(dim=-1).sum())
+        if n > best_n or total < best_sum:
+            best_n, best_sum, best = n, total, (e_idx, c_idx)
+    if best is None or best_n < min_pairs:
+        return psi, t, 0
+    s_psi, s_t = _exact_solve(ego_boxes, cav_boxes, best[0], best[1], heading_lambda)
+    return s_psi, s_t, best_n
+
+
 def _refine_one(
     psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, config: RefineConfig, heading_lambda: float
 ) -> Tuple[Tensor, Tensor, bool]:
     """ICP over one sample's valid boxes; ``(psi, t, engaged)``."""
     ego_centres, cav_centres = ego_boxes[:, :2], cav_boxes[:, :2]
     engaged = False
+    if config.search_m > SEARCH_OFF:
+        first = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), config.gates_m[0])[0]
+        if first.numel() < config.min_pairs:
+            psi, t, found = candidate_search(psi, t, ego_boxes, cav_boxes, radius_m=config.search_m,
+                                             inlier_m=config.inlier_m, heading_lambda=heading_lambda, min_pairs=config.min_pairs)
+            engaged = found > 0
     for gate in config.gates_m:
         ego_idx, cav_idx = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), gate)
         if ego_idx.numel() < config.min_pairs:
@@ -341,6 +404,8 @@ __all__ = [
     "ICP",
     "ICP_RANSAC",
     "RANSAC_SUFFIX",
+    "SEARCH_OFF",
+    "candidate_search",
     "robust_exact_solve",
     "se2_from_two_pairs",
     "REFINED_SUFFIX",
