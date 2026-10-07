@@ -28,8 +28,18 @@
   +0.061 AP@0.7 on test. Every table below carries both columns; quote the
   1.0 m one. "Re-calibrating FreeAlign on the reported metric" has the
   whole story.
-- **An exact re-solve after the soft association closes most of the gap,
-  at no new bytes and no training** (2026-10-02, test, 5 seeds): the AP@0.7
+- **The gap is closed on test (2026-10-07, 5 seeds): a RANSAC re-solve over
+  the learned correspondences with a 6 m gate schedule, and an agreement
+  rule that also answers on a consensus of four hard pairs, is +0.012 /
+  +0.026 / +0.028 AP@0.7 / 0.5 / 0.3 over FreeAlign 1.0 m on the sweep
+  mean** (paired SE 0.0001-0.0003), ahead at every sigma including 0 and
+  at every IoU threshold, at FreeAlign's bytes and with no training; every
+  setting was selected on val. The sparse bucket is ours by 0.04-0.05 at
+  every noise level; the dense bucket is ours at 0.4 and 1.0 m and
+  FreeAlign's by 0.006 at 2.0 m. See "The dense bucket" in
+  [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
+- **An exact re-solve after the soft association closed most of the gap
+  first, at no new bytes and no training** (2026-10-02, test, 5 seeds): the AP@0.7
   gap to FreeAlign 1.0 m goes from -0.031 to -0.005 (-0.001 with an
   agreement rule between the soft and the exact fit), AP@0.5 and AP@0.3
   reverse (+0.010 / +0.019), the clean case widens to +0.032; FreeAlign

@@ -256,3 +256,34 @@ done
 # then stage 1 / stage 2 / shrinkage / val sweep as chain T with $AFD2 and the tags stage1_dino_det, stage2_B_dino_det,
 # shrinkage_B_dino_det_calibration_result.json, B_dino_det_icp_val_result.json.
 ```
+
+```bash
+# Chains W-Z: the dense bucket. Diagnosis of the re-solve's residual on the dense val pairs at sigma 2, the RANSAC
+# re-solve (icp_ransac) at two inlier thresholds, two wider gate schedules, the candidate search on top of the 6 m
+# schedule, then the consensus-floor agreement arms on val, TEST with every arm, and delay 1 / 2 / 4 on test.
+python -u scripts/diagnose_v2xreal_dense_resolve.py --config $DET --alignformer-config $AF --split $D/val --stride 3 \
+  --checkpoint $V/stage2_B_boxes_only/best.pth --shrinkage $V/shrinkage_B_boxes_only_calibration_result.json \
+  --freealign-calibration $FAAP --output $V/dense_resolve_diagnosis_val_result.json        # also _icpr / _search (--search-m 8)
+ARMS2="--abstain-arm per_pair --abstain-arm abstain:0.2 --agree-tolerance 0.5 --agree-tolerance 1.0"
+for inl in 1.0 0.5; do
+  sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp_ransac --refine-inlier-m $inl \
+    --output $V/B_boxes_only_icpr${inl}_val_result.json
+done
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp_ransac --refine-inlier-m 1.0 \
+  --refine-gates 4.0 2.0 1.0 0.5 --output $V/B_boxes_only_icpr1.0_wide4_val_result.json
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp_ransac --refine-inlier-m 1.0 \
+  --refine-gates 6.0 3.0 1.5 0.75 0.5 --output $V/B_boxes_only_icpr1.0_wide6_val_result.json
+for r in 8 12; do
+  sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMS2 --refine icp_ransac --refine-inlier-m 1.0 \
+    --refine-gates 6.0 3.0 1.5 0.75 0.5 --refine-search-m $r --output $V/B_boxes_only_icpr1.0_search${r}_val_result.json
+done
+# Chain Z: the selected re-solve with the consensus-floor arms (floors 4 and 6 pre-registered); val, test, delay.
+ARMSZ="$ARMS2 --agree-consensus-floor 4 --agree-consensus-floor 6 --refine icp_ransac --refine-inlier-m 1.0 \
+  --refine-gates 6.0 3.0 1.5 0.75 0.5 --refine-min-pairs 3"
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMSZ --output $V/B_boxes_only_icpr_cons_val_result.json
+sweep B_boxes_only $AF test 5 --freealign-calibration $FAAP $ARMSZ --output $V/B_boxes_only_icpr_test_result.json
+for d in 1 2 4; do
+  sweep B_boxes_only $AF test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --freealign-calibration $FAAP $ARMSZ \
+    --output $V/B_boxes_only_icpr_delay${d}_test_result.json
+done
+```

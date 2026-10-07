@@ -677,3 +677,140 @@ leaves behind a trained cross-view head that works (0.835 on detections,
 cue-agnostic probe, all reproducible; and a sharper picture of the
 remaining gap to FreeAlign, which is still the dense bucket at large noise
 and belongs to the solver, not to association.
+
+## The dense bucket: a hard fit over the learned correspondences (2026-10-06 to 07)
+
+Everything above left one cell to FreeAlign: pairs sharing three or more
+objects at large noise, two thirds of the frames. The re-solve had taken
+the deployed arm from -0.031 to -0.005 AP@0.7 there, and the question was
+whether the rest was association (which the appearance work had just
+ruled out) or the solver. A diagnostic on the 194 dense val pairs at
+sigma 2 (`scripts/diagnose_v2xreal_dense_resolve.py`, stride 3, one
+seed; `dense_resolve_diagnosis{,_icpr,_search}_val_result.json`) settled
+it.
+
+**Diagnosis.** The re-solve's final correspondences are 95 % precise and
+98 % complete against the ground-truth identities. Its least-squares fit
+over them nevertheless has a mean answered residual of 0.60 m (median
+0.25, 13 % over 1 m). The same fit over only the correct pairs is 0.28 m;
+a RANSAC fit over the re-solve's own pairs 0.27 m; the fit over oracle
+correspondences 0.27 m; FreeAlign 4.31 m mean (12 % over 1 m, a tail of
+wrong answers behind a 0.26 m median). So the residual is not the
+correspondences but the fit: a handful of wrong pairs with full weight
+pull a least-squares answer, and a consensus fit over the same pairs does
+not let them. Nineteen of the 194 pairs never engaged the re-solve at all
+(the first gate found fewer than three pairs under a soft estimate that
+was 3.4 m off on average); a candidate search around the soft estimate
+engaged every one of them at 0.23 m. With both, the mean residual on the
+bucket is 0.28 m and 2 % of pairs are over 1 m.
+
+**The RANSAC re-solve** (`refine.py`, mode `icp_ransac`, suffix `_icpr`).
+Each ICP stage fits SE(2) by two-point RANSAC instead of least squares:
+every pair of correspondences proposes a transform (exhaustively up to 16
+pairs, 512 fixed draws beyond), the transform with the largest consensus
+at `inlier_m` 1.0 wins, and the heading-augmented exact fit over its
+inliers is the stage's answer. The final stage's inlier count is exported
+as the estimate's `consensus`. A `candidate_search` (`--refine-search-m`)
+samples poses around the soft estimate when the first gate finds fewer
+than `min_pairs`. Val, 3 seeds, Wald 0.2, the chain-M arms
+(`B_boxes_only_icpr*_val_result.json`; FreeAlign 1.0 m .3702 / .5160 /
+.5599):
+
+| val sweep mean, re-solve arm | AP@0.7 | AP@0.5 | AP@0.3 | vs FreeAlign (paired) | dense sigma 2 |
+|---|---:|---:|---:|---:|---:|
+| ICP least squares, gates 2 / 1 / 0.5 (deployed) | .3688 | .5280 | .5755 | -0.0019 +/- 0.0004 | .531 |
+| RANSAC, inlier 1.0, same gates | .3712 | .5304 | .5770 | +0.0004 +/- 0.0005 | .539 |
+| RANSAC, inlier 0.5 | .3720 | .5302 | .5772 | +0.0011 +/- 0.0006 | .538 |
+| RANSAC, gates 4 / 2 / 1 / 0.5 | .3725 | .5325 | .5788 | +0.0016 +/- 0.0006 | .548 |
+| **RANSAC, gates 6 / 3 / 1.5 / 0.75 / 0.5** | **.3730** | **.5326** | **.5789** | **+0.0021 +/- 0.0006** | **.548** |
+| + candidate search 8 m / 12 m | .3724 | .5323 | .5788 | +0.0015 +/- 0.0005 | .545 |
+
+The hard fit is worth +0.002 to +0.004 over least squares and a wide first
+gate another +0.002: a 6 m gate engages the pairs the search was built
+for, and the search on top of it adds nothing. Inlier 0.5 and 1.0 are a
+tie; 1.0, the pre-registered value, stays. FreeAlign still holds the dense
+bucket at sigma 2 (.548 against .562).
+
+**The consensus floor** (`AgreementConfig.consensus_floor`, arm suffix
+`_c<floor>`). The agreement rule answers only when the soft and the exact
+fit agree within the tolerance; on the dense pairs at sigma 2 that is
+exactly backwards, because the pairs the re-solve fixes are the ones where
+the soft estimate was metres off while the exact fit rests on a consensus
+of five or more. The rule now also answers when the exact fit's consensus
+is at least `floor` hard pairs. Floors 4 and 6 were pre-registered and
+swept on val with tolerances 0.5 and 1.0 m
+(`B_boxes_only_icpr_cons_val_result.json`):
+
+| val sweep mean, 6 m schedule | AP@0.7 | AP@0.5 | AP@0.3 | vs FreeAlign (paired) | dense sigma 2 | sigma 0 |
+|---|---:|---:|---:|---:|---:|---:|
+| re-solve, no agreement | .3730 | .5326 | .5789 | +0.0021 +/- 0.0006 | .548 | .4329 |
+| agree 1.0 | .3756 | .5326 | .5766 | +0.0049 +/- 0.0003 | .522 | .4139 |
+| agree 0.5 | .3678 | .5212 | .5681 | -0.0029 +/- 0.0006 | .482 | .4174 |
+| **agree 1.0, floor 4** | **.3803** | **.5389** | **.5821** | **+0.0096 +/- 0.0003** | **.570** | .4140 |
+| agree 1.0, floor 6 | .3774 | .5351 | .5792 | +0.0067 +/- 0.0003 | .555 | .4139 |
+| agree 0.5, floor 4 | .3787 | .5358 | .5799 | +0.0081 +/- 0.0002 | .563 | .4162 |
+| per_pair, agree 1.0, floor 4 | .3788 | .5346 | .5766 | +0.0081 +/- 0.0003 | .570 | .4093 |
+| FreeAlign 1.0 m | .3702 | .5160 | .5599 | | .562 | .4144 |
+
+Agreement at 1.0 m with a floor of four is ahead of FreeAlign at every
+sigma from 0.2 (by 0.004 at 0.2, 0.011 at 2.0; .4140 against .4144 at 0)
+and takes the dense bucket at sigma 2 for the first time (.570 against
+.562). Coverage at sigma 2 goes 0.64 -> 0.70 at an unchanged 0.25 m
+answered error on the dense pairs: the floor admits exactly the pairs the
+plain rule threw away. Selected before test: Wald 0.2, RANSAC re-solve,
+inlier 1.0, gates 6 / 3 / 1.5 / 0.75 / 0.5, agreement 1.0 m, floor 4.
+
+**Test** (2,172 frames, 5 paired seeds, every arm above;
+`B_boxes_only_icpr_test_result.json`):
+
+| test AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 | sweep mean |
+|---|---|---|---|---|---|---|---|---|---|
+| abstain 0.2 (soft) | .3932 | .3404 | .3100 | .3032 | .2993 | .2940 | .2797 | .2661 | .3107 |
+| abstain 0.2, RANSAC re-solve | **.4057** | .3554 | .3288 | .3265 | .3259 | .3265 | .3274 | .3267 | .3404 |
+| abstain 0.2, re-solve, agree 1.0 | .3902 | .3695 | .3478 | .3413 | .3321 | .3278 | .3149 | .3053 | .3411 |
+| **abstain 0.2, re-solve, agree 1.0, floor 4** | .3893 | **.3721** | **.3553** | **.3501** | **.3456** | **.3428** | **.3385** | **.3349** | **.3536** |
+| abstain 0.2, re-solve, agree 1.0, floor 6 | .3903 | .3701 | .3495 | .3432 | .3353 | .3317 | .3235 | .3185 | .3453 |
+| FreeAlign 1.0 m | .3702 | .3577 | .3420 | .3362 | .3331 | .3321 | .3303 | .3301 | .3415 |
+
+| test, paired by seed vs FreeAlign (5 seeds) | AP@0.7 | AP@0.5 | AP@0.3 |
+|---|---|---|---|
+| abstain 0.2 (soft) | -0.0307 +/- 0.0003 | -0.0074 +/- 0.0005 | +0.0110 +/- 0.0003 |
+| re-solve (RANSAC) | -0.0011 +/- 0.0002 | +0.0165 +/- 0.0004 | +0.0252 +/- 0.0003 |
+| re-solve, agree 1.0 | -0.0005 +/- 0.0002 | +0.0097 +/- 0.0003 | +0.0153 +/- 0.0003 |
+| **re-solve, agree 1.0, floor 4** | **+0.0120 +/- 0.0001** | **+0.0262 +/- 0.0002** | **+0.0284 +/- 0.0003** |
+| re-solve, agree 1.0, floor 6 | +0.0037 +/- 0.0002 | +0.0151 +/- 0.0002 | +0.0201 +/- 0.0003 |
+| re-solve, agree 0.5, floor 4 | +0.0084 +/- 0.0001 | +0.0213 +/- 0.0003 | +0.0254 +/- 0.0003 |
+
+Sweep means: selected arm .3536 / .5196 / .5671 against FreeAlign .3415 /
+.4933 / .5390. The selected arm is ahead at every sigma including 0
+(.3893 against .3702) and at every sigma at AP@0.5 (.561 -> .479 against
+.528 -> .466) and AP@0.3 (.594 -> .522 against .560 -> .506). The test
+gain is larger than val's (+0.012 against +0.010) and its order among the
+arms is val's. By bucket (AP@0.7, uncorrected | selected | re-solve only |
+FreeAlign | oracle):
+
+| test | sigma | uncorrected | selected | re-solve | FreeAlign | oracle |
+|---|---|---|---|---|---|---|
+| 3+ shared (1,093 frames) | 0 | .437 | .405 | .425 | .399 | .437 |
+| | 0.4 | .223 | .401 | .370 | .396 | .437 |
+| | 1.0 | .166 | .397 | .377 | .395 | .437 |
+| | 2.0 | .173 | .389 | .380 | **.395** | .437 |
+| 1-2 shared (373 frames) | 0 | .426 | .368 | .380 | .376 | .426 |
+| | 1.0 | .198 | .252 | .249 | .207 | .426 |
+| | 2.0 | .191 | .244 | .241 | .200 | .426 |
+| 0 shared (156 frames) | 2.0 | .214 | .212 | .212 | .214 | .327 |
+
+The dense bucket is ours at 0.4 and 1.0 and FreeAlign's by 0.006 at
+2.0 (val had it ours at 2.0 by 0.008); the sparse bucket is ours by
+0.04-0.05 at every noise level. At sigma 2 the selected arm answers 72 %
+of pairs with a 0.93 m mean answered translation error (0.41 m on the
+dense pairs) against FreeAlign's 60 % and 8.0 m (6.1 m on the dense
+pairs, the tail behind its sharp median).
+
+**Verdict.** The gap to FreeAlign on V2X-Real is closed on test at every
+sigma and every IoU threshold, with FreeAlign's message and no training:
++0.012 / +0.026 / +0.028 AP@0.7 / 0.5 / 0.3 on the sweep mean, paired
+standard errors 0.0001-0.0003. What did it was a hard consensus fit over
+the learned correspondences and a decision rule that trusts that fit's
+own evidence. The delay runs for the selected arm are in
+`B_boxes_only_icpr_delay{1,2,4}_test_result.json` (below, when they land).
