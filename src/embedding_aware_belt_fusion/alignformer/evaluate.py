@@ -278,6 +278,11 @@ def parse_args() -> argparse.Namespace:
              "the decision arm's own output where the re-solve did not engage.",
     )
     parser.add_argument(
+        "--agree-consensus-floor", type=int, action="append", metavar="N",
+        help="one more agreement arm per tolerance that also answers where the exact fit's consensus has at "
+             "least N hard pairs (alignformer.refine.AgreementConfig); repeatable",
+    )
+    parser.add_argument(
         "--graph-arm", default=None, metavar="CONDITION",
         help="--metric noisy_ap only: add the frame-level pose graph "
              "(alignformer.posegraph) built on this arm's estimates, as the "
@@ -1050,6 +1055,8 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
         inlier_m=args.refine_inlier_m, search_m=args.refine_search_m,
     )
     agreement = [AgreementConfig(tolerance_m=tol) for tol in (args.agree_tolerance or [])]
+    agreement += [AgreementConfig(tolerance_m=tol, consensus_floor=floor)
+                  for floor in (args.agree_consensus_floor or []) for tol in (args.agree_tolerance or [])]
     # A disabled arm produces no rows, so recording one in the result file
     # would advertise a condition nothing measured. Refuse it here rather than
     # filtering it away silently.

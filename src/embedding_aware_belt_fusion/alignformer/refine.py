@@ -277,26 +277,31 @@ def candidate_search(
 
 def _refine_one(
     psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, config: RefineConfig, heading_lambda: float
-) -> Tuple[Tensor, Tensor, bool]:
-    """ICP over one sample's valid boxes; ``(psi, t, engaged)``."""
+) -> Tuple[Tensor, Tensor, bool, int]:
+    """ICP over one sample's valid boxes; ``(psi, t, engaged, consensus)``.
+
+    ``consensus`` is the number of hard pairs behind the final fit (the
+    RANSAC inliers in that mode), zero when nothing engaged."""
     ego_centres, cav_centres = ego_boxes[:, :2], cav_boxes[:, :2]
-    engaged = False
+    engaged, consensus = False, 0
     if config.search_m > SEARCH_OFF:
         first = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), config.gates_m[0])[0]
         if first.numel() < config.min_pairs:
             psi, t, found = candidate_search(psi, t, ego_boxes, cav_boxes, radius_m=config.search_m,
                                              inlier_m=config.inlier_m, heading_lambda=heading_lambda, min_pairs=config.min_pairs)
-            engaged = found > 0
+            engaged, consensus = found > 0, found
     for gate in config.gates_m:
         ego_idx, cav_idx = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), gate)
         if ego_idx.numel() < config.min_pairs:
             break
         if config.mode == ICP_RANSAC:
-            psi, t, _ = robust_exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, config.inlier_m)
+            psi, t, inliers = robust_exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, config.inlier_m)
+            consensus = int(inliers.sum())
         else:
             psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
+            consensus = int(ego_idx.numel())
         engaged = True
-    return psi, t, engaged
+    return psi, t, engaged, consensus
 
 
 def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
@@ -309,7 +314,7 @@ def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
         return estimate
     ego_mask = batch.get("ego_mask")
     cav_mask = batch.get("cav_mask")
-    psis, ts, engaged = [], [], []
+    psis, ts, engaged, consensus = [], [], [], []
     for b in range(estimate.psi.shape[0]):
         ego_boxes = batch["ego_boxes"][b]
         cav_boxes = batch["cav_boxes"][b]
@@ -317,15 +322,17 @@ def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
             ego_boxes = ego_boxes[ego_mask[b]]
         if cav_mask is not None:
             cav_boxes = cav_boxes[cav_mask[b]]
-        psi, t, did = _refine_one(estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda)
+        psi, t, did, count = _refine_one(estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda)
         psis.append(psi)
         ts.append(t)
         engaged.append(did)
+        consensus.append(count)
     return replace(
         estimate,
         psi=torch.stack(psis),
         t=torch.stack(ts),
         refined=torch.tensor(engaged, dtype=torch.bool, device=estimate.psi.device),
+        consensus=torch.tensor(consensus, dtype=torch.long, device=estimate.psi.device),
     )
 
 
@@ -348,20 +355,30 @@ AGREEMENT_SUFFIX = "_agree_"
 
 @dataclass(frozen=True)
 class AgreementConfig:
-    """``tolerance_m``: the soft/exact disagreement, in metres, above which the pair abstains."""
+    """``tolerance_m``: the soft/exact disagreement, in metres, above which the pair abstains,
+    unless ``consensus_floor`` > 0 and the exact fit rests on at least that many hard pairs.
+
+    The floor is the exact fit's own evidence: on val dense pairs at sigma 2
+    the soft estimate is metres off on a tenth of the pairs while the
+    re-solve lands within 0.3 m on a consensus of five or more, and the
+    plain rule abstains on exactly those."""
 
     tolerance_m: float
+    consensus_floor: int = 0
 
     def __post_init__(self) -> None:
         if not (self.tolerance_m > 0.0 and math.isfinite(self.tolerance_m)):
             raise ValueError(f"tolerance_m must be finite and positive, got {self.tolerance_m}")
+        if self.consensus_floor < 0:
+            raise ValueError(f"consensus_floor must be >= 0 (0 = off), got {self.consensus_floor}")
 
     def to_dict(self) -> dict:
-        return {"tolerance_m": self.tolerance_m}
+        return {"tolerance_m": self.tolerance_m, "consensus_floor": self.consensus_floor}
 
 
-def agreement_name(decision_arm: str, tolerance_m: float) -> str:
-    return f"{decision_arm}{AGREEMENT_SUFFIX}{tolerance_m:g}"
+def agreement_name(decision_arm: str, tolerance_m: float, consensus_floor: int = 0) -> str:
+    floor = f"_c{consensus_floor}" if consensus_floor > 0 else ""
+    return f"{decision_arm}{AGREEMENT_SUFFIX}{tolerance_m:g}{floor}"
 
 
 def _wrap(angle: Tensor) -> Tensor:
@@ -386,6 +403,10 @@ def agree(soft, exact, fallback, config: AgreementConfig, heading_lambda: float)
         raise ValueError("the agreement rule needs an estimate the re-solve produced (refined is None)")
     engaged = exact.refined
     agreeing = engaged & (disagreement_m(soft, exact, heading_lambda) <= config.tolerance_m)
+    if config.consensus_floor > 0:
+        if exact.consensus is None:
+            raise ValueError("a consensus floor needs an estimate that carries its consensus (consensus is None)")
+        agreeing = agreeing | (engaged & (exact.consensus >= config.consensus_floor))
     zero_t, zero_psi = torch.zeros_like(exact.t), torch.zeros_like(exact.psi)
     t = torch.where(engaged.unsqueeze(-1), torch.where(agreeing.unsqueeze(-1), exact.t, zero_t), fallback.t)
     psi = torch.where(engaged, torch.where(agreeing, exact.psi, zero_psi), fallback.psi)

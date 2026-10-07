@@ -235,7 +235,7 @@ def sweep_estimators(
         if refine is None or not refine.enabled:
             raise ValueError("the agreement arms compare the soft and the exact fit; enable --refine")
         names.extend(
-            agreement_name(config.name, tol.tolerance_m)
+            agreement_name(config.name, tol.tolerance_m, tol.consensus_floor)
             for tol in agreement
             for config in enabled_abstention
         )
@@ -297,7 +297,7 @@ def unshrunk_conditions(
         else ()
     )
     agreed = tuple(
-        agreement_name(name, tol.tolerance_m) for tol in agreement for name in decision_arms
+        agreement_name(name, tol.tolerance_m, tol.consensus_floor) for tol in agreement for name in decision_arms
     )
     graphed = (graph_name(graph_arm),) if graph_arm is not None else ()
     return UNSHRUNK_CONDITIONS + decision_arms + refined + agreed + graphed
@@ -1035,7 +1035,7 @@ def _alignformer_estimates(
                 estimates[refined_name(config.name, refine.mode)] = decide(refined, config)
             for tol in agreement:
                 for config in enabled:
-                    estimates[agreement_name(config.name, tol.tolerance_m)] = agree(
+                    estimates[agreement_name(config.name, tol.tolerance_m, tol.consensus_floor)] = agree(
                         irls, refined, estimates[config.name], tol, heading_lambda
                     )
     return estimates

@@ -84,6 +84,10 @@ class PoseEstimate:
     # so nothing older changes shape; the agreement rule reads it to know
     # whether a second estimate exists at all for a sample.
     refined: Optional[Tensor] = None
+    # ``(B,)`` long: the hard pairs behind the re-solve's final fit (its
+    # consensus in RANSAC mode), zero where it did not engage. Set by
+    # ``alignformer.refine``; the consensus-floor agreement rule reads it.
+    consensus: Optional[Tensor] = None
 
 
 @dataclass(frozen=True)

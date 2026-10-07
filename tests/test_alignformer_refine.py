@@ -314,7 +314,7 @@ def test_a_pair_the_refinement_did_not_engage_on_takes_the_fallback_decision():
 def test_agreement_config_and_names():
     with pytest.raises(ValueError):
         AgreementConfig(tolerance_m=0.0)
-    assert AgreementConfig(tolerance_m=0.5).to_dict() == {"tolerance_m": 0.5}
+    assert AgreementConfig(tolerance_m=0.5).to_dict() == {"tolerance_m": 0.5, "consensus_floor": 0}
     assert agreement_name("alignformer_abstain_0.2", 0.5) == "alignformer_abstain_0.2_agree_0.5"
     assert agreement_name("alignformer_per_pair", 1.0) == "alignformer_per_pair_agree_1"
 
@@ -525,3 +525,52 @@ def test_refine_with_search_engages_the_offset_pair_and_leaves_an_engaged_pair_a
     assert config.to_dict()["search_m"] == 8.0
     with pytest.raises(ValueError):
         RefineConfig(mode=ICP_RANSAC, search_m=-1.0)
+
+
+# ----------------------------------------------------------------------------
+# The consensus floor on the agreement rule
+# ----------------------------------------------------------------------------
+
+
+def test_the_refined_estimate_carries_its_consensus_size():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+    from embedding_aware_belt_fusion.alignformer.refine import ICP, ICP_RANSAC, RefineConfig, icp_refine
+
+    ego = _scene()
+    cav = ego.clone()
+    cav[:, 0] -= 0.5
+    cav[7, 1] += 3.5  # one lane neighbour among eight
+    batch = {"ego_boxes": ego.unsqueeze(0), "cav_boxes": cav.unsqueeze(0)}
+    estimate = PoseEstimate(psi=torch.zeros(1), t=torch.zeros(1, 2), confidence=torch.ones(1))
+
+    plain = icp_refine(estimate, batch, RefineConfig(mode=ICP), heading_lambda=2.0)
+    robust = icp_refine(estimate, batch, RefineConfig(mode=ICP_RANSAC), heading_lambda=2.0)
+
+    assert plain.consensus.tolist()[0] >= 3
+    assert robust.consensus.tolist() == [7]  # the neighbour is not in the consensus
+    assert icp_refine(estimate, batch, RefineConfig(), heading_lambda=2.0).consensus is None
+
+
+def test_consensus_floor_answers_a_disagreeing_pair_whose_exact_fit_rests_on_enough_pairs():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.model import PoseEstimate
+    from embedding_aware_belt_fusion.alignformer.refine import AgreementConfig, agree, agreement_name
+
+    soft = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[0.0, 0.0], [0.0, 0.0]]), confidence=torch.ones(2))
+    exact = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[3.0, 0.0], [3.0, 0.0]]), confidence=torch.ones(2),
+                         refined=torch.tensor([True, True]), consensus=torch.tensor([6, 3]))
+    fallback = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[9.0, 9.0], [9.0, 9.0]]), confidence=torch.ones(2))
+
+    plain = agree(soft, exact, fallback, AgreementConfig(tolerance_m=1.0), heading_lambda=2.0)
+    floored = agree(soft, exact, fallback, AgreementConfig(tolerance_m=1.0, consensus_floor=5), heading_lambda=2.0)
+
+    assert plain.t.tolist() == [[0.0, 0.0], [0.0, 0.0]]  # both disagree by 3 m: abstain
+    assert floored.t.tolist() == [[3.0, 0.0], [0.0, 0.0]]  # the first rests on 6 pairs: answered
+    assert agreement_name("alignformer_abstain_0.2", 1.0, 5) == "alignformer_abstain_0.2_agree_1_c5"
+    assert agreement_name("alignformer_abstain_0.2", 1.0) == "alignformer_abstain_0.2_agree_1"
+    with pytest.raises(ValueError):
+        agree(soft, exact._replace(consensus=None) if hasattr(exact, "_replace") else PoseEstimate(psi=exact.psi, t=exact.t, confidence=exact.confidence, refined=exact.refined),
+              fallback, AgreementConfig(tolerance_m=1.0, consensus_floor=5), heading_lambda=2.0)
