@@ -111,6 +111,8 @@ def diagnose_pair(pair, ego_ids, cav_ids, true_cav_boxes, estimates, modules, re
     out["residual_icp"] = box_residual_m(cav_boxes, true_cav_boxes, psi, t)
     shipped = estimates[refined_name(ALIGNFORMER_IRLS)]
     out["residual_icp_shipped"] = box_residual_m(cav_boxes, true_cav_boxes, shipped.psi[0], shipped.t[0])
+    if "icpr" in estimates:  # the implemented RANSAC mode, computed by the caller beside the plain one
+        out["residual_icpr_shipped"] = box_residual_m(cav_boxes, true_cav_boxes, estimates["icpr"].psi[0], estimates["icpr"].t[0])
     if last is not None:
         e_idx, c_idx = last
         ce, cc = _correct_only(ego_ids, cav_ids, e_idx, c_idx)
@@ -194,7 +196,8 @@ def main(argv=None) -> None:  # noqa: C901 - one evaluation loop
     from embedding_aware_belt_fusion.alignformer.noisy_fusion import (
         MAX_OBJECTS, _alignformer_estimates, _object_set, _roi_like_the_cache, _truncate_by_score, shared_object_count,
     )
-    from embedding_aware_belt_fusion.alignformer.refine import RefineConfig
+    from embedding_aware_belt_fusion.alignformer.noisy_fusion import ALIGNFORMER_IRLS
+    from embedding_aware_belt_fusion.alignformer.refine import RefineConfig, refined_name
     from embedding_aware_belt_fusion.alignformer.splits import resolve_split
     from embedding_aware_belt_fusion.alignformer.stage2 import load_stage2
     from embedding_aware_belt_fusion.alignformer.v2xreal import build_dataset
@@ -244,6 +247,8 @@ def main(argv=None) -> None:  # noqa: C901 - one evaluation loop
                 true_boxes = correct_boxes(packs[key]["boxes"], psi_true, t_true)
                 pair = _object_set(ego_pack, cav_pack)
                 estimates = _alignformer_estimates(modules, pair, ablate, robust, [], refine, ())
+                ransac_mode = RefineConfig(mode="icp_ransac")
+                estimates["icpr"] = _alignformer_estimates(modules, pair, ablate, robust, [], ransac_mode, ())[refined_name(ALIGNFORMER_IRLS, "icp_ransac")]
                 row = diagnose_pair(pair, ego_pack["gt_ids"], cav_pack["gt_ids"], true_boxes, estimates, modules, refine, fa_config, device)
                 row.update(frame=index, cav=key, sigma=sigma, shared=shared_object_count(ego_pack["gt_ids"], packs[key]["gt_ids"]))
                 rows[f"{sigma:g}"].append(row)
