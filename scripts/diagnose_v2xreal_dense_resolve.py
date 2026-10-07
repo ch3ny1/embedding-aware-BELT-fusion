@@ -113,6 +113,9 @@ def diagnose_pair(pair, ego_ids, cav_ids, true_cav_boxes, estimates, modules, re
     out["residual_icp_shipped"] = box_residual_m(cav_boxes, true_cav_boxes, shipped.psi[0], shipped.t[0])
     if "icpr" in estimates:  # the implemented RANSAC mode, computed by the caller beside the plain one
         out["residual_icpr_shipped"] = box_residual_m(cav_boxes, true_cav_boxes, estimates["icpr"].psi[0], estimates["icpr"].t[0])
+    if "icpr_search" in estimates:
+        out["residual_icpr_search"] = box_residual_m(cav_boxes, true_cav_boxes, estimates["icpr_search"].psi[0], estimates["icpr_search"].t[0])
+        out["search_engaged"] = bool(estimates["icpr_search"].refined[0])
     if last is not None:
         e_idx, c_idx = last
         ce, cc = _correct_only(ego_ids, cav_ids, e_idx, c_idx)
@@ -164,6 +167,13 @@ def summarize(rows: List[Dict]) -> Dict:
                         "recall_mean": float(np.nanmean([r["fa_recall"] for r in fa])) if fa else None}
     engaged = [r for r in rows if r.get("icp_stages")]
     out["icp_engaged"] = len(engaged)
+    out["search_engaged"] = int(sum(1 for r in rows if r.get("search_engaged")))
+    not_engaged = [r for r in rows if not r.get("icp_stages") and "residual_icpr_search" in r]
+    if not_engaged:
+        out["not_engaged_by_gates"] = {"n": len(not_engaged),
+                                      "irls_mean": float(np.mean([r["residual_irls"] for r in not_engaged])),
+                                      "search_mean": float(np.mean([r["residual_icpr_search"] for r in not_engaged])),
+                                      "search_engaged": int(sum(1 for r in not_engaged if r.get("search_engaged")))}
     return out
 
 
@@ -177,6 +187,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--sigmas", type=float, nargs="+", default=[0.8, 2.0])
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--stride", type=int, default=3)
+    parser.add_argument("--search-m", type=float, default=8.0, help="radius of the candidate search variant scored beside the others")
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -249,6 +260,9 @@ def main(argv=None) -> None:  # noqa: C901 - one evaluation loop
                 estimates = _alignformer_estimates(modules, pair, ablate, robust, [], refine, ())
                 ransac_mode = RefineConfig(mode="icp_ransac")
                 estimates["icpr"] = _alignformer_estimates(modules, pair, ablate, robust, [], ransac_mode, ())[refined_name(ALIGNFORMER_IRLS, "icp_ransac")]
+                search_mode = RefineConfig(mode="icp_ransac", search_m=args.search_m)
+                searched = _alignformer_estimates(modules, pair, ablate, robust, [], search_mode, ())[refined_name(ALIGNFORMER_IRLS, "icp_ransac")]
+                estimates["icpr_search"] = searched
                 row = diagnose_pair(pair, ego_pack["gt_ids"], cav_pack["gt_ids"], true_boxes, estimates, modules, refine, fa_config, device)
                 row.update(frame=index, cav=key, sigma=sigma, shared=shared_object_count(ego_pack["gt_ids"], packs[key]["gt_ids"]))
                 rows[f"{sigma:g}"].append(row)
@@ -263,6 +277,7 @@ def main(argv=None) -> None:  # noqa: C901 - one evaluation loop
         for k, v in summ["residuals"].items():
             print(f"  {k:36s} n {v['n']:4d} median {v['median']:.3f} mean {v['mean']:.3f} >0.5m {v['frac_over_0.5m']:.2f} >1m {v['frac_over_1m']:.2f}")
         print("  icp stages:", summ["icp_stage_precision"]); print("  freealign:", summ["freealign"])
+        print("  search engaged:", summ["search_engaged"], "| not engaged by gates:", summ.get("not_engaged_by_gates"))
     print(f"wrote {args.output}")
 
 
