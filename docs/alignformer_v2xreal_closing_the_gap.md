@@ -1,5 +1,7 @@
 # V2X-Real: closing the gap to FreeAlign and to the oracle
 
+Where this work stands against prior work and as a paper is in
+[alignformer_paper_position.md](alignformer_paper_position.md).
 Companion to [alignformer_v2xreal.md](alignformer_v2xreal.md), which carries
 the three-trunk comparison, the FreeAlign re-calibration and the test and
 delay tables. This file holds the AlignFormer-side work that followed the
