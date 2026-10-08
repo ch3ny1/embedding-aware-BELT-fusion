@@ -661,3 +661,63 @@ def test_gated_agreement_never_overrides_the_decision_arms_abstention():
     assert agreement_name("alignformer_abstain_0.2", 1.0, 4, gated=True) == "alignformer_abstain_0.2_agree_1_c4_g"
     assert agreement_name("alignformer_abstain_0.2", 1.0, 0, gated=True) == "alignformer_abstain_0.2_agree_1_g"
     assert AgreementConfig(tolerance_m=1.0, gated=True).to_dict() == {"tolerance_m": 1.0, "consensus_floor": 0, "gated": True}
+
+
+# ----------------------------------------------------------------------------
+# The batched consensus search reproduces the per-sample loop
+# ----------------------------------------------------------------------------
+
+
+def _loop_consensus(target, source, samples, inlier_m):
+    """The per-sample loop the batched search replaced, kept here as the reference."""
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import _moved, se2_from_two_pairs
+
+    best_count, best_sum, best = -1, float("inf"), None
+    for a, b in samples.tolist():
+        psi, t = se2_from_two_pairs(target[[a, b]], source[[a, b]])
+        residual = (_moved(source, psi, t) - target).norm(dim=-1)
+        inliers = residual < inlier_m
+        n, total = int(inliers.sum()), float(residual[inliers].sum())
+        if n > best_count or (n == best_count and total < best_sum):
+            best_count, best_sum, best = n, total, inliers
+    return best
+
+
+def test_the_batched_consensus_search_picks_the_loops_sample():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import _best_consensus, _minimal_samples
+
+    g = torch.Generator().manual_seed(11)
+    for trial in range(40):
+        count = int(torch.randint(3, 40, (1,), generator=g))
+        target = torch.rand(count, 2, generator=g) * 60.0
+        psi, t = float(torch.rand(1, generator=g) * 0.3), torch.rand(2, generator=g) * 2.0
+        cos, sin = math.cos(psi), math.sin(psi)
+        source = torch.stack([cos * target[:, 0] + sin * target[:, 1], -sin * target[:, 0] + cos * target[:, 1]], -1) - t
+        source = source + torch.randn(count, 2, generator=g) * 0.15
+        outliers = torch.rand(count, generator=g) < 0.25
+        source[outliers] += torch.randn(int(outliers.sum()), 2, generator=g) * 4.0
+        samples = _minimal_samples(count, target.device)
+
+        batched = _best_consensus(target, source, samples, inlier_m=1.0)
+        looped = _loop_consensus(target, source, samples, inlier_m=1.0)
+
+        assert batched.tolist() == looped.tolist(), trial
+
+
+def test_se2_from_pair_samples_matches_the_single_pair_solve():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import se2_from_pair_samples, se2_from_two_pairs
+
+    g = torch.Generator().manual_seed(2)
+    target, source = torch.rand(5, 2, 2, generator=g) * 20, torch.rand(5, 2, 2, generator=g) * 20
+
+    psi, t = se2_from_pair_samples(target, source)
+
+    for i in range(5):
+        psi_i, t_i = se2_from_two_pairs(target[i], source[i])
+        assert torch.allclose(psi[i], psi_i) and torch.allclose(t[i], t_i, atol=1e-5)

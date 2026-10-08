@@ -222,6 +222,34 @@ def se2_from_two_pairs(target: Tensor, source: Tensor) -> Tuple[Tensor, Tensor]:
     return psi, mid_t - rotated
 
 
+def se2_from_pair_samples(target: Tensor, source: Tensor) -> Tuple[Tensor, Tensor]:
+    """:func:`se2_from_two_pairs` over ``(S, 2, 2)`` samples at once: ``(psi (S,), t (S, 2))``."""
+    chord_t, chord_s = target[:, 1] - target[:, 0], source[:, 1] - source[:, 0]
+    psi = torch.atan2(chord_t[:, 1], chord_t[:, 0]) - torch.atan2(chord_s[:, 1], chord_s[:, 0])
+    cos, sin = torch.cos(psi), torch.sin(psi)
+    mid_s, mid_t = source.mean(dim=1), target.mean(dim=1)
+    rotated = torch.stack([cos * mid_s[:, 0] - sin * mid_s[:, 1], sin * mid_s[:, 0] + cos * mid_s[:, 1]], dim=-1)
+    return psi, mid_t - rotated
+
+
+def _best_consensus(target: Tensor, source: Tensor, samples: Tensor, inlier_m: float) -> Tensor:
+    """``(K,)`` bool: the inliers of the sample with the most pairs within
+    ``inlier_m``, ties to the smallest inlier residual sum, then the first
+    sample. Every sample is scored in one batch; the per-sample loop this
+    replaces was kernel-launch bound (2,560 launches per pair per stage)."""
+    psi, t = se2_from_pair_samples(target[samples], source[samples])
+    cos, sin = torch.cos(psi)[:, None], torch.sin(psi)[:, None]
+    x, y = source[None, :, 0], source[None, :, 1]
+    moved = torch.stack([cos * x - sin * y, sin * x + cos * y], dim=-1) + t[:, None, :]
+    residual = (moved - target[None]).norm(dim=-1)
+    inliers = residual < inlier_m
+    count = inliers.sum(dim=1)
+    total = (residual * inliers).sum(dim=1)
+    candidates = count == count.max()
+    total = torch.where(candidates, total, torch.full_like(total, float("inf")))
+    return inliers[int(torch.argmin(total))]
+
+
 def _minimal_samples(count: int, device) -> Tensor:
     """``(S, 2)`` index pairs: every pair when there are few, a fixed draw when many."""
     if count <= EXHAUSTIVE_PAIRS:
@@ -249,15 +277,8 @@ def robust_exact_solve(
         psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, weights)
         return psi, t, torch.ones(count, dtype=torch.bool, device=target.device)
     samples = _minimal_samples(count, target.device)
-    best_count, best_sum, best_inliers = -1, float("inf"), None
-    for a, b in samples.tolist():
-        psi, t = se2_from_two_pairs(target[[a, b]], source[[a, b]])
-        residual = (_moved(source, psi, t) - target).norm(dim=-1)
-        inliers = residual < inlier_m
-        n, total = int(inliers.sum()), float(residual[inliers].sum())
-        if n > best_count or (n == best_count and total < best_sum):
-            best_count, best_sum, best_inliers = n, total, inliers
-    if best_inliers is None or int(best_inliers.sum()) < 2:
+    best_inliers = _best_consensus(target, source, samples, inlier_m)
+    if int(best_inliers.sum()) < 2:
         best_inliers = torch.ones(count, dtype=torch.bool, device=target.device)
     kept = None if weights is None else torch.cat([weights[:, :count][:, best_inliers], weights[:, count:][:, best_inliers]], dim=1)
     psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx[best_inliers], cav_idx[best_inliers], heading_lambda, kept)
@@ -499,6 +520,7 @@ __all__ = [
     "candidate_search",
     "robust_exact_solve",
     "se2_from_two_pairs",
+    "se2_from_pair_samples",
     "REFINED_SUFFIX",
     "REFINE_MODES",
     "REFINE_NONE",
