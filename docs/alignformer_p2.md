@@ -2877,3 +2877,96 @@ Five things follow, in priority order:
   to gate the correction on a pose-uncertainty signal rather than to remove the
   regression. Whether that framing is acceptable for publication is a judgement
   call, not a measurement, and is recorded here as open.
+
+## The V2X-Real pipeline on OPV2V (2026-10-07): FreeAlign re-selected, the selected arm does not transfer
+
+[alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md)
+closed the gap to FreeAlign on V2X-Real test with a RANSAC re-solve over the
+learned correspondences and an agreement rule with a consensus floor
+(`alignformer_abstain_0.2_agree_1_c4`). The paper needs the same pipeline on
+both datasets, so it was carried to OPV2V unchanged (chain O: every setting
+as selected on V2X-Real val, nothing re-selected here), with FreeAlign given
+the same re-calibration it got on V2X-Real.
+
+**FreeAlign by its own val AP.** The MAE grid had picked a 0.5 m edge
+threshold. One val sweep per threshold through the deployed pipeline
+(`fathr{0.3,0.5,1,1.5}_val_result.json`, 3 seeds, 958 frames), argmax of
+FreeAlign's AP@0.7 sweep mean:
+
+| edge threshold | 0.3 m | 0.5 m (MAE pick) | 1.0 m | 1.5 m |
+|---|---:|---:|---:|---:|
+| FreeAlign val AP@0.7 sweep mean | .8740 | .8959 | .8990 | **.8995** |
+
+1.5 m is selected (`freealign_calibration_valap_result.json`; 1.0 and 1.5 m
+are within 0.0005, as they were on V2X-Real). Every OPV2V number below and
+every OPV2V test number from here on uses it; the FreeAlign rows earlier in
+this document are at 0.5 m and are 0.004 lower on the sweep mean than this
+one would be.
+
+**The V2X-Real arm on OPV2V val** (`icpr_val_result.json`, 3 seeds, every
+chain-Z arm; paired differences to FreeAlign 1.5 m):
+
+| val sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | vs FreeAlign AP@0.7 (paired) | sigma 0 |
+|---|---:|---:|---:|---:|---:|
+| FreeAlign 1.5 m | .8995 | .9595 | .9642 | | .8995 |
+| per_pair (deployed) | **.9013** | .9601 | .9639 | **+0.0013 +/- 0.0003** | **.9185** |
+| abstain 0.2 | .8999 | .9601 | .9640 | -0.0002 +/- 0.0003 | |
+| abstain 0.2, RANSAC re-solve | .8903 | .9574 | .9633 | -0.0093 +/- 0.0003 | .9097 |
+| abstain 0.2, re-solve, agree 1.0 | .8871 | .9562 | .9628 | -0.0124 +/- 0.0000 | .8882 |
+| abstain 0.2, re-solve, agree 1.0, floor 4 (V2X-Real's arm) | .8878 | .9569 | .9634 | -0.0115 +/- 0.0001 | .8882 |
+| oracle | .9199 | .9616 | .9645 | | |
+
+The deployed per-pair rule beats the re-selected FreeAlign by 0.0013 on
+OPV2V val, and every arm that uses the exact fit loses by 0.009-0.012. Two
+things, both visible in the pose diagnostics, and neither of them the
+association (OPV2V has 897 of 958 val frames in the dense bucket):
+
+- **The unweighted hard fit is less precise than the weighted soft one
+  here.** At sigma 1 the soft arm's answered translation error is 0.108 m
+  and the re-solve's 0.112 m, yaw 0.12 against 0.14 deg, and the AP@0.7
+  sweep is .900 against .888 at every sigma from 0.4. OPV2V's detections
+  are precise and the Sinkhorn association already sharp (Top-1 .998), so
+  there is no blur for the hard fit to remove; what it removes instead is
+  the inverse-variance weighting (the soft solve's weights are the fitted
+  confidence model; the exact fit's are ones) and the low-confidence far
+  objects its 0.5 m last gate drops. On V2X-Real the blur dominated and the
+  exact fit won anyway.
+- **The agreement rule answers every pair at sigma 0.** It takes the exact
+  fit wherever the re-solve engaged and the two fits agree, regardless of
+  the Wald decision, so coverage at sigma 0 goes from 0.24 (Wald 0.2) to
+  1.00 and the clean case from .9097 to .8882. On V2X-Real test the same
+  rule doubled sigma-0 coverage (0.32 -> 0.68) and cost 0.016 there, paid
+  for by its gains from 0.2 m up.
+
+**Two pre-registered fixes, on val of both datasets before anything is
+selected** (chain P; commit dbfc54c):
+
+1. `--refine-weighted` (arm suffix `w`): the final exact fit over the hard
+   pairs is weighted by the same confidence-based precisions the soft solve
+   uses (`refine.pair_weights`, the fitted `CorrespondenceVarianceModel`),
+   so the re-solve keeps the decided correspondence and the right weights.
+2. `--agree-gated` (suffix `_g`): the agreement rule only ever chooses
+   between the exact fit and abstention on a pair the decision arm
+   corrected; a pair it abstained on stays uncorrected.
+
+Candidates: `abstain_0.2` x {`icpr`, `icprw`} x {`agree_1_c4`,
+`agree_1_c4_g`}. Selection rule, fixed before reading any result: the one
+arm with the largest mean over the two datasets of the paired sweep-mean
+AP@0.7 difference to FreeAlign (val-AP-selected on each); ties within
+0.001 to the simpler arm. The selected arm then goes to test on both. The
+pre-registered chain-O test (every chain-Z arm, FreeAlign 1.5 m) keeps
+running and is reported as the "carried unchanged" number regardless.
+Files: `B_boxes_only_icpr{_gated,w}_val_result.json` (V2X-Real),
+`icpr{_gated,w}_val_result.json` (OPV2V).
+
+```bash
+# Chain O (OPV2V): FreeAlign threshold files from the MAE calibration, one val sweep per threshold in parallel,
+# argmax of FreeAlign's AP@0.7 sweep mean -> freealign_calibration_valap_result.json; then val / test / delay with
+# the chain-Z arms. Chain P: the two fixes on val of both datasets.  Scripts: scratchpad opv2v_chain_o.sh, chain_p.sh;
+# the evaluate invocation is the chain-Z one with --config configs/alignformer_detector_r140.yaml
+# --alignformer-config configs/alignformer_r140.yaml --split /media/chenyi/basement2/cache/opv2v_splits/val
+# --checkpoint outputs/alignformer/r140/stage2_B_matched_boxes_only/best.pth
+# --shrinkage outputs/alignformer/r140/shrinkage_matched_boxes_only_calibration_result.json
+# --freealign-calibration outputs/alignformer/r140/freealign_calibration_valap_result.json
+# and, for chain P, --agree-gated and (second run) --refine-weighted.
+```
