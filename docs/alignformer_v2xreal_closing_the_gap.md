@@ -840,3 +840,28 @@ sigma 2 is a tie at 100 ms (.308 against .309) and ours at 200 / 400 ms
 at every delay. The re-solve alone already leads FreeAlign at AP@0.7 under
 delay (+0.003 / +0.008 / +0.004), where the least-squares re-solve had been a
 draw; the consensus floor adds 0.008-0.012 on top.
+
+**The two OPV2V-motivated variants on V2X-Real val** (2026-10-08, chain P;
+the OPV2V side and the reason for them are in
+[alignformer_p2.md](alignformer_p2.md), last section). A weighted exact
+refit (`--refine-weighted`, arms `_icprw`) and a gated agreement rule that
+never overrides the decision arm's abstention (`--agree-gated`, suffix
+`_g`), 3 seeds, the chain-Z arms
+(`B_boxes_only_icpr_gated_val_result.json`, `B_boxes_only_icprw_val_result.json`):
+
+| val sweep mean AP@0.7, Wald 0.2 base | unweighted | weighted | sigma 0 (unw.) | sigma-0 coverage |
+|---|---:|---:|---:|---:|
+| re-solve only | .3730 | .3734 | .4329 | 0.24 |
+| agree 1.0, floor 4 (selected) | **.3803** | **.3804** | .4140 | 0.68 |
+| agree 1.0, floor 4, gated | .3720 | .3721 | .4331 | 0.24 |
+| agree 1.0 | .3756 | .3762 | .4139 | 0.67 |
+| agree 1.0, gated | .3696 | .3698 | .4333 | 0.24 |
+| FreeAlign 1.0 m | .3702 | | .4144 | |
+
+The weighting is neutral here (+0.0001 to +0.0007 on every arm). Gating
+restores the clean case (.4140 -> .4331, above FreeAlign's .4144) and gives
+back most of the sweep-mean gain (.3803 -> .3720): on V2X-Real the
+agreement rule's extra coverage from 0.2 m up, pairs the Wald test
+declined but the two fits agree on, is where the floor's gain lives (sigma 2
+.3615 against .3497 gated). The dataset-agnostic choice is made by the
+pre-registered rule once the OPV2V side is in.
