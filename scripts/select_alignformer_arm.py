@@ -83,7 +83,7 @@ def arm_spec(condition: str) -> str:
     ``alignformer_icp`` reports the deployed ``per_pair``.
     """
     base = condition.split("_agree_")[0]
-    for suffix in ("_icpr", "_icp"):
+    for suffix in ("_icprw", "_icpw", "_icpr", "_icp"):
         if base.endswith(suffix):
             base = base[: -len(suffix)]
             break
@@ -104,7 +104,7 @@ def _is_number(text: str) -> bool:
 
 def _is_per_pair_arm(condition: str) -> bool:
     return (condition.startswith("alignformer_") and condition not in GLOBAL_RULES
-            and condition not in ("alignformer_icp", "alignformer_icpr"))
+            and condition not in ("alignformer_icp", "alignformer_icpr", "alignformer_icpw", "alignformer_icprw"))
 
 
 def arms_for_test(ranked: Sequence[str]) -> list:

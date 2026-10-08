@@ -227,15 +227,15 @@ def sweep_estimators(
                 "the exact re-solve refines the robust IRLS solve; enable "
                 "--robust-solve, or drop --refine"
             )
-        names.append(refined_name(ALIGNFORMER_IRLS, refine.mode))
-        names.extend(refined_name(config.name, refine.mode) for config in enabled_abstention)
+        names.append(refined_name(ALIGNFORMER_IRLS, refine.mode, refine.weighted))
+        names.extend(refined_name(config.name, refine.mode, refine.weighted) for config in enabled_abstention)
     # The agreement rule (alignformer.refine) needs both estimates, so it
     # exists only beside the re-solve: one arm per decision arm per tolerance.
     if agreement:
         if refine is None or not refine.enabled:
             raise ValueError("the agreement arms compare the soft and the exact fit; enable --refine")
         names.extend(
-            agreement_name(config.name, tol.tolerance_m, tol.consensus_floor)
+            agreement_name(config.name, tol.tolerance_m, tol.consensus_floor, tol.gated)
             for tol in agreement
             for config in enabled_abstention
         )
@@ -292,12 +292,12 @@ def unshrunk_conditions(
     """
     decision_arms = tuple(config.name for config in abstention if config.enabled)
     refined = (
-        tuple(refined_name(name, refine.mode) for name in decision_arms)
+        tuple(refined_name(name, refine.mode, refine.weighted) for name in decision_arms)
         if refine is not None and refine.enabled
         else ()
     )
     agreed = tuple(
-        agreement_name(name, tol.tolerance_m, tol.consensus_floor) for tol in agreement for name in decision_arms
+        agreement_name(name, tol.tolerance_m, tol.consensus_floor, tol.gated) for tol in agreement for name in decision_arms
     )
     graphed = (graph_name(graph_arm),) if graph_arm is not None else ()
     return UNSHRUNK_CONDITIONS + decision_arms + refined + agreed + graphed
@@ -1029,13 +1029,13 @@ def _alignformer_estimates(
             # The refined estimate keeps the IRLS statistic, so the same
             # decision rules apply to it unchanged (alignformer.refine).
             heading_lambda = float(getattr(modules["pose"], "heading_lambda", DEFAULT_HEADING_LAMBDA))
-            refined = icp_refine(irls, enriched, refine, heading_lambda)
-            estimates[refined_name(ALIGNFORMER_IRLS, refine.mode)] = refined
+            refined = icp_refine(irls, enriched, refine, heading_lambda, getattr(modules["pose"], "variance_model", None))
+            estimates[refined_name(ALIGNFORMER_IRLS, refine.mode, refine.weighted)] = refined
             for config in enabled:
-                estimates[refined_name(config.name, refine.mode)] = decide(refined, config)
+                estimates[refined_name(config.name, refine.mode, refine.weighted)] = decide(refined, config)
             for tol in agreement:
                 for config in enabled:
-                    estimates[agreement_name(config.name, tol.tolerance_m, tol.consensus_floor)] = agree(
+                    estimates[agreement_name(config.name, tol.tolerance_m, tol.consensus_floor, tol.gated)] = agree(
                         irls, refined, estimates[config.name], tol, heading_lambda
                     )
     return estimates

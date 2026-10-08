@@ -45,6 +45,7 @@ the claim that this decomposition reproduces the same number.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import math
 import time
@@ -264,6 +265,16 @@ def parse_args() -> argparse.Namespace:
         "--refine-search-m", type=float, default=0.0, metavar="M",
         help="icp_ransac: when the first gate finds too few mutual pairs, RANSAC over every ego/CAV pair within "
              "this radius of the soft estimate before the gates (0 = off)",
+    )
+    parser.add_argument(
+        "--refine-weighted", action="store_true",
+        help="--refine: weight the final exact fit over the hard pairs by the soft solve's confidence-based "
+             "precisions (alignformer.refine.pair_weights); arm suffix gains a trailing 'w'",
+    )
+    parser.add_argument(
+        "--agree-gated", action="store_true",
+        help="add, beside every agreement arm, a gated copy (suffix _g) that never answers a pair the decision "
+             "arm abstained on (alignformer.refine.AgreementConfig.gated)",
     )
     parser.add_argument(
         "--refine-min-pairs", type=int, default=DEFAULT_MIN_PAIRS,
@@ -1052,11 +1063,13 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
     ]
     refine = RefineConfig(
         mode=args.refine, gates_m=tuple(args.refine_gates), min_pairs=args.refine_min_pairs,
-        inlier_m=args.refine_inlier_m, search_m=args.refine_search_m,
+        inlier_m=args.refine_inlier_m, search_m=args.refine_search_m, weighted=args.refine_weighted,
     )
     agreement = [AgreementConfig(tolerance_m=tol) for tol in (args.agree_tolerance or [])]
     agreement += [AgreementConfig(tolerance_m=tol, consensus_floor=floor)
                   for floor in (args.agree_consensus_floor or []) for tol in (args.agree_tolerance or [])]
+    if args.agree_gated:
+        agreement += [replace(tol, gated=True) for tol in agreement]
     # A disabled arm produces no rows, so recording one in the result file
     # would advertise a condition nothing measured. Refuse it here rather than
     # filtering it away silently.
@@ -1168,11 +1181,11 @@ def _run_noisy_ap(args: argparse.Namespace, device) -> Dict:
             # The exact re-solve's arms (alignformer.refine): one per
             # IRLS-based arm above, same decision inputs, re-solved (psi, t).
             "refined": (
-                [refined_name(ALIGNFORMER_IRLS, refine.mode)] + [refined_name(c.name, refine.mode) for c in abstention]
+                [refined_name(ALIGNFORMER_IRLS, refine.mode, refine.weighted)] + [refined_name(c.name, refine.mode, refine.weighted) for c in abstention]
                 if refine.enabled else []
             ),
             "agreement": [
-                agreement_name(c.name, tol.tolerance_m) for tol in agreement for c in abstention
+                agreement_name(c.name, tol.tolerance_m, tol.consensus_floor, tol.gated) for tol in agreement for c in abstention
             ],
             # The frame-level pose graph's condition and the arm it is built on.
             "graph": None if args.graph_arm is None else {

@@ -314,7 +314,7 @@ def test_a_pair_the_refinement_did_not_engage_on_takes_the_fallback_decision():
 def test_agreement_config_and_names():
     with pytest.raises(ValueError):
         AgreementConfig(tolerance_m=0.0)
-    assert AgreementConfig(tolerance_m=0.5).to_dict() == {"tolerance_m": 0.5, "consensus_floor": 0}
+    assert AgreementConfig(tolerance_m=0.5).to_dict() == {"tolerance_m": 0.5, "consensus_floor": 0, "gated": False}
     assert agreement_name("alignformer_abstain_0.2", 0.5) == "alignformer_abstain_0.2_agree_0.5"
     assert agreement_name("alignformer_per_pair", 1.0) == "alignformer_per_pair_agree_1"
 
@@ -574,3 +574,90 @@ def test_consensus_floor_answers_a_disagreeing_pair_whose_exact_fit_rests_on_eno
     with pytest.raises(ValueError):
         agree(soft, exact._replace(consensus=None) if hasattr(exact, "_replace") else PoseEstimate(psi=exact.psi, t=exact.t, confidence=exact.confidence, refined=exact.refined),
               fallback, AgreementConfig(tolerance_m=1.0, consensus_floor=5), heading_lambda=2.0)
+
+
+# ----------------------------------------------------------------------------
+# The weighted exact refit and the gated agreement rule
+# ----------------------------------------------------------------------------
+
+
+def _variance_model():
+    from embedding_aware_belt_fusion.alignformer.variance import CorrespondenceVarianceModel
+
+    return CorrespondenceVarianceModel(mode="scalar", sigma_translation_m=0.25, translation_exponent=1.1,
+                                       sigma_yaw_rad=0.08, yaw_exponent=1.9, score_reference=0.4)
+
+
+def test_the_weighted_exact_fit_trusts_a_confident_pair_over_a_doubtful_one():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import _exact_solve, pair_weights
+
+    # Arrange: a clean scene; the CAV's copy of object 3 is 0.8 m off and comes from a low-confidence detection.
+    ego = _scene(8)
+    cav = ego.clone()
+    cav[3, 1] += 0.8
+    idx = torch.arange(8)
+    ego_scores = torch.full((8,), 0.8)
+    cav_scores = torch.full((8,), 0.8)
+    cav_scores[3] = 0.1
+    weights = pair_weights(_variance_model(), ego_scores, cav_scores, idx, idx, heading_lambda=2.0)
+
+    # Act
+    psi_u, t_u = _exact_solve(ego, cav, idx, idx, heading_lambda=2.0)
+    psi_w, t_w = _exact_solve(ego, cav, idx, idx, heading_lambda=2.0, weights=weights)
+
+    # Assert: the truth is the identity; the weighted fit is pulled less by the doubtful pair.
+    assert weights.shape == (1, 16)
+    assert weights[0, 3] < weights[0, 0] / 10
+    assert t_w.norm() < t_u.norm() / 3
+    assert abs(float(psi_w)) <= abs(float(psi_u))
+
+
+def test_icp_refine_in_weighted_mode_reads_the_scores_and_names_its_arm():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import ICP, ICP_RANSAC, RefineConfig, icp_refine, refined_name
+
+    ego = _scene(8)
+    cav = ego.clone()
+    cav[:, 0] -= 0.5
+    cav[3, 1] += 0.8
+    scores = torch.full((1, 8), 0.8)
+    cav_scores = scores.clone()
+    cav_scores[0, 3] = 0.1
+    batch = {"ego_boxes": ego.unsqueeze(0), "cav_boxes": cav.unsqueeze(0), "ego_scores": scores, "cav_scores": cav_scores}
+    estimate = PoseEstimate(psi=torch.zeros(1), t=torch.zeros(1, 2), confidence=torch.ones(1))
+    config = RefineConfig(mode=ICP_RANSAC, weighted=True)
+
+    weighted = icp_refine(estimate, batch, config, heading_lambda=2.0, variance_model=_variance_model())
+    plain = icp_refine(estimate, batch, RefineConfig(mode=ICP_RANSAC), heading_lambda=2.0)
+
+    assert bool(weighted.refined[0])
+    assert (weighted.t[0] - torch.tensor([0.5, 0.0])).norm() <= (plain.t[0] - torch.tensor([0.5, 0.0])).norm()
+    assert refined_name("alignformer_abstain_0.2", ICP_RANSAC, weighted=True) == "alignformer_abstain_0.2_icprw"
+    assert refined_name("alignformer_irls", ICP, weighted=True) == "alignformer_icpw"
+    assert config.to_dict()["weighted"] is True
+    with pytest.raises(ValueError):
+        icp_refine(estimate, batch, config, heading_lambda=2.0)  # weighted needs a variance model
+
+
+def test_gated_agreement_never_overrides_the_decision_arms_abstention():
+    import torch
+
+    from embedding_aware_belt_fusion.alignformer.refine import AgreementConfig, agree, agreement_name
+
+    # Arrange: two pairs on which soft and exact agree; the decision arm corrected the first and abstained on the second.
+    soft = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[1.0, 0.0], [1.0, 0.0]]), confidence=torch.ones(2))
+    exact = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[1.5, 0.0], [1.5, 0.0]]), confidence=torch.ones(2),
+                         refined=torch.tensor([True, True]), consensus=torch.tensor([6, 6]))
+    fallback = PoseEstimate(psi=torch.zeros(2), t=torch.tensor([[1.0, 0.0], [0.0, 0.0]]), confidence=torch.ones(2))
+
+    plain = agree(soft, exact, fallback, AgreementConfig(tolerance_m=1.0, consensus_floor=4), heading_lambda=2.0)
+    gated = agree(soft, exact, fallback, AgreementConfig(tolerance_m=1.0, consensus_floor=4, gated=True), heading_lambda=2.0)
+
+    assert plain.t.tolist() == [[1.5, 0.0], [1.5, 0.0]]
+    assert gated.t.tolist() == [[1.5, 0.0], [0.0, 0.0]]  # the abstention stands
+    assert agreement_name("alignformer_abstain_0.2", 1.0, 4, gated=True) == "alignformer_abstain_0.2_agree_1_c4_g"
+    assert agreement_name("alignformer_abstain_0.2", 1.0, 0, gated=True) == "alignformer_abstain_0.2_agree_1_g"
+    assert AgreementConfig(tolerance_m=1.0, gated=True).to_dict() == {"tolerance_m": 1.0, "consensus_floor": 0, "gated": True}

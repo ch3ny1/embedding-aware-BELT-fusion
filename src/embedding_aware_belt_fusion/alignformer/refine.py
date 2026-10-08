@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -82,6 +82,7 @@ SEARCH_OFF = 0.0
 SEARCH_SAMPLES = 1024
 REFINED_SUFFIX = "_icp"
 RANSAC_SUFFIX = "_icpr"
+WEIGHTED_SUFFIX = "w"
 _SUFFIXES = {ICP: REFINED_SUFFIX, ICP_RANSAC: RANSAC_SUFFIX}
 
 
@@ -94,6 +95,12 @@ class RefineConfig:
     min_pairs: int = DEFAULT_MIN_PAIRS
     inlier_m: float = DEFAULT_INLIER_M
     search_m: float = SEARCH_OFF
+    # The final exact fit over the hard pairs weighted by the same
+    # confidence-based precisions the soft solve uses (``pair_weights``),
+    # instead of unweighted. Where detections are precise and the association
+    # already sharp (OPV2V) the unweighted hard fit lost to the weighted soft
+    # one; this keeps the decided correspondence and the right weights.
+    weighted: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in REFINE_MODES:
@@ -120,14 +127,16 @@ class RefineConfig:
             "min_pairs": self.min_pairs,
             "inlier_m": self.inlier_m,
             "search_m": self.search_m,
+            "weighted": self.weighted,
             "enabled": self.enabled,
         }
 
 
-def refined_name(condition: str, mode: str = ICP) -> str:
+def refined_name(condition: str, mode: str = ICP, weighted: bool = False) -> str:
     """The refined arm's condition name: ``alignformer_irls`` -> ``alignformer_icp``
-    (``_icpr`` in RANSAC mode), any decision arm -> that name plus the suffix."""
-    suffix = _SUFFIXES[mode]
+    (``_icpr`` in RANSAC mode, a trailing ``w`` when the final fit is weighted),
+    any decision arm -> that name plus the suffix."""
+    suffix = _SUFFIXES[mode] + (WEIGHTED_SUFFIX if weighted else "")
     if condition == "alignformer_irls":
         return "alignformer" + suffix
     return condition + suffix
@@ -159,10 +168,31 @@ def mutual_nearest(ego: Tensor, cav: Tensor, gate_m: float) -> Tuple[Tensor, Ten
     return ego_idx[keep], nearest_cav[keep]
 
 
+def pair_weights(
+    variance_model, ego_scores: Tensor, cav_scores: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float
+) -> Tensor:
+    """``(1, 2K)`` Kabsch weights for the hard pairs: centres first, then heading
+    points, each the inverse of the pair's disagreement variance under the
+    fitted model (:mod:`alignformer.variance`), exactly as the soft solve
+    weights its correspondences; ``mode="none"`` gives ones."""
+    count = int(ego_idx.numel())
+    if getattr(variance_model, "mode", "none") == "none":
+        return torch.ones(1, 2 * count, dtype=ego_scores.dtype, device=ego_scores.device)
+    cav_centre, cav_heading = variance_model.detection_variances(cav_scores[cav_idx].unsqueeze(0))
+    rho_centre, rho_heading = variance_model.precisions(
+        ego_scores[ego_idx].unsqueeze(0), cav_centre, cav_heading, heading_lambda
+    )
+    if variance_model.mode == "scalar":
+        rho_heading = rho_centre
+    return torch.cat([rho_centre, rho_heading], dim=1)
+
+
 def _exact_solve(
-    ego_boxes: Tensor, cav_boxes: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float
+    ego_boxes: Tensor, cav_boxes: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float,
+    weights: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor]:
-    """Unweighted SE(2) fit over the hard pairs, heading-augmented and folded."""
+    """SE(2) fit over the hard pairs, heading-augmented and folded; unweighted
+    unless ``weights`` (``(1, 2K)``, from :func:`pair_weights`) is given."""
     ego_yaw = ego_boxes[ego_idx, BOX_YAW]
     cav_yaw = cav_boxes[cav_idx, BOX_YAW]
     # Fold each CAV heading onto its ego partner's half-plane (procrustes.py:
@@ -171,7 +201,8 @@ def _exact_solve(
     folded_yaw = torch.where(sign < 0, cav_yaw + math.pi, cav_yaw)
     target = augment_with_heading(ego_boxes[ego_idx, :2].unsqueeze(0), ego_yaw.unsqueeze(0), heading_lambda)
     source = augment_with_heading(cav_boxes[cav_idx, :2].unsqueeze(0), folded_yaw.unsqueeze(0), heading_lambda)
-    weights = torch.ones(1, target.shape[1], dtype=target.dtype, device=target.device)
+    if weights is None:
+        weights = torch.ones(1, target.shape[1], dtype=target.dtype, device=target.device)
     psi, t = weighted_se2_kabsch(target, source, weights)
     return psi[0], t[0]
 
@@ -202,7 +233,8 @@ def _minimal_samples(count: int, device) -> Tensor:
 
 
 def robust_exact_solve(
-    ego_boxes: Tensor, cav_boxes: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float, inlier_m: float
+    ego_boxes: Tensor, cav_boxes: Tensor, ego_idx: Tensor, cav_idx: Tensor, heading_lambda: float, inlier_m: float,
+    weights: Optional[Tensor] = None,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     """RANSAC over the hard pairs, then the exact heading-augmented fit over the consensus.
 
@@ -214,7 +246,7 @@ def robust_exact_solve(
     target, source = ego_boxes[ego_idx, :2], cav_boxes[cav_idx, :2]
     count = target.shape[0]
     if count < 3:
-        psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
+        psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, weights)
         return psi, t, torch.ones(count, dtype=torch.bool, device=target.device)
     samples = _minimal_samples(count, target.device)
     best_count, best_sum, best_inliers = -1, float("inf"), None
@@ -227,7 +259,8 @@ def robust_exact_solve(
             best_count, best_sum, best_inliers = n, total, inliers
     if best_inliers is None or int(best_inliers.sum()) < 2:
         best_inliers = torch.ones(count, dtype=torch.bool, device=target.device)
-    psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx[best_inliers], cav_idx[best_inliers], heading_lambda)
+    kept = None if weights is None else torch.cat([weights[:, :count][:, best_inliers], weights[:, count:][:, best_inliers]], dim=1)
+    psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx[best_inliers], cav_idx[best_inliers], heading_lambda, kept)
     return psi, t, best_inliers
 
 
@@ -276,12 +309,14 @@ def candidate_search(
 
 
 def _refine_one(
-    psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, config: RefineConfig, heading_lambda: float
+    psi: Tensor, t: Tensor, ego_boxes: Tensor, cav_boxes: Tensor, config: RefineConfig, heading_lambda: float,
+    weigh=None,
 ) -> Tuple[Tensor, Tensor, bool, int]:
     """ICP over one sample's valid boxes; ``(psi, t, engaged, consensus)``.
 
     ``consensus`` is the number of hard pairs behind the final fit (the
-    RANSAC inliers in that mode), zero when nothing engaged."""
+    RANSAC inliers in that mode), zero when nothing engaged. ``weigh`` maps
+    ``(ego_idx, cav_idx)`` to the stage's Kabsch weights, or is ``None``."""
     ego_centres, cav_centres = ego_boxes[:, :2], cav_boxes[:, :2]
     engaged, consensus = False, 0
     if config.search_m > SEARCH_OFF:
@@ -294,24 +329,41 @@ def _refine_one(
         ego_idx, cav_idx = mutual_nearest(ego_centres, _moved(cav_centres, psi, t), gate)
         if ego_idx.numel() < config.min_pairs:
             break
+        weights = None if weigh is None else weigh(ego_idx, cav_idx)
         if config.mode == ICP_RANSAC:
-            psi, t, inliers = robust_exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, config.inlier_m)
+            psi, t, inliers = robust_exact_solve(
+                ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, config.inlier_m, weights
+            )
             consensus = int(inliers.sum())
         else:
-            psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda)
+            psi, t = _exact_solve(ego_boxes, cav_boxes, ego_idx, cav_idx, heading_lambda, weights)
             consensus = int(ego_idx.numel())
         engaged = True
     return psi, t, engaged, consensus
 
 
-def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
+def _weigher(batch, b: int, ego_mask, cav_mask, variance_model, heading_lambda: float):
+    """The per-stage weight function for sample ``b`` (:func:`pair_weights` over its valid scores)."""
+    ego_scores, cav_scores = batch["ego_scores"][b], batch["cav_scores"][b]
+    if ego_mask is not None:
+        ego_scores = ego_scores[ego_mask[b]]
+    if cav_mask is not None:
+        cav_scores = cav_scores[cav_mask[b]]
+    return lambda ego_idx, cav_idx: pair_weights(variance_model, ego_scores, cav_scores, ego_idx, cav_idx, heading_lambda)
+
+
+def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float, variance_model=None):
     """A **new** estimate with ``(psi, t)`` re-solved exactly; the decision inputs unchanged.
 
     A disabled ``config`` returns the input object itself. A sample the
-    evidence floor declines keeps its ``(psi, t)`` bit for bit.
+    evidence floor declines keeps its ``(psi, t)`` bit for bit. A ``weighted``
+    config needs the ``variance_model`` the soft solve used and the batch's
+    ``ego_scores`` / ``cav_scores``.
     """
     if not config.enabled:
         return estimate
+    if config.weighted and variance_model is None:
+        raise ValueError("a weighted re-solve needs the variance model the soft solve used (variance_model is None)")
     ego_mask = batch.get("ego_mask")
     cav_mask = batch.get("cav_mask")
     psis, ts, engaged, consensus = [], [], [], []
@@ -322,7 +374,10 @@ def icp_refine(estimate, batch, config: RefineConfig, heading_lambda: float):
             ego_boxes = ego_boxes[ego_mask[b]]
         if cav_mask is not None:
             cav_boxes = cav_boxes[cav_mask[b]]
-        psi, t, did, count = _refine_one(estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda)
+        weigh = _weigher(batch, b, ego_mask, cav_mask, variance_model, heading_lambda) if config.weighted else None
+        psi, t, did, count = _refine_one(
+            estimate.psi[b], estimate.t[b], ego_boxes, cav_boxes, config, heading_lambda, weigh
+        )
         psis.append(psi)
         ts.append(t)
         engaged.append(did)
@@ -365,6 +420,12 @@ class AgreementConfig:
 
     tolerance_m: float
     consensus_floor: int = 0
+    # Gated: the rule only ever chooses BETWEEN the exact fit and abstention on
+    # a pair the decision arm corrected; a pair it abstained on stays
+    # uncorrected. Ungated (the original), the rule answers every engaged pair
+    # on which the two fits agree, which on OPV2V at sigma 0 took coverage
+    # from 0.24 to 1.00 and cost 0.03 AP@0.7.
+    gated: bool = False
 
     def __post_init__(self) -> None:
         if not (self.tolerance_m > 0.0 and math.isfinite(self.tolerance_m)):
@@ -373,12 +434,15 @@ class AgreementConfig:
             raise ValueError(f"consensus_floor must be >= 0 (0 = off), got {self.consensus_floor}")
 
     def to_dict(self) -> dict:
-        return {"tolerance_m": self.tolerance_m, "consensus_floor": self.consensus_floor}
+        return {"tolerance_m": self.tolerance_m, "consensus_floor": self.consensus_floor, "gated": self.gated}
 
 
-def agreement_name(decision_arm: str, tolerance_m: float, consensus_floor: int = 0) -> str:
+GATED_SUFFIX = "_g"
+
+
+def agreement_name(decision_arm: str, tolerance_m: float, consensus_floor: int = 0, gated: bool = False) -> str:
     floor = f"_c{consensus_floor}" if consensus_floor > 0 else ""
-    return f"{decision_arm}{AGREEMENT_SUFFIX}{tolerance_m:g}{floor}"
+    return f"{decision_arm}{AGREEMENT_SUFFIX}{tolerance_m:g}{floor}{GATED_SUFFIX if gated else ''}"
 
 
 def _wrap(angle: Tensor) -> Tensor:
@@ -407,6 +471,9 @@ def agree(soft, exact, fallback, config: AgreementConfig, heading_lambda: float)
         if exact.consensus is None:
             raise ValueError("a consensus floor needs an estimate that carries its consensus (consensus is None)")
         agreeing = agreeing | (engaged & (exact.consensus >= config.consensus_floor))
+    if config.gated:
+        corrected = (fallback.t != 0).any(dim=-1) | (fallback.psi != 0)
+        agreeing = agreeing & corrected
     zero_t, zero_psi = torch.zeros_like(exact.t), torch.zeros_like(exact.psi)
     t = torch.where(engaged.unsqueeze(-1), torch.where(agreeing.unsqueeze(-1), exact.t, zero_t), fallback.t)
     psi = torch.where(engaged, torch.where(agreeing, exact.psi, zero_psi), fallback.psi)
@@ -419,6 +486,9 @@ __all__ = [
     "agree",
     "agreement_name",
     "disagreement_m",
+    "pair_weights",
+    "GATED_SUFFIX",
+    "WEIGHTED_SUFFIX",
     "DEFAULT_GATES_M",
     "DEFAULT_INLIER_M",
     "DEFAULT_MIN_PAIRS",
