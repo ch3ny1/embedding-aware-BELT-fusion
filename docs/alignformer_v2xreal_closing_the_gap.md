@@ -812,5 +812,31 @@ sigma and every IoU threshold, with FreeAlign's message and no training:
 +0.012 / +0.026 / +0.028 AP@0.7 / 0.5 / 0.3 on the sweep mean, paired
 standard errors 0.0001-0.0003. What did it was a hard consensus fit over
 the learned correspondences and a decision rule that trusts that fit's
-own evidence. The delay runs for the selected arm are in
-`B_boxes_only_icpr_delay{1,2,4}_test_result.json` (below, when they land).
+own evidence.
+
+**Under communication delay** (`B_boxes_only_icpr_delay{1,2,4}_test_result.json`;
+constant 1 / 2 / 4 frames = 100 / 200 / 400 ms on the other agent's message,
+sigma 0 / 0.4 / 1 / 2, 3 paired seeds, 2,172 frames, same arms and
+constants) the selected arm is ahead of FreeAlign at every delay, every
+sigma and every threshold, by more than without delay. Sweep means:
+
+| test, sweep mean | oracle | soft (Wald 0.2) | re-solve | selected (agree 1.0, floor 4) | FreeAlign 1.0 m | selected - FreeAlign (paired) |
+|---|---:|---:|---:|---:|---:|---:|
+| 100 ms, AP@0.7 | .3420 | .2572 | .2880 | **.2963** | .2841 | **+.0118 +/- .0002** |
+| 100 ms, AP@0.5 | .5588 | .4390 | .4680 | **.4731** | .4425 | **+.0305 +/- .0002** |
+| 100 ms, AP@0.3 | .6075 | .5330 | .5490 | **.5513** | .5126 | **+.0388 +/- .0006** |
+| 200 ms, AP@0.7 | .3187 | .2364 | .2655 | **.2728** | .2572 | **+.0153 +/- .0002** |
+| 200 ms, AP@0.5 | .4814 | .3786 | .4101 | **.4168** | .3838 | **+.0328 +/- .0003** |
+| 200 ms, AP@0.3 | .5673 | .4844 | **.4987** | .4974 | .4544 | **+.0434 +/- .0004** |
+| 400 ms, AP@0.7 | .3136 | .2325 | .2578 | **.2702** | .2529 | **+.0168 +/- .0003** |
+| 400 ms, AP@0.5 | .4464 | .3507 | .3767 | **.3886** | .3602 | **+.0280 +/- .0003** |
+| 400 ms, AP@0.3 | .4881 | .4244 | .4394 | **.4440** | .4045 | **+.0388 +/- .0005** |
+
+Per sigma at AP@0.7 the selected arm leads by 0.019 / 0.013 / 0.011 /
+0.005 at 100 ms (sigma 0 / 0.4 / 1 / 2), 0.027 / 0.016 / 0.013 / 0.007 at
+200 ms and 0.033 / 0.017 / 0.013 / 0.007 at 400 ms. The dense bucket at
+sigma 2 is a tie at 100 ms (.308 against .309) and ours at 200 / 400 ms
+(.278 / .278 against .276 / .272); the sparse bucket is ours by 0.02-0.03
+at every delay. The re-solve alone already leads FreeAlign at AP@0.7 under
+delay (+0.003 / +0.008 / +0.004), where the least-squares re-solve had been a
+draw; the consensus floor adds 0.008-0.012 on top.

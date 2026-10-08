@@ -36,7 +36,10 @@
   at every IoU threshold, at FreeAlign's bytes and with no training; every
   setting was selected on val. The sparse bucket is ours by 0.04-0.05 at
   every noise level; the dense bucket is ours at 0.4 and 1.0 m and
-  FreeAlign's by 0.006 at 2.0 m. See "The dense bucket" in
+  FreeAlign's by 0.006 at 2.0 m. Under 100 / 200 / 400 ms of delay (3
+  seeds) the lead widens: +0.012 / +0.015 / +0.017 AP@0.7, +0.028 to +0.033
+  AP@0.5 and +0.039 to +0.043 AP@0.3, ahead at every sigma. See "The dense
+  bucket" in
   [alignformer_v2xreal_closing_the_gap.md](alignformer_v2xreal_closing_the_gap.md).
 - **An exact re-solve after the soft association closed most of the gap
   first, at no new bytes and no training** (2026-10-02, test, 5 seeds): the AP@0.7
