@@ -866,6 +866,27 @@ declined but the two fits agree on, is where the floor's gain lives (sigma 2
 .3615 against .3497 gated). The dataset-agnostic choice is made by the
 pre-registered rule once the OPV2V side is in.
 
+**The selected arm on test** (2026-10-09; the rule picked the weighted
+refit with the ungated consensus-floor agreement, see
+[alignformer_p2.md](alignformer_p2.md); `B_boxes_only_icprw_test_result.json`,
+2,172 frames, 5 paired seeds):
+
+| test sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | vs FreeAlign 1.0 m (paired) |
+|---|---:|---:|---:|---:|
+| FreeAlign 1.0 m | .3413 | .4931 | .5388 | |
+| Wald 0.2 (soft) | .3108 | .4852 | .5501 | -0.0306 / -0.0073 / +0.0111 |
+| re-solve, weighted refit | .3416 | .5088 | .5637 | +0.0003 / +0.0157 / +0.0249 |
+| **agree 1.0, floor 4, weighted refit (selected)** | **.3555** | .5185 | .5663 | **+0.0141 +/- 0.0001 / +0.0255 / +0.0282** |
+| agree 1.0, floor 4, unweighted (the earlier test) | .3536 | **.5196** | **.5671** | +0.0120 / +0.0262 / +0.0284 |
+
+Weighted minus unweighted, paired: +0.0020 AP@0.7, -0.0010 AP@0.5,
+-0.0005 AP@0.3. The selected arm is ahead of FreeAlign at every sigma
+(.392 against .370 at 0, .336 against .330 at 2 m); dense bucket ours at
+0 / 0.4 / 1.0 (.408 / .404 / .400 against .399 / .397 / .395) and
+FreeAlign's by 0.003 at 2.0 (.392 against .395); sparse bucket ours by
+0.02-0.05 from 0.4 m up. Coverage 0.72 at sigma 2, 0.93 m mean answered
+error, 0.40 m on dense pairs.
+
 ## Association accuracy against localization error (2026-10-08)
 
 The stage-1 gate's "Top-1 .994" is one number at one noise level: the

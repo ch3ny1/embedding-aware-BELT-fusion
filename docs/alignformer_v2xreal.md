@@ -28,11 +28,12 @@
   +0.061 AP@0.7 on test. Every table below carries both columns; quote the
   1.0 m one. "Re-calibrating FreeAlign on the reported metric" has the
   whole story.
-- **The gap is closed on test (2026-10-07, 5 seeds): a RANSAC re-solve over
-  the learned correspondences with a 6 m gate schedule, and an agreement
-  rule that also answers on a consensus of four hard pairs, is +0.012 /
-  +0.026 / +0.028 AP@0.7 / 0.5 / 0.3 over FreeAlign 1.0 m on the sweep
-  mean** (paired SE 0.0001-0.0003), ahead at every sigma including 0 and
+- **The gap is closed on test (2026-10-07/09, 5 seeds): a RANSAC re-solve over
+  the learned correspondences with a 6 m gate schedule and a weighted exact
+  refit, and an agreement rule that also answers on a consensus of four hard
+  pairs, is +0.014 / +0.026 / +0.028 AP@0.7 / 0.5 / 0.3 over FreeAlign 1.0 m
+  on the sweep mean** (the same rule selected for both datasets; the
+  unweighted refit measured first was +0.012) (paired SE 0.0001-0.0003), ahead at every sigma including 0 and
   at every IoU threshold, at FreeAlign's bytes and with no training; every
   setting was selected on val. The sparse bucket is ours by 0.04-0.05 at
   every noise level; the dense bucket is ours at 0.4 and 1.0 m and
