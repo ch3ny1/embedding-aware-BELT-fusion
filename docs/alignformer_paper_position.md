@@ -83,7 +83,7 @@ comparison the project exists to make on bytes.
 
 | item | cost on this machine | status |
 |---|---|---|
-| 1. Run the final pipeline on OPV2V (FreeAlign re-selected by val AP there too) | one chain, no new code, about a day | **running** (2026-10-07, chain O; results land in [alignformer_p2.md](alignformer_p2.md)) |
+| 1. Run the final pipeline on OPV2V (FreeAlign re-selected by val AP there too) | two days, one fix (the weighted refit) | **done 2026-10-09**: the one rule selected on val of both datasets is +0.014 AP@0.7 over FreeAlign on V2X-Real test and +0.009 on OPV2V test, every sigma and threshold ([alignformer_p2.md](alignformer_p2.md), last section) |
 | 2. Intermediate-fusion baselines on V2X-Real under the same sweep | about a week of GPU time; OpenCOOD has the V2X-Real configs | not started |
 | 3. A second real dataset (V2V4Real is the natural one; it has GPS noise of its own) | several weeks: detector, cache, pair index, calibration | not started |
 | 4. Seed-paired confidence intervals in every table | already computed; a rendering change | partly done (sweep-mean tables carry mean +/- SE) |

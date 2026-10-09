@@ -3005,3 +3005,43 @@ better (.9185 against .8975 at sigma 0: the agreement rule answers every
 pair there); on V2X-Real it keeps the full gain. Test on both datasets
 (chain Q: `B_boxes_only_icprw_test_result.json` and delays on V2X-Real;
 `icprw_test_result.json` and delays on OPV2V, with per_pair carried).
+
+**The selected arm on OPV2V test** (2026-10-09, chain Q; `icprw_test_result.json`,
+2,170 frames, 5 paired seeds, FreeAlign at its val-AP threshold 1.5 m, the
+deployed per-pair rule carried):
+
+| test sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | vs FreeAlign 1.5 m (paired, AP@0.7 / 0.5 / 0.3) |
+|---|---:|---:|---:|---:|
+| uncorrected | .3445 | .5272 | .6958 | |
+| oracle | .8964 | .9503 | .9552 | |
+| FreeAlign 1.5 m | .8235 | .9044 | .9188 | |
+| per_pair (deployed before) | .8227 | .9218 | .9410 | -0.0006 +/- 0.0001 / +0.0175 / +0.0220 |
+| Wald 0.2 (soft) | .8192 | .9211 | .9412 | -0.0037 / +0.0166 / +0.0221 |
+| Wald 0.2, weighted re-solve | .8338 | .9274 | .9418 | +0.0106 / +0.0231 / +0.0227 |
+| **Wald 0.2, weighted re-solve, agree 1.0, floor 4 (selected)** | **.8327** | **.9263** | **.9408** | **+0.0089 +/- 0.0001 / +0.0218 / +0.0215** |
+| per_pair, weighted re-solve (not pre-registered) | .8364 | .9272 | .9416 | +0.0131 / +0.0230 / +0.0226 |
+
+| test AP@0.7 | 0 | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 | 1.5 | 2.0 |
+|---|---|---|---|---|---|---|---|---|
+| FreeAlign 1.5 m | .8406 | .8344 | .8236 | .8196 | .8178 | .8175 | .8174 | .8172 |
+| **selected** | **.8526** | **.8433** | **.8320** | **.8282** | **.8277** | **.8264** | **.8262** | **.8252** |
+| per_pair | .8674 | .8359 | .8234 | .8185 | .8144 | .8137 | .8110 | .7976 |
+
+The val verdict (-0.002) reverses on test (+0.009), and the reason is the
+split: OPV2V val is 897 of 958 frames in the dense bucket and 5 sparse
+frames, test is 1,731 dense and 290 sparse (13 %). On the dense bucket
+the selected arm and FreeAlign tie at every sigma (.865 / .864 / .862
+against .865 / .865 / .865 at 0 / 1 / 2 m; per_pair .881 at 0, .830 at
+2 m); on the sparse bucket the selected arm is .749 / .465 / .471 against
+FreeAlign's .595 / .349 / .352, the degenerate-graph bucket again. At
+AP@0.5 and AP@0.3 the lead is at every sigma (.941 -> .914 against .918 ->
+.893; .949 -> .928 against .927 -> .905). Coverage 0.92 at sigma 0 and
+0.95 at 2 m (per_pair 0.47 / 0.96, FreeAlign 0.94 / 0.94); answered
+translation error at 2 m 0.17 m (per_pair 0.21, FreeAlign 2.30 behind a
+sharp median).
+
+The per-pair rule with the weighted re-solve, not pre-registered, is the
+best arm on OPV2V test (+0.0131) because it keeps the clean case
+(.8674 against the selected .8526); it is recorded as a sensitivity, not
+selected. The selected arm is the one rule on both datasets: +0.014 on
+V2X-Real test, +0.009 on OPV2V test, at FreeAlign's bytes.
