@@ -287,3 +287,21 @@ for d in 1 2 4; do
     --output $V/B_boxes_only_icpr_delay${d}_test_result.json
 done
 ```
+
+```bash
+# Chains P and Q: the two pre-registered fixes on val (weighted exact refit `--refine-weighted`, arms `_icprw`;
+# gated agreement `--agree-gated`, suffix `_g`), then the SELECTED arm (Wald 0.2, RANSAC re-solve with the weighted
+# refit, agreement 1.0 m with consensus floor 4) on test and under delay 1 / 2 / 4. Only the arms the selection
+# needs are evaluated (each extra arm costs ~0.6 s/frame/seed). OPV2V runs the same invocation with the r140
+# detector/config/checkpoint/shrinkage/FreeAlign-calibration files named in alignformer_p2.md (per_pair carried).
+# All on --device cpu (same speed as the GPU here; the GPU is kept for other jobs).
+ARMSQ="--abstain-arm abstain:0.2 --agree-tolerance 1.0 --agree-consensus-floor 4 --refine icp_ransac \
+  --refine-inlier-m 1.0 --refine-gates 6.0 3.0 1.5 0.75 0.5 --refine-min-pairs 3 --refine-weighted"
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMSZ --agree-gated --output $V/B_boxes_only_icpr_gated_val_result.json
+sweep B_boxes_only $AF val 3 --freealign-calibration $FAAP $ARMSZ --refine-weighted --output $V/B_boxes_only_icprw_val_result.json
+sweep B_boxes_only $AF test 5 --freealign-calibration $FAAP $ARMSQ --output $V/B_boxes_only_icprw_test_result.json
+for d in 1 2 4; do
+  sweep B_boxes_only $AF test 3 --sweep 0 0.4 1.0 2.0 --delay-frames $d --freealign-calibration $FAAP $ARMSQ \
+    --device cpu --output $V/B_boxes_only_icprw_delay${d}_test_result.json
+done
+# The delay runs were relaunched on 2026-10-09 after a reboot (the first launch's /tmp scratchpad did not survive).
