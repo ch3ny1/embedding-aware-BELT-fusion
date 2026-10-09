@@ -920,5 +920,23 @@ What it says:
   Wald-abstained population included: this table scores the raw IRLS
   estimate, not the decision rule.
 
-The same sweep on test (`association_accuracy_test_result.json`) is the
-paper's table.
+**Test** (`association_accuracy_test_result.json`, 1,696 pairs at stride 2,
+one seed; the paper's table):
+
+| test, all pairs | nearest Top-1 | soft Top-1 | hard pairs P / R | engaged | FreeAlign pairs P / R | FreeAlign inliers P | FreeAlign answers | residual soft / hard / FreeAlign (m) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| sigma 0 | 1.000 | .971 | .942 / .828 | .72 | .845 / .825 | .874 | .67 | 0.80 / 0.41 / 7.61 |
+| 0.4 | 1.000 | .969 | .943 / .828 | .71 | .845 / .825 | .874 | .67 | 0.80 / 0.41 / 7.61 |
+| 1.0 | .986 | .961 | .941 / .826 | .71 | .845 / .825 | .874 | .67 | 0.88 / 0.41 / 7.61 |
+| 1.5 | .959 | .943 | .943 / .822 | .71 | .845 / .825 | .874 | .67 | 1.04 / 0.47 / 7.61 |
+| 2.0 | .913 | .919 | .935 / .807 | .71 | .845 / .825 | .874 | .67 | 1.31 / 0.57 / 7.61 |
+| 3+ shared (1,119), 2.0 | .908 | .914 | .948 / .807 | .99 | .877 / .834 | .902 | .92 | 0.86 / 0.54 (median 0.32) / 4.84 (median 0.33) |
+| 1-2 shared (577), 2.0 | .950 | .958 | .616 / .798 | .15 | .262 / .512 | .304 | .18 | 2.18 / 0.97 (median 0.42) / 35.3 (median 32.8) |
+
+Test repeats val with lower absolute numbers (test is the harder split
+throughout): the verified fit's pairs hold .94 precision at every sigma,
+FreeAlign .85, and the hard-fit residual on dense pairs is sigma-flat
+within 0.2 m (median 0.31-0.32 against FreeAlign's 0.33 median behind a
+4.8 m mean). The soft Top-1 sits 3 % under nearest-centre in the clean
+case on test, twice the val gap; stage 1's low-noise behaviour is the one
+item on this table worth a training-side look.
