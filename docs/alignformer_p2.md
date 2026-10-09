@@ -2970,3 +2970,38 @@ Files: `B_boxes_only_icpr{_gated,w}_val_result.json` (V2X-Real),
 # --freealign-calibration outputs/alignformer/r140/freealign_calibration_valap_result.json
 # and, for chain P, --agree-gated and (second run) --refine-weighted.
 ```
+
+**The two fixes on OPV2V val** (2026-10-08, chain P2, 3 seeds;
+`icpr_gated_val_result.json`, `icprw_val_result.json`; FreeAlign 1.5 m
+.8993, oracle .9199):
+
+| val sweep mean AP@0.7, Wald 0.2 base | unweighted | weighted | sigma-0 coverage |
+|---|---:|---:|---:|
+| soft (no re-solve) | .8998 | .8998 | 0.24 |
+| re-solve only | .8900 | .8983 | 0.24 |
+| agree 1.0, floor 4 (V2X-Real's arm) | .8873 | **.8972** | 1.00 |
+| agree 1.0, floor 4, gated | .8899 | .8982 | 0.24 |
+| FreeAlign 1.5 m | .8993 | | |
+
+The weighting is what OPV2V needed: it takes the re-solve from -0.0095
+to -0.0011 against FreeAlign and the V2X-Real arm from -0.0118 to -0.0019
+(answered translation error at sigma 1 from 0.111 to 0.105 m, below the
+soft fit's 0.108). Gating adds +0.001 on top; it had cost 0.008 on
+V2X-Real. The pre-registered rule (largest mean over the two datasets of
+the paired AP@0.7 lead over FreeAlign) over the four candidates:
+
+| candidate | V2X-Real | OPV2V | mean |
+|---|---:|---:|---:|
+| agree 1.0, floor 4 | +0.0096 | -0.0118 | -0.0011 |
+| **agree 1.0, floor 4, weighted refit** | **+0.0097** | **-0.0019** | **+0.0039** |
+| agree 1.0, floor 4, gated | +0.0012 | -0.0095 | -0.0041 |
+| agree 1.0, floor 4, weighted, gated | +0.0014 | -0.0011 | +0.0002 |
+
+Selected: **Wald 0.2, RANSAC re-solve with the weighted exact refit,
+agreement 1.0 m with consensus floor 4** (`alignformer_abstain_0.2_agree_1_c4`
+in an `--refine-weighted` run). On OPV2V val it is 0.002 under FreeAlign
+and 0.004 under the deployed per-pair rule, which answers the clean case
+better (.9185 against .8975 at sigma 0: the agreement rule answers every
+pair there); on V2X-Real it keeps the full gain. Test on both datasets
+(chain Q: `B_boxes_only_icprw_test_result.json` and delays on V2X-Real;
+`icprw_test_result.json` and delays on OPV2V, with per_pair carried).
