@@ -865,3 +865,60 @@ agreement rule's extra coverage from 0.2 m up, pairs the Wald test
 declined but the two fits agree on, is where the floor's gain lives (sigma 2
 .3615 against .3497 gated). The dataset-agnostic choice is made by the
 pre-registered rule once the OPV2V side is in.
+
+## Association accuracy against localization error (2026-10-08)
+
+The stage-1 gate's "Top-1 .994" is one number at one noise level: the
+stage-1 validation noise of 0.5 m, over ego objects that have a
+counterpart, dustbin excluded. `scripts/association_accuracy_sweep.py`
+asks the same question across the AP sweep for both aligners, on every
+val pair sharing at least one object (401 pairs at stride 2, one seed,
+`association_accuracy_val_result.json`): nearest CAV centre under the
+reported pose (the geometry-only control), AlignFormer's Sinkhorn Top-1,
+the precision / recall of the correspondences behind the verified fit
+(mutual nearest at the last 0.5 m gate under the re-solved pose) with the
+fraction of pairs the re-solve engaged, and FreeAlign's matched subgraph
+and RANSAC inliers with its coverage. Beside each, the mean centre
+residual of the corrected CAV boxes against their true placement.
+
+| val, all pairs (401) | nearest Top-1 | soft Top-1 | hard pairs P / R | engaged | FreeAlign pairs P / R | FreeAlign inliers P | FreeAlign answers | residual soft / hard / FreeAlign (m) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| sigma 0 | 1.000 | .986 | .955 / .905 | .79 | .864 / .832 | .894 | .68 | 1.04 / 0.35 / 8.23 |
+| 0.4 | .999 | .985 | .956 / .906 | .79 | .864 / .832 | .894 | .68 | 1.11 / 0.31 / 8.23 |
+| 1.0 | .988 | .982 | .955 / .905 | .79 | .864 / .832 | .894 | .68 | 1.09 / 0.35 / 8.23 |
+| 1.5 | .967 | .969 | .955 / .905 | .79 | .864 / .832 | .894 | .68 | 1.23 / 0.31 / 8.23 |
+| 2.0 | .927 | .955 | .953 / .902 | .79 | .864 / .832 | .894 | .68 | 1.58 / 0.35 / 8.23 |
+
+| val, by bucket | nearest Top-1 at 0 / 2 m | soft Top-1 at 0 / 2 m | hard P / R (any sigma) | engaged | FreeAlign P / R | answers | residual soft at 0 / 2 m | hard | FreeAlign mean (median) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3+ shared (285) | 1.000 / .922 | .989 / .955 | .963 / .907 | 1.00 | .903 / .846 | .88 | 0.36 / 0.68 | 0.27 | 4.73 (0.24) |
+| 1-2 shared (116) | 1.000 / .966 | .966 / .955 | .78 / .85 | .28 | .129 / .257 | .20 | 2.70 / 3.79 | 0.6-1.2 | 46.5 (56.3) |
+
+What it says:
+
+- **FreeAlign's association is pose-invariant and is the same at every
+  sigma**, exactly as designed: 0.90 precision on dense pairs, 0.93 among
+  its RANSAC inliers. Its 4.7 m mean residual on dense pairs behind a
+  0.24 m median is the 7 % of pairs on which its subgraph is wrong; on the
+  sparse bucket it answers one pair in five with 0.13 precision and a
+  56 m median residual, which is the degenerate graph.
+- **AlignFormer's soft association degrades with noise and is slightly
+  worse than nearest-centre at low noise**: .986 against 1.000 at sigma 0,
+  .955 against .927 at 2 m. The 1.4 % it loses in the clean case is the
+  Sinkhorn preferring a neighbour the nearest-centre rule would not, a
+  training-noise effect (stage 1 trains at 0 to 0.5 m) worth a look.
+- **The verified fit's correspondences do not degrade with noise**: .955
+  precision and .905 recall at every sigma, because the re-solve starts
+  from the soft pose and re-decides the pairs geometrically. The 4 % of
+  wrong hard pairs do not reach the fit: the dense-pair residual is
+  0.27 m at every sigma, the oracle-correspondence fit's 0.27 m. So there
+  is no association error left for a cue to fix on dense pairs; what a
+  cue would have to do is raise the sparse bucket's engagement (0.28) and
+  precision (0.78), and the appearance work measured that the sparse
+  pairs' far objects are rarely seen by both cameras.
+- The soft residual at sigma 0 (1.04 m overall, 2.70 m sparse) is the
+  Wald-abstained population included: this table scores the raw IRLS
+  estimate, not the decision rule.
+
+The same sweep on test (`association_accuracy_test_result.json`) is the
+paper's table.
