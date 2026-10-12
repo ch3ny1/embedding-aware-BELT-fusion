@@ -3059,9 +3059,18 @@ delay tables regenerate from these files via `scripts/paper_delay_tables.py`):
 | **selected (Wald 0.2, weighted re-solve, agree 1.0, floor 4)** | **.6425** | **.8660** | **.9308** | **.6465 / .6419 / .6412 / .6403** |
 | selected - FreeAlign (paired) | **+.0073 +/- .0002** | **+.0209 +/- .0001** | **+.0271 +/- .0001** | +.008 / +.007 / +.008 / +.006 |
 
+| 200 ms, sweep mean (`icprw_delay2_test_result.json`) | AP@0.7 | AP@0.5 | AP@0.3 | AP@0.7 per sigma (0 / 0.4 / 1 / 2) |
+|---|---:|---:|---:|---|
+| oracle (= uncorrected at sigma 0) | .2243 | .4072 | .7915 | |
+| FreeAlign 1.5 m | .4972 | .7061 | .8235 | .4974 / .4966 / .4971 / .4978 |
+| per_pair (deployed before) | .4653 | .7279 | .8812 | .4813 / .4592 / .4634 / .4575 |
+| **selected** | **.5064** | **.7295** | .8599 | **.5085 / .5055 / .5064 / .5050** |
+| selected - FreeAlign (paired) | **+.0091 +/- .0002** | **+.0235 +/- .0002** | **+.0364 +/- .0001** | +.011 / +.009 / +.009 / +.007 |
+
 Where the per-pair rule had been behind FreeAlign at AP@0.7 under noise at
-100 ms (-.0107 on the sweep mean, ahead only at sigma 0), the selected arm is
-ahead at every sigma and every threshold, at the cost of .001 at sigma 0
+100 ms (-.0107 on the sweep mean, ahead only at sigma 0) and at 200 ms
+(-.0319, every sigma), the selected arm is ahead at every sigma and every
+threshold at both delays, at the cost of .001 at sigma 0
 against the per-pair rule's clean case. Both correcting methods sit above the
 oracle at AP@0.7 for the reason given in the delay section above: the
 correction absorbs the motion of the moving majority and the ground truth is
