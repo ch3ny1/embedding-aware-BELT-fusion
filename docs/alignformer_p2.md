@@ -3045,3 +3045,24 @@ best arm on OPV2V test (+0.0131) because it keeps the clean case
 (.8674 against the selected .8526); it is recorded as a sensitivity, not
 selected. The selected arm is the one rule on both datasets: +0.014 on
 V2X-Real test, +0.009 on OPV2V test, at FreeAlign's bytes.
+
+**The selected arm on OPV2V test under delay** (2026-10-11, chain Q;
+`icprw_delay1_test_result.json`, 100 ms, 3 paired seeds, sigma 0 / 0.4 / 1 /
+2, `--device cpu`; the 200 and 400 ms runs are in progress and the paper's
+delay tables regenerate from these files via `scripts/paper_delay_tables.py`):
+
+| 100 ms, sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | AP@0.7 per sigma (0 / 0.4 / 1 / 2) |
+|---|---:|---:|---:|---|
+| oracle (= uncorrected at sigma 0) | .3507 | .8546 | .9533 | |
+| FreeAlign 1.5 m | .6352 | .8451 | .9037 | .6383 / .6348 / .6335 / .6343 |
+| per_pair (deployed before) | .6246 | .8766 | .9344 | .6455 / .6194 / .6207 / .6126 |
+| **selected (Wald 0.2, weighted re-solve, agree 1.0, floor 4)** | **.6425** | **.8660** | **.9308** | **.6465 / .6419 / .6412 / .6403** |
+| selected - FreeAlign (paired) | **+.0073 +/- .0002** | **+.0209 +/- .0001** | **+.0271 +/- .0001** | +.008 / +.007 / +.008 / +.006 |
+
+Where the per-pair rule had been behind FreeAlign at AP@0.7 under noise at
+100 ms (-.0107 on the sweep mean, ahead only at sigma 0), the selected arm is
+ahead at every sigma and every threshold, at the cost of .001 at sigma 0
+against the per-pair rule's clean case. Both correcting methods sit above the
+oracle at AP@0.7 for the reason given in the delay section above: the
+correction absorbs the motion of the moving majority and the ground truth is
+taken at the ego's time.
