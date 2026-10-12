@@ -85,3 +85,15 @@ def test_supplement_block_without_a_source_is_pending():
 
     # Assert
     assert len(lines) == 3 and "\\pending" in lines[2]
+
+
+def test_caption_legend_appears_only_when_a_cell_is_a_fallback_or_pending():
+    # Arrange
+    from paper_delay_tables import legend
+    selected = Source(_result(0.30, 0.28), arm="arm", verify="verify", is_selected=True)
+    fallback = Source(_result(0.30, 0.28), arm="arm", verify=None, is_selected=False)
+
+    # Act / Assert
+    assert legend({("a", 1): selected, ("b", 2): selected}) == ""
+    assert "dagger" in legend({("a", 1): selected, ("b", 2): fallback})
+    assert "pending" in legend({("a", 1): selected, ("b", 2): None})

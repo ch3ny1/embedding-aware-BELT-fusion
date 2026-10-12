@@ -3047,9 +3047,9 @@ selected. The selected arm is the one rule on both datasets: +0.014 on
 V2X-Real test, +0.009 on OPV2V test, at FreeAlign's bytes.
 
 **The selected arm on OPV2V test under delay** (2026-10-11, chain Q;
-`icprw_delay1_test_result.json`, 100 ms, 3 paired seeds, sigma 0 / 0.4 / 1 /
-2, `--device cpu`; the 200 and 400 ms runs are in progress and the paper's
-delay tables regenerate from these files via `scripts/paper_delay_tables.py`):
+`icprw_delay{1,2,4}_test_result.json`, 100 / 200 / 400 ms, 3 paired seeds,
+sigma 0 / 0.4 / 1 / 2, `--device cpu`; the paper's delay tables regenerate
+from these files via `scripts/paper_delay_tables.py`):
 
 | 100 ms, sweep mean | AP@0.7 | AP@0.5 | AP@0.3 | AP@0.7 per sigma (0 / 0.4 / 1 / 2) |
 |---|---:|---:|---:|---|
@@ -3067,10 +3067,19 @@ delay tables regenerate from these files via `scripts/paper_delay_tables.py`):
 | **selected** | **.5064** | **.7295** | .8599 | **.5085 / .5055 / .5064 / .5050** |
 | selected - FreeAlign (paired) | **+.0091 +/- .0002** | **+.0235 +/- .0002** | **+.0364 +/- .0001** | +.011 / +.009 / +.009 / +.007 |
 
+| 400 ms, sweep mean (`icprw_delay4_test_result.json`) | AP@0.7 | AP@0.5 | AP@0.3 | AP@0.7 per sigma (0 / 0.4 / 1 / 2) |
+|---|---:|---:|---:|---|
+| oracle (= uncorrected at sigma 0) | .2607 | .3427 | .4475 | |
+| FreeAlign 1.5 m | .3823 | .5605 | .6629 | .3828 / .3822 / .3822 / .3820 |
+| per_pair (deployed before) | .3415 | .5613 | .7279 | .3599 / .3435 / .3386 / .3241 |
+| **selected** | **.4020** | **.5880** | .7152 | **.4068 / .4028 / .4016 / .3967** |
+| selected - FreeAlign (paired) | **+.0197 +/- .0003** | **+.0275 +/- .0002** | **+.0523 +/- .0006** | +.024 / +.021 / +.019 / +.015 |
+
 Where the per-pair rule had been behind FreeAlign at AP@0.7 under noise at
-100 ms (-.0107 on the sweep mean, ahead only at sigma 0) and at 200 ms
-(-.0319, every sigma), the selected arm is ahead at every sigma and every
-threshold at both delays, at the cost of .001 at sigma 0
+100 ms (-.0107 on the sweep mean, ahead only at sigma 0), at 200 ms
+(-.0319) and at 400 ms (-.0408, every sigma), the selected arm is ahead at
+every sigma and every threshold at every delay, and its AP@0.7 lead grows
+with the delay (+.007 / +.009 / +.020), at the cost of .001 at sigma 0
 against the per-pair rule's clean case. Both correcting methods sit above the
 oracle at AP@0.7 for the reason given in the delay section above: the
 correction absorbs the motion of the moving majority and the ground truth is

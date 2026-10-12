@@ -138,12 +138,24 @@ def supplement_block(source: Source | None, dataset_macro: str, delay_ms: int, f
              + " & ".join(fmt(v[0]) for v in tails.values()) + " \\\\")]
 
 
+def legend(sources: dict[tuple[str, int], Source | None]) -> str:
+    """Caption legend for the dagger and pending marks, empty when every cell is the selected arm."""
+    marks = []
+    if any(source is not None and not source.is_selected for source in sources.values()):
+        marks.append(" $^\\dagger$: the selected arm's run is pending and the cell shows the earlier run of the same "
+                     "pipeline (\\vxreal: the consensus-floor arm with the unweighted exact refit; \\opvv: the deployed "
+                     "per-pair rule, no verify stage).")
+    if any(source is None for source in sources.values()):
+        marks.append(" \\pending: not yet run.")
+    return "".join(marks)
+
+
+
 def main_table(sources: dict[tuple[str, int], Source | None]) -> str:
     lines = ["\\begin{table}[t]", "  \\centering\\small",
              ("  \\caption{\\textbf{Test under communication delay}, sweep means over $\\sigma\\in\\{0,0.4,1,2\\}$, "
-             "3 paired seeds. Last column: the full method. $^\\dagger$: the selected arm's run is pending and the "
-             "cell shows the earlier run of the same pipeline (\\vxreal: unweighted exact refit; \\opvv: the "
-             "per-pair rule, no verify stage); \\pending: not yet run.}"),
+              "3 paired seeds; propose+verify+agree is the full method before the consensus floor. Last column: "
+              "the full method." + legend(sources) + "}"),
              "  \\label{tab:delay}", "  \\resizebox{\\linewidth}{!}{\\begin{tabular}{llcccc}", "    \\toprule",
              "    delay & metric & oracle & propose+verify+agree & \\freealign & \\paper \\\\"]
     for dataset in DATASETS:
@@ -157,10 +169,8 @@ def main_table(sources: dict[tuple[str, int], Source | None]) -> str:
 def supplement_table(sources: dict[tuple[str, int], Source | None]) -> str:
     lines = ["\\begin{table*}[t]", "  \\centering\\small",
              ("  \\caption{\\textbf{Delay, per $\\sigma$, \\ap{0.7}} on test, 3 paired seeds, with the \\ap{0.5} / "
-             "\\ap{0.3} sweep means; the selected arm against \\freealign at its val-AP threshold, both from the same "
-             "result file. $^\\dagger$: the selected arm's run is pending and the row shows the earlier run of the same "
-             "pipeline (\\vxreal: the consensus-floor arm with the unweighted exact refit; \\opvv: the deployed per-pair "
-             "rule); \\pending: not yet run.}"),
+              "\\ap{0.3} sweep means; the selected arm against \\freealign at its val-AP threshold, both from the same "
+              "result file." + legend(sources) + "}"),
              "  \\label{tab:supp_delay}", "  \\resizebox{\\textwidth}{!}{\\begin{tabular}{llcccc|c|cc|cc}", "    \\toprule",
              ("    & & \\multicolumn{4}{c|}{\\ap{0.7} at $\\sigma$ =} & & \\multicolumn{2}{c|}{\\freealign} & "
              "\\multicolumn{2}{c}{\\paper} \\\\"),
