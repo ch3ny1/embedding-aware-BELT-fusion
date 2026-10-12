@@ -842,8 +842,8 @@ delay (+0.003 / +0.008 / +0.004), where the least-squares re-solve had been a
 draw; the consensus floor adds 0.008-0.012 on top.
 
 **The selected arm (weighted refit) under delay** (2026-10-11, chain Q;
-`B_boxes_only_icprw_delay{1,2}_test_result.json`, same protocol as above,
-`--device cpu`; the 400 ms run is in progress and the paper's delay tables
+`B_boxes_only_icprw_delay{1,2,4}_test_result.json`, same protocol as above,
+`--device cpu`; the paper's delay tables
 are regenerated from these files by `scripts/paper_delay_tables.py`). Seed-
 paired lead of `alignformer_abstain_0.2_agree_1_c4` over FreeAlign 1.0 m in
 the same file, sweep mean, with the per-sigma AP@0.7 lead at 0 / 0.4 / 1 / 2 m:
@@ -852,11 +852,13 @@ the same file, sweep mean, with the per-sigma AP@0.7 lead at 0 / 0.4 / 1 / 2 m:
 |---|---:|---:|---:|---|
 | 100 ms | **+.0126 +/- .0002** (.2968 vs .2842) | **+.0299 +/- .0004** | **+.0385 +/- .0006** | +.021 / +.013 / +.012 / +.004 |
 | 200 ms | **+.0181 +/- .0002** (.2755 vs .2574) | **+.0336 +/- .0004** | **+.0442 +/- .0006** | +.030 / +.018 / +.015 / +.009 |
+| 400 ms | **+.0182 +/- .0003** (.2711 vs .2529) | **+.0287 +/- .0001** | **+.0393 +/- .0005** | +.034 / +.018 / +.014 / +.007 |
 
 Ahead at every sigma and every threshold, by a little more than the
-unweighted refit above (+.0118 / +.0153 at AP@0.7), and the lead grows with
-the delay. The weighted re-solve alone (`_icprw`, no agreement) is +.004 /
-+.010 AP@0.7 and behind FreeAlign at sigma 0.4 m at both delays, so under
+unweighted refit above (+.0118 / +.0153 / +.0168 at AP@0.7); the lead grows
+from 100 to 200 ms and holds at 400 ms. The weighted re-solve alone (`_icprw`,
+no agreement) is +.004 / +.010 / +.006 AP@0.7 and behind FreeAlign at sigma
+0.4 m at every delay, so under
 delay the agreement rule with the consensus floor is what carries the lead
 at the noisy sigmas, as it did without delay.
 
